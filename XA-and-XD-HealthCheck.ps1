@@ -1,77 +1,18 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 0.95
-# Created by: Sacha T. blog.applcoud.ch / sachathomet.ch
+# Created on: 11.2014 Version: 0.96
+# Created by: Sacha / sachathomet.ch
 # File name: XA-and-XD-HealthCheck.ps1
 #
 # Description: This script checks a Citrix XenDesktop and/or XenApp 7.x Farm
 # It generates a HTML output File which will be sent as Email.
 #
-# tested on XenApp/XenDesktop 7.x and XenDesktop 5.6 
+# tested on XenApp/XenDesktop 7.6/7.7/7.8 and XenDesktop 5.6 
 # In first version focus is on XenDesktop, XenApp check's will be extended and improved later.
 #
 # Prerequisite: None, a XenDesktop Controller with according privileges necessary 
 #
 # Call by : Manual or by Scheduled Task, e.g. once a day
-#=========== History ===========================================================================
-# Version 0.6
-# Edited on December 15th 2014 by Sebastiaan Brozius (NORISK IT Groep)
-# - Added MaintenanceMode-column for XenApp-servers, Fixed some typos, Cleaned up layout
-#
-# Version 0.7
-# Edited on December 15th 2014 by Sebastiaan Brozius (NORISK IT Groep)
-# - Added ServerLoad-column for XenApp-servers
-# - Added loadIndexError and loadIndexWarning-variables which are used as thresholds for the ServerLoad-column
-# - Removed line $machines = Get-BrokerMachine | Where-Object {$_.SessionSupport -eq "SingleSession"} from the XenApp-section (because this is for VDI)
-# - Removed Column-positions from comments
-#
-# Version 0.8
-# Edited on January 17th 2015 by Sacha Thomet
-# - Added MaintenanceMode-column for Assignments (DeliveryGroups), added MaintenanceMode-column for VDIs
-#
-# Version 0.9
-# Edited on May 5th 2015 by Sacha Thomet
-# - Changed some wording terms into account of XenDesktop/XenApp 7.x
-# (Assignment to DeliveryGroup, AssignedCount to AssignedToUser, UsedCount to AssignedToDG,
-# UnassignedCount to NotToUserAssigned)
-# - Added some columns the MachineCatalog (ProvisioningType, AllocationType)
-# - Added some columns the DeliveryGroups (PublishedName, DesktopKind)
-#
-# Version 0.92
-# Edited on July 2015 by Sacha Thomet
-# - Adjusted some typo
-# - Delivery-Group-Section: XenDesktop show Total Desktops assigned to this group (FeatureRequest Luis G)
-# - Delivery-Group-Section: XenDesktop Filter out shared Desktops on count for free Desktops (FeatureRequest James)
-#
-# Version 0.93
-# Edited on August 2015 by Stefan Beckmann (Unico Data AG)
-# - Added loadIndexError and loadIndexWarning as variable in the config section
-# - Specifying the PowerShell SnapIn which must be loaded
-# - You can now specify the delivery controller. This makes it possible to execute the script on a system which is not Delivery Controller or VDA.
-# - Added the connected users in the table
-# - Remove the old report bevor main script starts
-# - Log Citrix PS Snapins
-# - Run Citrix Cmdlet with AdminAdress to run this script remote
-# - If you run script remote, now returned correctly the version of XenDesktop. In the first Get-BrokerController command I added the parameter DNSName.
-# - New Way to send mail, which also allows passwords
-# - To send a mail without user and password I could not test
-#
-# # Version 0.94
-# Edited on October 2015 by Sacha Thomet
-# - Removed PVS WriteCache column - if you need that check this on PVS Health Check. XenApp/XenDesktop is maybe provisioned without PVS. 
-# - Add possibility to set a Mail-Priority
-#
-# # Version 0.95
-# Edited on May 2016 by Sacha Thomet
-# - Check CPU, Memory and C: of Controllers  
-# - XenApp: Add values: CPU & Memory and Disk Usage 
-# - XenApp: Option to toggle on/off to show Connected Users 
-# - XenApp: DesktopFree set to N/A because not relevant
-#
-# ToDo in a further version (Correction & Feature Requests)
-# - XenApp:  Add more relevant values: Number of active users per server / Logon Enabled / SessionSupport 
-# - XenDesktop: show Connected User 
-# - XenApp: Get-BrokerSession per Machine for unique Sessions (?)(Feature Request Majeed Attar) => need better specification of the need.
-# 
+# Code History at the end of the file
 #==============================================================================================
 # Load only the snap-ins, which are used
 if ((Get-PSSnapin "Citrix.Broker.Admin.*" -EA silentlycontinue) -eq $null) {
@@ -83,17 +24,19 @@ catch { write-error "Error Get-PSSnapin Citrix.Broker.Admin.* Powershell snapin"
 
 # Define a EnvironmentName e.g. Integration/Production etc. - this will be used in HTML & Email Subject
 $EnvironmentName = "XenApp and XenDesktop 7.8"
-
 # Define the hostnames of delivery controllers, you can use localhost if you run localy
 # Example: $DeliveryControllers = @("CXDC01.domain.tld", "CXDC02.domain.tld")
 $DeliveryControllers = @("localhost")
- 
+
+# Define the if the of delivery controllers have a D:
+$ControllerHaveD = 1
+
 # Maximum uptime of a virtual Desktop or a XenApp
 # Example: $maxUpTimeDays = 7
 $maxUpTimeDays = 7
   
 # Exclude Catalogs, e.g Testing or Poc-Catalogs
-# Example: $ExcludedCatalogs = @("Windows 7","Windows 10 Test")
+# Example: $ExcludedCatalogs = @("Windows 7","Windows 8 Test")
 $ExcludedCatalogs = @("")
 
 #XenDesktop Options 
@@ -108,12 +51,16 @@ $ShowOnlyErrorVDI = 0
 #XenApp Options
 # Set to 1 if you want to Check a Environment with XenApp (V 7.x and higher) - if you need a Script for versions below visit http://deptive.co.nz/xenapp-farm-health-check-v2/
 $ShowXenAppTable = 1
+# Define the if the of XenApp servers having a D:
+$XAServerHaveD = 1
+
+
 # Set to 1 if you want to see connected XenApp Users
 $ShowConnectedXenAppUsers = 1
 # Set value for a load of a XenApp server that is be fine, but is needed to escalate
-$loadIndexWarning = 5000
-# Set value for a load of a XenApp server that is critical
-$loadIndexError = 7500
+$loadIndexWarning = 800
+# Set value for a load of a XenApp server that is be critical
+$loadIndexError = 1500
   
 
 #define the maximum of counted machines (default is only 250)
@@ -155,8 +102,8 @@ $resultsHTM = Join-Path $currentDir ("CTXXDHealthCheck.htm")
   
 #Header for Table "XD/XA Controllers" Get-BrokerController
 $XDControllerFirstheaderName = "ControllerServer"
-$XDControllerHeaderNames = "Ping", "State", "DesktopsRegistered", "ActiveSiteServices", "CFreespace", "AvgCPU", "MemUsg"
-$XDControllerHeaderWidths = "2", "2", "2", "10","4","4","4"
+$XDControllerHeaderNames = "Ping", "State", "DesktopsRegistered", "ActiveSiteServices", "CFreespace", "DFreespace", "AvgCPU", "MemUsg"
+$XDControllerHeaderWidths = "2", "2", "2", "10","4","4","4","4"
 $XDControllerTableWidth= 1200
   
 #Header for Table "MachineCatalogs" Get-BrokerCatalog
@@ -179,10 +126,10 @@ $VDItablewidth = 1200
   
 #Header for Table "XenApp Checks" Get-BrokerMachine
 $XenAppfirstheaderName = "XenApp-Server"
-if ($ShowConnectedXenAppUsers -eq "1") { $XenAppHeaderNames = "CatalogName",  "DesktopGroupName", "Serverload", "Ping", "MaintMode", "Uptime", "RegState", "Spooler", "CitrixPrint", "CFreespace", "AvgCPU", "MemUsg", "ActiveSessions", "vDiskStore", "ConnectedUsers" }
-else { $XenAppHeaderNames = "CatalogName",  "DesktopGroupName", "Serverload", "Ping", "MaintMode", "Uptime", "RegState", "Spooler", "CitrixPrint", "CFreespace", "AvgCPU", "MemUsg", "ActiveSessions", "vDiskStore"#, "ConnectedUsers" 
+if ($ShowConnectedXenAppUsers -eq "1") { $XenAppHeaderNames = "CatalogName",  "DesktopGroupName", "Serverload", "Ping", "MaintMode", "Uptime", "RegState", "Spooler", "CitrixPrint", "CFreespace", "DFreespace", "AvgCPU", "MemUsg", "ActiveSessions", "vDiskStore", "ConnectedUsers" }
+else { $XenAppHeaderNames = "CatalogName",  "DesktopGroupName", "Serverload", "Ping", "MaintMode", "Uptime", "RegState", "Spooler", "CitrixPrint", "CFreespace", "DFreespace", "AvgCPU", "MemUsg", "ActiveSessions", "vDiskStore"#, "ConnectedUsers" 
 }
-$XenAppHeaderWidths = "4", "4", "4", "4", "4", "4", "4", "6", "4", "4","4","4","4"
+$XenAppHeaderWidths = "4", "4", "4", "4", "4", "4", "4", "6", "4", "4","4","4","4","4"
 $XenApptablewidth = 1200
   
 #==============================================================================================
@@ -213,11 +160,11 @@ catch { $result = "Failure" }
 return $result
 }
 #==============================================================================================
-# The function will check the processor counter and check for the CPU usage. Takes an average CPU usage for 3 seconds. It check the current CPU usage for 3 secs.
+# The function will check the processor counter and check for the CPU usage. Takes an average CPU usage for 5 seconds. It check the current CPU usage for 5 secs.
 Function CheckCpuUsage() 
 { 
 	param ($hostname)
-	Try { $CpuUsage=(get-counter -ComputerName $hostname -Counter "\Processor(_Total)\% Processor Time" -SampleInterval 1 -MaxSamples 3 -ErrorAction Stop | select -ExpandProperty countersamples | select -ExpandProperty cookedvalue | Measure-Object -Average).average
+	Try { $CpuUsage=(get-counter -ComputerName $hostname -Counter "\Processor(_Total)\% Processor Time" -SampleInterval 1 -MaxSamples 5 -ErrorAction Stop | select -ExpandProperty countersamples | select -ExpandProperty cookedvalue | Measure-Object -Average).average
     	$CpuUsage = "{0:N1}" -f $CpuUsage; return $CpuUsage
 	} Catch { "Error returned while checking the CPU usage. Perfmon Counters may be fault" | LogMe -error; return 101 } 
 }
@@ -466,6 +413,26 @@ $tests.ActiveSiteServices = "NEUTRAL", $ActiveSiteServices
 		ElseIf ([int] $PercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests.CFreespace = "ERROR", "Err" } 
         Else { "Disk Free is Critical [ $PercentageDS % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpace GB" }   
         $PercentageDS = 0 
+		
+		$tests.DFreespace = "NEUTRAL", "N/A" 
+		if ( $ControllerHaveD -eq "1" ) {
+		# Check D Disk Usage on DeliveryController
+        $HardDisk = Get-WmiObject Win32_LogicalDisk -ComputerName $ControllerDNS -Filter "DeviceID='D:'" | Select-Object Size,FreeSpace 
+        $DiskTotalSize = $HardDisk.Size 
+        $DiskFreeSpace = $HardDisk.FreeSpace 
+        $frSpace=[Math]::Round(($DiskFreeSpace/1073741824),2)
+
+        $PercentageDS = (($DiskFreeSpace / $DiskTotalSize ) * 100); $PercentageDS = "{0:N2}" -f $PercentageDS 
+		
+		If ( [int] $PercentageDS -gt 15) { "Disk Free is normal [ $PercentageDS % ]" | LogMe -display; $tests.DFreespace = "SUCCESS", "$frSpace GB" } 
+		ElseIf ([int] $PercentageDS -lt 15) { "Disk Free is Low [ $PercentageDS % ]" | LogMe -warning; $tests.DFreespace = "WARNING", "$frSpace GB" }     
+		ElseIf ([int] $PercentageDS -lt 5) { "Disk Free is Critical [ $PercentageDS % ]" | LogMe -error; $tests.DFreespace = "ERROR", "$frSpace GB" } 
+		ElseIf ([int] $PercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests.DFreespace = "ERROR", "Err" } 
+        Else { "Disk Free is Critical [ $PercentageDS % ]" | LogMe -error; $tests.DFreespace = "ERROR", "$frSpace GB" }   
+        $PercentageDS = 0 
+		
+		}
+		
 }
 
 
@@ -764,7 +731,7 @@ else { $tests.Uptime = "SUCCESS", $uptime.days }
 else { "WMI connection failed - check WMI for corruption" | LogMe -display -error }
 #----
   
-<# Column WriteCacheSize (only if Ping is successful)
+# Column WriteCacheSize (only if Ping is successful)
 ################ PVS SECTION ###############
 if (test-path \\$machineDNS\c$\Personality.ini) {
 $PvsWriteCacheUNC = Join-Path "\\$machineDNS" $PvsWriteCache
@@ -792,7 +759,6 @@ $Cachedisk = 0
 }
 else { $tests.WriteCacheSize = "SUCCESS", "N/A" }
 ############## END PVS SECTION #############
- #>
   
 # Check services
 $services = Get-Service -Computer $machineDNS
@@ -895,8 +861,29 @@ $tests.DesktopGroupName = "NEUTRAL", $DesktopGroupName
 		ElseIf ([int] $PercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests.CFreespace = "ERROR", "Err" } 
         Else { "Disk Free is Critical [ $PercentageDS % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpace GB" }   
         $PercentageDS = 0 
+		
+		$tests.DFreespace = "NEUTRAL", "N/A" 
+		if ( $XAServerHaveD -eq "1" ) {
+		# Check D Disk Usage 
+        $HardDisk = Get-WmiObject Win32_LogicalDisk -ComputerName $machineDNS -Filter "DeviceID='D:'" | Select-Object Size,FreeSpace 
+        $DiskTotalSize = $HardDisk.Size 
+        $DiskFreeSpace = $HardDisk.FreeSpace 
+        $frSpace=[Math]::Round(($DiskFreeSpace/1073741824),2)
+
+        $PercentageDS = (($DiskFreeSpace / $DiskTotalSize ) * 100); $PercentageDS = "{0:N2}" -f $PercentageDS 
+
+        If ( [int] $PercentageDS -gt 15) { "Disk Free is normal [ $PercentageDS % ]" | LogMe -display; $tests.DFreespace = "SUCCESS", "$frSpace GB" } 
+		ElseIf ([int] $PercentageDS -lt 15) { "Disk Free is Low [ $PercentageDS % ]" | LogMe -warning; $tests.DFreespace = "WARNING", "$frSpace GB" }     
+		ElseIf ([int] $PercentageDS -lt 5) { "Disk Free is Critical [ $PercentageDS % ]" | LogMe -error; $tests.DFreespace = "ERROR", "$frSpace GB" } 
+		ElseIf ([int] $PercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests.DFreespace = "ERROR", "Err" } 
+        Else { "Disk Free is Critical [ $PercentageDS % ]" | LogMe -error; $tests.DFreespace = "ERROR", "$frSpace GB" }   
+        $PercentageDS = 0 
+		}
 
 
+
+
+  
 " --- " | LogMe -display -progress
   
 # Check to see if the server is in an excluded folder path
@@ -974,3 +961,70 @@ If ((![string]::IsNullOrEmpty($smtpUser)) -and (![string]::IsNullOrEmpty($smtpPW
 }
 
 $smtpClient.Send( $emailMessage )
+
+
+#=========== History ===========================================================================
+# Version 0.6
+# Edited on December 15th 2014 by Sebastiaan Brozius (NORISK IT Groep)
+# - Added MaintenanceMode-column for XenApp-servers, Fixed some typos, Cleaned up layout
+#
+# Version 0.7
+# Edited on December 15th 2014 by Sebastiaan Brozius (NORISK IT Groep)
+# - Added ServerLoad-column for XenApp-servers
+# - Added loadIndexError and loadIndexWarning-variables which are used as thresholds for the ServerLoad-column
+# - Removed line $machines = Get-BrokerMachine | Where-Object {$_.SessionSupport -eq "SingleSession"} from the XenApp-section (because this is for VDI)
+# - Removed Column-positions from comments
+#
+# Version 0.8
+# Edited on January 17th 2015 by Sacha Thomet
+# - Added MaintenanceMode-column for Assignments (DeliveryGroups), added MaintenanceMode-column for VDIs
+#
+# Version 0.9
+# Edited on May 5th 2015 by Sacha Thomet
+# - Changed some wording terms into account of XenDesktop/XenApp 7.x
+# (Assignment to DeliveryGroup, AssignedCount to AssignedToUser, UsedCount to AssignedToDG,
+# UnassignedCount to NotToUserAssigned)
+# - Added some columns the MachineCatalog (ProvisioningType, AllocationType)
+# - Added some columns the DeliveryGroups (PublishedName, DesktopKind)
+#
+# Version 0.92
+# Edited on July 2015 by Sacha Thomet
+# - Adjusted some typo
+# - Delivery-Group-Section: XenDesktop show Total Desktops assigned to this group (FeatureRequest Luis G)
+# - Delivery-Group-Section: XenDesktop Filter out shared Desktops on count for free Desktops (FeatureRequest James)
+#
+# Version 0.93
+# Edited on August 2015 by Stefan Beckmann (Unico Data AG)
+# - Added loadIndexError and loadIndexWarning as variable in the config section
+# - Specifying the PowerShell SnapIn which must be loaded
+# - You can now specify the delivery controller. This makes it possible to execute the script on a system which is not Delivery Controller or VDA.
+# - Added the connected users in the table
+# - Remove the old report bevor main script starts
+# - Log Citrix PS Snapins
+# - Run Citrix Cmdlet with AdminAdress to run this script remote
+# - If you run script remote, now returned correctly the version of XenDesktop. In the first Get-BrokerController command I added the parameter DNSName.
+# - New Way to send mail, which also allows passwords
+# - To send a mail without user and password I could not test
+#
+# # Version 0.94
+# Edited on October 2015 by Sacha Thomet
+# - Removed PVS WriteCache column - if you need that check this on PVS Health Check. XenApp/XenDesktop is maybe provisioned without PVS. 
+# - Add possibility to set a Mail-Priority
+#
+# # Version 0.95
+# Edited on May 2016 by Sacha Thomet
+# - Check CPU, Memory and C: of Controllers  
+# - XenApp: Add values: CPU & Memory and Disk Usage 
+# - XenApp: Option to toggle on/off to show Connected Users 
+# - XenApp: DesktopFree set to N/A because not relevant
+#
+# ToDo in a further version (Correction & Feature Requests)
+# - XenApp:  Add more relevant values: Number of active users per server / Logon Enabled / SessionSupport 
+# - XenDesktop: show Connected User 
+# - XenApp: Get-BrokerSession per Machine for unique Sessions (?)(Feature Request Majeed Attar) => need better specification of the need.
+#
+# # Version 0.96
+# Edited on May 2016 by Sacha Thomet
+#  Added D: for Controller and XenApp Server
+#
+#=========== History END ===========================================================================
