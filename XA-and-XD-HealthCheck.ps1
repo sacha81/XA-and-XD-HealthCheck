@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 0.96
+# Created on: 11.2014 Version: 0.97
 # Created by: Sacha / sachathomet.ch
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -21,6 +21,8 @@ catch { write-error "Error Get-PSSnapin Citrix.Broker.Admin.* Powershell snapin"
 }
 # Change the below variables to suit your environment
 #==============================================================================================
+Set-StrictMode -Version Latest
+
 
 # Define a EnvironmentName e.g. Integration/Production etc. - this will be used in HTML & Email Subject
 $EnvironmentName = "XenApp and XenDesktop 7.8"
@@ -270,7 +272,8 @@ param($fileName)
 Function writeData
 {
 param($data, $fileName, $headerNames)
-  
+
+$tableEntry  =""  
 $data.Keys | sort | foreach {
 $tableEntry += "<tr>"
 $computerName = $_
