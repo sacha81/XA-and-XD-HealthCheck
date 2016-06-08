@@ -1,12 +1,12 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 0.97
+# Created on: 11.2014 Version: 0.98
 # Created by: Sacha / sachathomet.ch
 # File name: XA-and-XD-HealthCheck.ps1
 #
 # Description: This script checks a Citrix XenDesktop and/or XenApp 7.x Farm
 # It generates a HTML output File which will be sent as Email.
 #
-# tested on XenApp/XenDesktop 7.6/7.7/7.8 and XenDesktop 5.6 
+# tested on XenApp/XenDesktop 7.6-7.9 and XenDesktop 5.6 
 # In first version focus is on XenDesktop, XenApp check's will be extended and improved later.
 #
 # Prerequisite: None, a XenDesktop Controller with according privileges necessary 
@@ -396,9 +396,9 @@ $tests.ActiveSiteServices = "NEUTRAL", $ActiveSiteServices
         # Check the Physical Memory usage       
         $UsedMemory = CheckMemoryUsage ($ControllerDNS)
         if( $UsedMemory -lt 75) { "Memory usage is normal [ $UsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$UsedMemory %" }
-		elseif( $UsedMemory -lt 85) { "Memory usage is medium [ $UsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$UsedMemory %" }   	
-		elseif( $UsedMemory -lt 95) { "Memory usage is high [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }
-		elseif( $UsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
+		elseif( [int] $UsedMemory -lt 85) { "Memory usage is medium [ $UsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$UsedMemory %" }   	
+		elseif( [int] $UsedMemory -lt 95) { "Memory usage is high [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }
+		elseif( [int] $UsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
         else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }   
 		$UsedMemory = 0  
 
@@ -842,11 +842,11 @@ $tests.DesktopGroupName = "NEUTRAL", $DesktopGroupName
 		$XAAvgCPUval = 0
 
         # Check the Physical Memory usage       
-        $XAUsedMemory = CheckMemoryUsage ($machineDNS)
-        if( $XAUsedMemory -lt 75) { "Memory usage is normal [ $XAUsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$XAUsedMemory %" }
-		elseif( $XAUsedMemory -lt 85) { "Memory usage is medium [ $XAUsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$XAUsedMemory %" }   	
-		elseif( $XAUsedMemory -lt 95) { "Memory usage is high [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" }
-		elseif( $XAUsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
+        [int] $XAUsedMemory = CheckMemoryUsage ($machineDNS)
+        if( [int] $XAUsedMemory -lt 75) { "Memory usage is normal [ $XAUsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$XAUsedMemory %" }
+		elseif( [int] $XAUsedMemory -lt 85) { "Memory usage is medium [ $XAUsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$XAUsedMemory %" }   	
+		elseif( [int] $XAUsedMemory -lt 95) { "Memory usage is high [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" }
+		elseif( [int] $XAUsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
         else { "Memory usage is Critical [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" }   
 		$XAUsedMemory = 0  
 
