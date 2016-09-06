@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 0.98
+# Created on: 11.2014 Version: 0.99
 # Created by: Sacha / sachathomet.ch
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -25,7 +25,7 @@ Set-StrictMode -Version Latest
 
 
 # Define a EnvironmentName e.g. Integration/Production etc. - this will be used in HTML & Email Subject
-$EnvironmentName = "XenApp and XenDesktop 7.8"
+$EnvironmentName = "XenApp and XenDesktop 7.x"
 # Define the hostnames of delivery controllers, you can use localhost if you run localy
 # Example: $DeliveryControllers = @("CXDC01.domain.tld", "CXDC02.domain.tld")
 $DeliveryControllers = @("localhost")
@@ -122,19 +122,19 @@ $Assigmenttablewidth = 900
   
 #Header for Table "VDI Checks" Get-BrokerMachine
 $VDIfirstheaderName = "Desktop-Name"
-$VDIHeaderNames = "CatalogName","Ping", "MaintenanceMode", 	"Uptime", 	"RegistrationState","AssociatedUserNames" 
-$VDIHeaderWidths = "4", 		"4", 	"4", 				"4", 		"4", 				"4"
+$VDIHeaderNames = "CatalogName","PowerState", "Ping", "MaintenanceMode", 	"Uptime", 	"RegistrationState","AssociatedUserNames", "VDAVersion", "HostetOn"
+$VDIHeaderWidths = "4", 		"4","4", 	"4", 				"4", 		"4", 				"4",			  "4",			  "4"
 $VDItablewidth = 1200
   
 #Header for Table "XenApp Checks" Get-BrokerMachine
 $XenAppfirstheaderName = "XenApp-Server"
 if ($ShowConnectedXenAppUsers -eq "1") { 
-	$XenAppHeaderNames = "CatalogName", "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint",  "CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "vDiskStore", "ConnectedUsers" 
-	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"6", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4"
+	$XenAppHeaderNames = "CatalogName", "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint",  "CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "ConnectedUsers" , "HostetOn"
+	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"6", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4",			"4"
 }
 else { 
-	$XenAppHeaderNames = "CatalogName",  "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint", 	"CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "vDiskStore"#, "ConnectedUsers" 
-	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"6", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4"
+	$XenAppHeaderNames = "CatalogName",  "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint", 	"CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "HostetOn"#, "ConnectedUsers" 
+	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"6", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4"
 }
 
 $XenApptablewidth = 1200
@@ -641,7 +641,23 @@ $machineDNS = $machine | %{ $_.DNSName }
 $CatalogName = $machine | %{ $_.CatalogName }
 "Catalog: $CatalogName" | LogMe -display -progress
 $tests.CatalogName = "NEUTRAL", $CatalogName
-  
+
+# Column Powerstate
+$Powered = $machine | %{ $_.PowerState }
+"PowerState: $Powered" | LogMe -display -progress
+$tests.PowerState = "NEUTRAL", $Powered
+
+if ($Powered -eq "Off" -OR $Powered -eq "Unknown") {
+$tests.PowerState = "NEUTRAL", $Powered
+}
+
+if ($Powered -eq "On") {
+$tests.PowerState = "SUCCESS", $Powered
+}
+
+if ($Powered -eq "On" -OR $Powered -eq "Unknown") {
+
+
 # Column Ping Desktop
 $result = Ping $machineDNS 100
 if ($result -eq "SUCCESS") {
@@ -675,15 +691,7 @@ $tests.Ping = "Error", $result
 $ErrorVDI = $ErrorVDI + 1
 }
 #END of Ping-Section
-  
-# Column MaintenanceMode
-$MaintenanceMode = $machine | %{ $_.InMaintenanceMode }
-"MaintenanceMode: $MaintenanceMode" | LogMe -display -progress
-if ($MaintenanceMode) { $tests.MaintenanceMode = "WARNING", "ON"
-$ErrorVDI = $ErrorVDI + 1
-}
-else { $tests.MaintenanceMode = "SUCCESS", "OFF" }
-  
+
 # Column RegistrationState
 $RegistrationState = $machine | %{ $_.RegistrationState }
 "State: $RegistrationState" | LogMe -display -progress
@@ -692,6 +700,29 @@ $tests.RegistrationState = "ERROR", $RegistrationState
 $ErrorVDI = $ErrorVDI + 1
 }
 else { $tests.RegistrationState = "SUCCESS", $RegistrationState }
+
+} 
+ 
+# Column MaintenanceMode
+$MaintenanceMode = $machine | %{ $_.InMaintenanceMode }
+"MaintenanceMode: $MaintenanceMode" | LogMe -display -progress
+if ($MaintenanceMode) { $tests.MaintenanceMode = "WARNING", "ON"
+$ErrorVDI = $ErrorVDI + 1
+}
+else { $tests.MaintenanceMode = "SUCCESS", "OFF" }
+  
+# Column HostetOn 
+$HostetOn = $machine | %{ $_.HostingServerName }
+"HostetOn: $HostetOn" | LogMe -display -progress
+$tests.HostetOn = "NEUTRAL", $HostetOn
+
+# Column VDAVersion AgentVersion
+$VDAVersion = $machine | %{ $_.AgentVersion }
+"VDAVersion: $VDAVersion" | LogMe -display -progress
+$tests.VDAVersion = "NEUTRAL", $VDAVersion
+
+
+
   
 # Column AssociatedUserNames
 $AssociatedUserNames = $machine | %{ $_.AssociatedUserNames }
@@ -840,6 +871,17 @@ $RegState = $XAmachine | %{ $_.RegistrationState }
   
 if ($RegState -ne "Registered") { $tests.RegState = "ERROR", $RegState }
 else { $tests.RegState = "SUCCESS", $RegState }
+
+# Column VDAVersion AgentVersion
+$VDAVersion = $XAmachine | %{ $_.AgentVersion }
+"VDAVersion: $VDAVersion" | LogMe -display -progress
+$tests.VDAVersion = "NEUTRAL", $VDAVersion
+
+# Column HostetOn 
+$HostetOn = $XAmachine | %{ $_.HostingServerName }
+"HostetOn: $HostetOn" | LogMe -display -progress
+$tests.HostetOn = "NEUTRAL", $HostetOn
+
   
 # Column ActiveSessions
 $ActiveSessions = $XAmachine | %{ $_.SessionCount }
@@ -1064,5 +1106,11 @@ $smtpClient.Send( $emailMessage )
 # # Version 0.96
 # Edited on May 2016 by Sacha Thomet
 #  Added D: for Controller and XenApp Server
+#
+# # Version 0.99
+# Edited on September 2016 by Sacha Thomet
+# - Show PowerState and do some checks not on powered off maschone (Ping, RegistrationState)
+# - Show VDA Version of XA or XD
+# - Show Host
 #
 #=========== History END ===========================================================================
