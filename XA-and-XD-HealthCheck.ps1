@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 0.99
+# Created on: 11.2014 Version: 0.995
 # Created by: Sacha / sachathomet.ch
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -9,7 +9,11 @@
 # tested on XenApp/XenDesktop 7.6-7.9 and XenDesktop 5.6 
 # In first version focus is on XenDesktop, XenApp check's will be extended and improved later.
 #
-# Prerequisite: None, a XenDesktop Controller with according privileges necessary 
+# Prerequisite: Config file, a XenDesktop Controller with according privileges necessary 
+# Config file: In order for the script to work properly, it needs a configuration file.
+#              This has the same name as the script, with extension _Parameters.
+#              The script name can't contain any another point, even with a version.
+#              Example: Script = "XA and XD HealthCheck.ps1", Config = "XA and XD HealthCheck_Parameters.xml"
 #
 # Call by : Manual or by Scheduled Task, e.g. once a day
 # Code History at the end of the file
@@ -23,70 +27,57 @@ catch { write-error "Error Get-PSSnapin Citrix.Broker.Admin.* Powershell snapin"
 #==============================================================================================
 Set-StrictMode -Version Latest
 
-
-# Define a EnvironmentName e.g. Integration/Production etc. - this will be used in HTML & Email Subject
-$EnvironmentName = "XenApp and XenDesktop 7.x"
-# Define the hostnames of delivery controllers, you can use localhost if you run localy
-# Example: $DeliveryControllers = @("CXDC01.domain.tld", "CXDC02.domain.tld")
-$DeliveryControllers = @("localhost")
-
-# Define the if the of delivery controllers have a D:
-$ControllerHaveD = 1
-
-# Maximum uptime of a virtual Desktop or a XenApp
-# Example: $maxUpTimeDays = 7
-$maxUpTimeDays = 7
-  
-# Exclude Catalogs, e.g Testing or Poc-Catalogs
-# Example: $ExcludedCatalogs = @("Windows 7","Windows 8 Test")
-$ExcludedCatalogs = @("")
-
-#XenDesktop Options 
-# Set to 1 if you want to Check a Environment with XenDesktop (V 5.x and higher)
-$ShowDesktopTable = 1
-# Define if you ONLY want to see bad DESKTOPS (Unregistered, to high Uptime, Ping-Time-out)
-# I propose to set this value to 1 in not small environments >50 Desktops
-# Example: $ShowOnlyErrorVDI = 1 or $ShowOnlyErrorVDI = 0
-$ShowOnlyErrorVDI = 0
-
-
-#XenApp Options
-# Set to 1 if you want to Check a Environment with XenApp (V 7.x and higher) - if you need a Script for versions below visit http://deptive.co.nz/xenapp-farm-health-check-v2/
-$ShowXenAppTable = 1
-# Define the if the of XenApp servers having a D:
-$XAServerHaveD = 1
-
-
-# Set to 1 if you want to see connected XenApp Users
-$ShowConnectedXenAppUsers = 1
-# Set value for a load of a XenApp server that is be fine, but is needed to escalate
-$loadIndexWarning = 800
-# Set value for a load of a XenApp server that is be critical
-$loadIndexError = 1500
-  
-
-#define the maximum of counted machines (default is only 250)
-$maxmachines = "1000"
-  
-# E-mail report details
-$emailFrom = "citrix@mycompany.ch"
-$emailTo = "citrix@mycompany.ch"
-$smtpServer = "mailrelay.mycompany.ch"
-$smtpServerPort = "25"
-$smtpEnableSSL = $False
-$emailSubject = ("$EnvironmentName Farm Report - " + (Get-Date -format R)) 
-$emailPrio = "Low"
-
-# Username and password
-$smtpUser = ""
-$smtpKey = (7,13,25,32,42,64,72,88,91,55,88,55,77,59,22,82,200,0,3,88,10,55,93,244)
-# Create password with follow two lines
-# $Credential = Get-Credential
-# $credential.Password | ConvertFrom-SecureString -Key $smtpKey
-$smtpPW = ""
-  
 #=======DONT CHANGE BELOW HERE =======================================================================================
 
+If (![string]::IsNullOrEmpty($hostinvocation)) {
+	[string]$Global:ScriptPath = [System.IO.Path]::GetDirectoryName([System.Windows.Forms.Application]::ExecutablePath)
+	[string]$Global:ScriptFile = [System.IO.Path]::GetFileName([System.Windows.Forms.Application]::ExecutablePath)
+	[string]$global:ScriptName = [System.IO.Path]::GetFileNameWithoutExtension([System.Windows.Forms.Application]::ExecutablePath)
+} ElseIf ($Host.Version.Major -lt 3) {
+	[string]$Global:ScriptPath = Split-Path -parent $MyInvocation.MyCommand.Definition
+	[string]$Global:ScriptFile = Split-Path -Leaf $script:MyInvocation.MyCommand.Path
+	[string]$global:ScriptName = $ScriptFile.Split('.')[0].Trim()
+} Else {
+	[string]$Global:ScriptPath = $PSScriptRoot
+	[string]$Global:ScriptFile = Split-Path -Leaf $PSCommandPath
+	[string]$global:ScriptName = $ScriptFile.Split('.')[0].Trim()
+}
+
+# Import parameter file
+$Global:ParameterFile = $ScriptName + "_Parameters.xml"
+$Global:ParameterFilePath = $ScriptPath
+[xml]$cfg = Get-Content ($ParameterFilePath + "\" + $ParameterFile) # Read content of XML file
+
+# Import variables
+Function New-XMLVariables {
+	# Create a variable reference to the XML file
+	$cfg.Settings.Variables.Variable | foreach {
+		# Set Variables contained in XML file
+		$VarValue = $_.Value
+		$CreateVariable = $True # Default value to create XML content as Variable
+		switch ($_.Type) {
+			# Format data types for each variable 
+			'[string]' { $VarValue = [string]$VarValue } # Fixed-length string of Unicode characters
+			'[char]' { $VarValue = [char]$VarValue } # A Unicode 16-bit character
+			'[byte]' { $VarValue = [byte]$VarValue } # An 8-bit unsigned character
+			'[bool]' { $VarValue = [bool]$VarValue } # An boolean True/False value
+			'[int]' { $VarValue = [int]$VarValue } # 32-bit signed integer
+			'[long]' { $VarValue = [long]$VarValue } # 64-bit signed integer
+			'[decimal]' { $VarValue = [decimal]$VarValue } # A 128-bit decimal value
+			'[single]' { $VarValue = [single]$VarValue } # Single-precision 32-bit floating point number
+			'[double]' { $VarValue = [double]$VarValue } # Double-precision 64-bit floating point number
+			'[DateTime]' { $VarValue = [DateTime]$VarValue } # Date and Time
+			'[Array]' { $VarValue = [Array]$VarValue.Split(',') } # Array
+			'[Command]' { $VarValue = Invoke-Expression $VarValue; $CreateVariable = $False } # Command
+		}
+		If ($CreateVariable) { New-Variable -Name $_.Name -Value $VarValue -Scope $_.Scope -Force }
+	}
+}
+
+New-XMLVariables
+
+
+$PvsWriteMaxSize = $PvsWriteMaxSize * 1Gb
 
 ForEach ($DeliveryController in $DeliveryControllers){
     If ($DeliveryController -ieq "LocalHost"){
@@ -97,6 +88,8 @@ ForEach ($DeliveryController in $DeliveryControllers){
         break
     }
 }
+
+$ReportDate = (Get-Date -format R)
 
 $currentDir = Split-Path $MyInvocation.MyCommand.Path
 $logfile = Join-Path $currentDir ("CTXXDHealthCheck.log")
@@ -975,8 +968,14 @@ else { $allXenAppResults.$machineDNS = $tests }
 else { "XenApp Check skipped because ShowXenAppTable = 0 or Farm is < V7.x " | LogMe -display -progress }
   
 "####################### Check END ####################################################################################" | LogMe -display -progress
-  
+
 # ======= Write all results to an html file =================================================
+# Add Version of XenDesktop to EnvironmentName
+$XDmajor, $XDminor = $controllerversion.Split(".")[0..1]
+$XDVersion = "$XDmajor.$XDminor"
+$EnvironmentName = "$EnvironmentName $XDVersion"
+$emailSubject = ("$EnvironmentName Farm Report - " + $ReportDate)
+
 Write-Host ("Saving results to html report: " + $resultsHTM)
 writeHtmlHeader "$EnvironmentName Farm Report" $resultsHTM
   
@@ -1112,5 +1111,18 @@ $smtpClient.Send( $emailMessage )
 # - Show PowerState and do some checks not on powered off maschone (Ping, RegistrationState)
 # - Show VDA Version of XA or XD
 # - Show Host
+#
+# # Version 0.992
+# Edited on September 2016 by Stefan Beckmann
+# - Variable $EnvironmentName adjusted without version, and joined in the script later
+# - Variable $PvsWriteCache and $PvsWriteMaxSize re-added, since it is still used in the script
+# - Created timestamp report as variable $ReportDate
+# - $EnvironmentName and $emailSubject redefined in the report generation, incl. XenDesktop version with the new variable $XDmajor, $XDminor and $XDVersion
+#
+# # Version 0.995
+# Edited on September 2016 by Stefan Beckmann
+# - Configuration via an XML file
+# - Redefined display the date for the report
+# - Replaced generate the date in the second place by variable
 #
 #=========== History END ===========================================================================
