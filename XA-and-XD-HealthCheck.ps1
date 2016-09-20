@@ -1,19 +1,19 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 0.996
-# Created by: Sacha / sachathomet.ch
+# Created on: 11.2014 Version: 1.00
+# Created by: Sacha / sachathomet.ch & Contributers (see changelog)
 # File name: XA-and-XD-HealthCheck.ps1
 #
 # Description: This script checks a Citrix XenDesktop and/or XenApp 7.x Farm
 # It generates a HTML output File which will be sent as Email.
 #
-# tested on XenApp/XenDesktop 7.6-7.9 and XenDesktop 5.6 
-# In first version focus is on XenDesktop, XenApp check's will be extended and improved later.
+# Initial versions tested on XenApp/XenDesktop 7.6-7.11 and XenDesktop 5.6 
+# Newest version tested on XenApp/XenDesktop 7.9-7.11 
 #
 # Prerequisite: Config file, a XenDesktop Controller with according privileges necessary 
-# Config file: In order for the script to work properly, it needs a configuration file.
-#              This has the same name as the script, with extension _Parameters.
-#              The script name can't contain any another point, even with a version.
-#              Example: Script = "XA and XD HealthCheck.ps1", Config = "XA and XD HealthCheck_Parameters.xml"
+# Config file:  In order for the script to work properly, it needs a configuration file.
+#               This has the same name as the script, with extension _Parameters.
+#               The script name can't contain any another point, even with a version.
+#               Example: Script = "XA and XD HealthCheck.ps1", Config = "XA and XD HealthCheck_Parameters.xml"
 #
 # Call by : Manual or by Scheduled Task, e.g. once a day
 # Code History at the end of the file
@@ -25,9 +25,8 @@ catch { write-error "Error Get-PSSnapin Citrix.Broker.Admin.* Powershell snapin"
 }
 # Change the below variables to suit your environment
 #==============================================================================================
-#Set-StrictMode -Version Latest
 
-#=======DONT CHANGE BELOW HERE =======================================================================================
+# Import Variables from XML:
 
 If (![string]::IsNullOrEmpty($hostinvocation)) {
 	[string]$Global:ScriptPath = [System.IO.Path]::GetDirectoryName([System.Windows.Forms.Application]::ExecutablePath)
@@ -42,6 +41,8 @@ If (![string]::IsNullOrEmpty($hostinvocation)) {
 	[string]$Global:ScriptFile = Split-Path -Leaf $PSCommandPath
 	[string]$global:ScriptName = $ScriptFile.Split('.')[0].Trim()
 }
+
+Set-StrictMode -Version Latest
 
 # Import parameter file
 $Global:ParameterFile = $ScriptName + "_Parameters.xml"
@@ -60,7 +61,7 @@ Function New-XMLVariables {
 			'[string]' { $VarValue = [string]$VarValue } # Fixed-length string of Unicode characters
 			'[char]' { $VarValue = [char]$VarValue } # A Unicode 16-bit character
 			'[byte]' { $VarValue = [byte]$VarValue } # An 8-bit unsigned character
-			'[bool]' { $VarValue = [bool]$VarValue } # An boolean True/False value
+            '[bool]' { If ($VarValue.ToLower() -eq 'false'){$VarValue = [bool]$False} ElseIf ($VarValue.ToLower() -eq 'true'){$VarValue = [bool]$True} } # An boolean True/False value
 			'[int]' { $VarValue = [int]$VarValue } # 32-bit signed integer
 			'[long]' { $VarValue = [long]$VarValue } # 64-bit signed integer
 			'[decimal]' { $VarValue = [decimal]$VarValue } # A 128-bit decimal value
@@ -89,7 +90,8 @@ ForEach ($DeliveryController in $DeliveryControllers){
     }
 }
 
-$ReportDate = (Get-Date -format R)
+$ReportDate = (Get-Date -UFormat "%A, %d. %B %Y %R")
+
 
 $currentDir = Split-Path $MyInvocation.MyCommand.Path
 $logfile = Join-Path $currentDir ("CTXXDHealthCheck.log")
@@ -212,7 +214,7 @@ Function CheckHardDiskUsage()
 Function writeHtmlHeader
 {
 param($title, $fileName)
-$date = ( Get-Date -format R)
+$date = $ReportDate
 $head = @"
 <html>
 <head>
@@ -1125,8 +1127,8 @@ $smtpClient.Send( $emailMessage )
 # - Redefined display the date for the report
 # - Replaced generate the date in the second place by variable
 #
-# # Version 0.996
+# # Version 0.996 - 1.00
 # Edited on September 2016 by Sacha Thomet
-# - Strict-Mode commented out, otherwise XML Variable construct doesent work
+# - minor bug fixes
 #
 #=========== History END ===========================================================================
