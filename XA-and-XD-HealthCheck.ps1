@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 0.995
+# Created on: 11.2014 Version: 0.996
 # Created by: Sacha / sachathomet.ch
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -25,7 +25,7 @@ catch { write-error "Error Get-PSSnapin Citrix.Broker.Admin.* Powershell snapin"
 }
 # Change the below variables to suit your environment
 #==============================================================================================
-Set-StrictMode -Version Latest
+#Set-StrictMode -Version Latest
 
 #=======DONT CHANGE BELOW HERE =======================================================================================
 
@@ -1124,5 +1124,9 @@ $smtpClient.Send( $emailMessage )
 # - Configuration via an XML file
 # - Redefined display the date for the report
 # - Replaced generate the date in the second place by variable
+#
+# # Version 0.996
+# Edited on September 2016 by Sacha Thomet
+# - Strict-Mode commented out, otherwise XML Variable construct doesent work
 #
 #=========== History END ===========================================================================
