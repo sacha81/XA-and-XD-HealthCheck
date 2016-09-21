@@ -117,18 +117,18 @@ $Assigmenttablewidth = 900
   
 #Header for Table "VDI Checks" Get-BrokerMachine
 $VDIfirstheaderName = "Desktop-Name"
-$VDIHeaderNames = "CatalogName","PowerState", "Ping", "MaintenanceMode", 	"Uptime", 	"RegistrationState","AssociatedUserNames", "VDAVersion", "HostetOn"
+$VDIHeaderNames = "CatalogName","PowerState", "Ping", "MaintenanceMode", 	"Uptime", 	"RegistrationState","AssociatedUserNames", "VDAVersion", "HostedOn"
 $VDIHeaderWidths = "4", 		"4","4", 	"4", 				"4", 		"4", 				"4",			  "4",			  "4"
 $VDItablewidth = 1200
   
 #Header for Table "XenApp Checks" Get-BrokerMachine
 $XenAppfirstheaderName = "XenApp-Server"
 if ($ShowConnectedXenAppUsers -eq "1") { 
-	$XenAppHeaderNames = "CatalogName", "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint",  "CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "ConnectedUsers" , "HostetOn"
+	$XenAppHeaderNames = "CatalogName", "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint",  "CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "ConnectedUsers" , "HostedOn"
 	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"6", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4",			"4"
 }
 else { 
-	$XenAppHeaderNames = "CatalogName",  "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint", 	"CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "HostetOn"#, "ConnectedUsers" 
+	$XenAppHeaderNames = "CatalogName",  "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint", 	"CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "HostedOn"#, "ConnectedUsers" 
 	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"6", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4"
 }
 
@@ -706,10 +706,10 @@ $ErrorVDI = $ErrorVDI + 1
 }
 else { $tests.MaintenanceMode = "SUCCESS", "OFF" }
   
-# Column HostetOn 
-$HostetOn = $machine | %{ $_.HostingServerName }
-"HostetOn: $HostetOn" | LogMe -display -progress
-$tests.HostetOn = "NEUTRAL", $HostetOn
+# Column HostedOn 
+$HostedOn = $machine | %{ $_.HostingServerName }
+"HostedOn: $HostedOn" | LogMe -display -progress
+$tests.HostedOn = "NEUTRAL", $HostedOn
 
 # Column VDAVersion AgentVersion
 $VDAVersion = $machine | %{ $_.AgentVersion }
@@ -872,10 +872,10 @@ $VDAVersion = $XAmachine | %{ $_.AgentVersion }
 "VDAVersion: $VDAVersion" | LogMe -display -progress
 $tests.VDAVersion = "NEUTRAL", $VDAVersion
 
-# Column HostetOn 
-$HostetOn = $XAmachine | %{ $_.HostingServerName }
-"HostetOn: $HostetOn" | LogMe -display -progress
-$tests.HostetOn = "NEUTRAL", $HostetOn
+# Column HostedOn 
+$HostedOn = $XAmachine | %{ $_.HostingServerName }
+"HostedOn: $HostedOn" | LogMe -display -progress
+$tests.HostedOn = "NEUTRAL", $HostedOn
 
   
 # Column ActiveSessions
