@@ -87,14 +87,14 @@
 		<Variable>
 			<!-- Set value for a load of a XenApp server that is be fine, but is needed to escalate -->
 			<Name>loadIndexWarning</Name>
-			<Value>800</Value>
+			<Value>6000</Value>
 			<Type>[int]</Type>
 			<Scope>Global</Scope>
 		</Variable>
 		<Variable>
 			<!-- Set value for a load of a XenApp server that is be critical -->
 			<Name>loadIndexError</Name>
-			<Value>1500</Value>
+			<Value>8500</Value>
 			<Type>[int]</Type>
 			<Scope>Global</Scope>
 		</Variable>
