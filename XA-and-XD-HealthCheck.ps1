@@ -819,7 +819,7 @@ $CacheDisk = [long] ((get-childitem $PvsWriteCacheUNC -force).length)
 $CacheDiskGB = "{0:n2}GB" -f($CacheDisk / 1GB)
 "PVS Cache file size: {0:n2}GB" -f($CacheDisk / 1GB) | LogMe
 #"PVS Cache max size: {0:n2}GB" -f($PvsWriteMaxSize / 1GB) | LogMe -display
-$tests.WriteCacheType = $CachePVSType  
+$tests.WriteCacheType = "NEUTRAL", $CachePVSType
 if ($CacheDisk -lt ($PvsWriteMaxSize * 0.5)) {
 "WriteCache file size is low" | LogMe
 $tests.WriteCacheSize = "SUCCESS", $CacheDiskGB
