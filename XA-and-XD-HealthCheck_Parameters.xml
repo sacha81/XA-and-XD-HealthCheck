@@ -100,9 +100,9 @@
 		</Variable>
 <!-- PVS-Section: If you are using WriteCache to HD -->
 		<Variable>
-			<!-- Relative path to the PVS vDisk write cache file -->
-			<Name>PvsWriteCache</Name>
-			<Value>d$\.vdiskcache</Value>
+			<!-- Drive to PVS vDisk write cache file -->
+			<Name>PvsWriteCacheDrive</Name>
+			<Value>D</Value>
 			<Type>[string]</Type>
 			<Scope>Global</Scope>
 		</Variable>

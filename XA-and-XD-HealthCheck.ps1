@@ -794,9 +794,27 @@ else { "WMI connection failed - check WMI for corruption" | LogMe -display -erro
 # Column WriteCacheSize (only if Ping is successful)
 ################ PVS SECTION ###############
 if (test-path \\$machineDNS\c$\Personality.ini) {
-$PvsWriteCacheUNC = Join-Path "\\$machineDNS" $PvsWriteCache
-$CacheDiskexists = Test-Path $PvsWriteCacheUNC
-if ($CacheDiskexists -eq $True) {
+# Test if PVS cache is of type "device's hard drive"
+$PvsWriteCacheUNC = Join-Path "\\$machineDNS" ($PvsWriteCacheDrive+"$"+"\.vdiskcache")
+$CacheDiskOnHD = Test-Path $PvsWriteCacheUNC
+
+if ($CacheDiskOnHD -eq $True) {
+  $CacheDiskExists = $True
+  $CachePVSType = "Device HD"
+} else {
+  # Test if PVS cache is of type "device RAM with overflow to hard drive"
+  $PvsWriteCacheUNC = Join-Path "\\$machineDNS" ($PvsWriteCacheDrive+"$"+"\vdiskdif.vhdx")
+  $CacheDiskRAMwithOverflow = Test-Path $PvsWriteCacheUNC
+  if ($CacheDiskRAMwithOverflow -eq $True) {
+    $CacheDiskExists = $True
+    $CachePVSType = "Device RAM with overflow to disk"
+  } else {
+    $CacheDiskExists = $False
+    $CachePVSType = ""
+  }
+}
+
+if ($CacheDiskExists -eq $True) {
 $CacheDisk = [long] ((get-childitem $PvsWriteCacheUNC -force).length)
 $CacheDiskGB = "{0:n2}GB" -f($CacheDisk / 1GB)
 "PVS Cache file size: {0:n2}GB" -f($CacheDisk / 1GB) | LogMe
@@ -812,7 +830,7 @@ $tests.WriteCacheSize = "WARNING", $CacheDiskGB
 }
 else {
 "WriteCache file size is high" | LogMe -display -error
-$tests.WriteCacheSize = "ERORR", $CacheDiskGB
+$tests.WriteCacheSize = "ERROR", $CacheDiskGB
 }
 }
 $Cachedisk = 0
