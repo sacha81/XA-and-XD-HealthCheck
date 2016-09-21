@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.00
+# Created on: 11.2014 Version: 1.0.1
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -1131,7 +1131,7 @@ $smtpClient.Send( $emailMessage )
 # Edited on September 2016 by Sacha Thomet
 # - minor bug fixes
 #
-# # Version 1.1
+# # Version 1.0.1
 # Edited on September 2016 by Tyron Scholem
 # - localization correction for systems with decimal separator of ","
 #
