@@ -117,19 +117,23 @@ $Assigmenttablewidth = 900
   
 #Header for Table "VDI Checks" Get-BrokerMachine
 $VDIfirstheaderName = "Desktop-Name"
-$VDIHeaderNames = "CatalogName","PowerState", "Ping", "MaintenanceMode", 	"Uptime", 	"RegistrationState","AssociatedUserNames", "VDAVersion", "HostedOn"
-$VDIHeaderWidths = "4", 		"4","4", 	"4", 				"4", 		"4", 				"4",			  "4",			  "4"
+
+$VDIHeaderNames = "CatalogName","PowerState", "Ping", "MaintenanceMode", 	"Uptime", 	"RegistrationState","AssociatedUserNames", "VDAVersion", "WriteCacheType", "WriteCacheSize", "HostetOn"
+$VDIHeaderWidths = "4", 		"4","4", 	"4", 				"4", 		"4", 				"4",			  "4",			  "4",			  "4",			  "4"
+
 $VDItablewidth = 1200
   
 #Header for Table "XenApp Checks" Get-BrokerMachine
 $XenAppfirstheaderName = "XenApp-Server"
 if ($ShowConnectedXenAppUsers -eq "1") { 
-	$XenAppHeaderNames = "CatalogName", "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint",  "CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "ConnectedUsers" , "HostedOn"
-	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"6", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4",			"4"
+
+	$XenAppHeaderNames = "CatalogName", "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint",  "CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "WriteCacheType", "WriteCacheSize", "ConnectedUsers" , "HostetOn"
+	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"6", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4",			"4",			"4",			"4"
 }
 else { 
-	$XenAppHeaderNames = "CatalogName",  "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint", 	"CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "HostedOn"#, "ConnectedUsers" 
-	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"6", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4"
+	$XenAppHeaderNames = "CatalogName",  "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint", 	"CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "WriteCacheType", "WriteCacheSize", "HostetOn"
+	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"6", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4",			"4",			"4"
+
 }
 
 $XenApptablewidth = 1200
@@ -794,14 +798,32 @@ else { "WMI connection failed - check WMI for corruption" | LogMe -display -erro
 # Column WriteCacheSize (only if Ping is successful)
 ################ PVS SECTION ###############
 if (test-path \\$machineDNS\c$\Personality.ini) {
-$PvsWriteCacheUNC = Join-Path "\\$machineDNS" $PvsWriteCache
-$CacheDiskexists = Test-Path $PvsWriteCacheUNC
-if ($CacheDiskexists -eq $True) {
+# Test if PVS cache is of type "device's hard drive"
+$PvsWriteCacheUNC = Join-Path "\\$machineDNS" ($PvsWriteCacheDrive+"$"+"\.vdiskcache")
+$CacheDiskOnHD = Test-Path $PvsWriteCacheUNC
+
+if ($CacheDiskOnHD -eq $True) {
+  $CacheDiskExists = $True
+  $CachePVSType = "Device HD"
+} else {
+  # Test if PVS cache is of type "device RAM with overflow to hard drive"
+  $PvsWriteCacheUNC = Join-Path "\\$machineDNS" ($PvsWriteCacheDrive+"$"+"\vdiskdif.vhdx")
+  $CacheDiskRAMwithOverflow = Test-Path $PvsWriteCacheUNC
+  if ($CacheDiskRAMwithOverflow -eq $True) {
+    $CacheDiskExists = $True
+    $CachePVSType = "Device RAM with overflow to disk"
+  } else {
+    $CacheDiskExists = $False
+    $CachePVSType = ""
+  }
+}
+
+if ($CacheDiskExists -eq $True) {
 $CacheDisk = [long] ((get-childitem $PvsWriteCacheUNC -force).length)
 $CacheDiskGB = "{0:n2}GB" -f($CacheDisk / 1GB)
 "PVS Cache file size: {0:n2}GB" -f($CacheDisk / 1GB) | LogMe
 #"PVS Cache max size: {0:n2}GB" -f($PvsWriteMaxSize / 1GB) | LogMe -display
-  
+$tests.WriteCacheType = "NEUTRAL", $CachePVSType
 if ($CacheDisk -lt ($PvsWriteMaxSize * 0.5)) {
 "WriteCache file size is low" | LogMe
 $tests.WriteCacheSize = "SUCCESS", $CacheDiskGB
@@ -812,7 +834,7 @@ $tests.WriteCacheSize = "WARNING", $CacheDiskGB
 }
 else {
 "WriteCache file size is high" | LogMe -display -error
-$tests.WriteCacheSize = "ERORR", $CacheDiskGB
+$tests.WriteCacheSize = "ERROR", $CacheDiskGB
 }
 }
 $Cachedisk = 0
