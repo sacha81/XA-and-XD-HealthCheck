@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.00
+# Created on: 11.2014 Version: 1.0.1
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -117,18 +117,18 @@ $Assigmenttablewidth = 900
   
 #Header for Table "VDI Checks" Get-BrokerMachine
 $VDIfirstheaderName = "Desktop-Name"
-$VDIHeaderNames = "CatalogName","PowerState", "Ping", "MaintenanceMode", 	"Uptime", 	"RegistrationState","AssociatedUserNames", "VDAVersion", "HostetOn"
+$VDIHeaderNames = "CatalogName","PowerState", "Ping", "MaintenanceMode", 	"Uptime", 	"RegistrationState","AssociatedUserNames", "VDAVersion", "HostedOn"
 $VDIHeaderWidths = "4", 		"4","4", 	"4", 				"4", 		"4", 				"4",			  "4",			  "4"
 $VDItablewidth = 1200
   
 #Header for Table "XenApp Checks" Get-BrokerMachine
 $XenAppfirstheaderName = "XenApp-Server"
 if ($ShowConnectedXenAppUsers -eq "1") { 
-	$XenAppHeaderNames = "CatalogName", "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint",  "CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "ConnectedUsers" , "HostetOn"
+	$XenAppHeaderNames = "CatalogName", "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint",  "CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "ConnectedUsers" , "HostedOn"
 	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"6", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4",			"4"
 }
 else { 
-	$XenAppHeaderNames = "CatalogName",  "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint", 	"CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "HostetOn"#, "ConnectedUsers" 
+	$XenAppHeaderNames = "CatalogName",  "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint", 	"CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "HostedOn"#, "ConnectedUsers" 
 	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"6", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4"
 }
 
@@ -167,7 +167,7 @@ Function CheckCpuUsage()
 { 
 	param ($hostname)
 	Try { $CpuUsage=(get-counter -ComputerName $hostname -Counter "\Processor(_Total)\% Processor Time" -SampleInterval 1 -MaxSamples 5 -ErrorAction Stop | select -ExpandProperty countersamples | select -ExpandProperty cookedvalue | Measure-Object -Average).average
-    	$CpuUsage = "{0:N1}" -f $CpuUsage; return $CpuUsage
+    	$CpuUsage = [math]::round($CpuUsage, 1); return $CpuUsage
 	} Catch { "Error returned while checking the CPU usage. Perfmon Counters may be fault" | LogMe -error; return 101 } 
 }
 #============================================================================================== 
@@ -181,7 +181,7 @@ Function CheckMemoryUsage()
     	$FreeRAM = $SystemInfo.FreePhysicalMemory/1MB 
     	$UsedRAM = $TotalRAM - $FreeRAM 
     	$RAMPercentUsed = ($UsedRAM / $TotalRAM) * 100 
-    	$RAMPercentUsed = "{0:N2}" -f $RAMPercentUsed
+    	$RAMPercentUsed = [math]::round($RAMPercentUsed, 2);
     	return $RAMPercentUsed
 	} Catch { "Error returned while checking the Memory usage. Perfmon Counters may be fault" | LogMe -error; return 101 } 
 }
@@ -200,7 +200,7 @@ Function CheckHardDiskUsage()
 		$DiskTotalSize = $HardDisk.Size 
         $DiskFreeSpace = $HardDisk.FreeSpace 
         $frSpace=[Math]::Round(($DiskFreeSpace/1073741824),2)
-		$PercentageDS = (($DiskFreeSpace / $DiskTotalSize ) * 100); $PercentageDS = "{0:N2}" -f $PercentageDS 
+		$PercentageDS = (($DiskFreeSpace / $DiskTotalSize ) * 100); $PercentageDS = [math]::round($PercentageDS, 2)
 		
 		Add-Member -InputObject $HardDisk -MemberType NoteProperty -Name PercentageDS -Value $PercentageDS
 		Add-Member -InputObject $HardDisk -MemberType NoteProperty -Name frSpace -Value $frSpace
@@ -706,10 +706,10 @@ $ErrorVDI = $ErrorVDI + 1
 }
 else { $tests.MaintenanceMode = "SUCCESS", "OFF" }
   
-# Column HostetOn 
-$HostetOn = $machine | %{ $_.HostingServerName }
-"HostetOn: $HostetOn" | LogMe -display -progress
-$tests.HostetOn = "NEUTRAL", $HostetOn
+# Column HostedOn 
+$HostedOn = $machine | %{ $_.HostingServerName }
+"HostedOn: $HostedOn" | LogMe -display -progress
+$tests.HostedOn = "NEUTRAL", $HostedOn
 
 # Column VDAVersion AgentVersion
 $VDAVersion = $machine | %{ $_.AgentVersion }
@@ -872,10 +872,10 @@ $VDAVersion = $XAmachine | %{ $_.AgentVersion }
 "VDAVersion: $VDAVersion" | LogMe -display -progress
 $tests.VDAVersion = "NEUTRAL", $VDAVersion
 
-# Column HostetOn 
-$HostetOn = $XAmachine | %{ $_.HostingServerName }
-"HostetOn: $HostetOn" | LogMe -display -progress
-$tests.HostetOn = "NEUTRAL", $HostetOn
+# Column HostedOn 
+$HostedOn = $XAmachine | %{ $_.HostingServerName }
+"HostedOn: $HostedOn" | LogMe -display -progress
+$tests.HostedOn = "NEUTRAL", $HostedOn
 
   
 # Column ActiveSessions
@@ -1130,5 +1130,9 @@ $smtpClient.Send( $emailMessage )
 # # Version 0.996 - 1.00
 # Edited on September 2016 by Sacha Thomet
 # - minor bug fixes
+#
+# # Version 1.0.1
+# Edited on September 2016 by Tyron Scholem
+# - localization correction for systems with decimal separator of ","
 #
 #=========== History END ===========================================================================
