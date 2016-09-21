@@ -167,7 +167,7 @@ Function CheckCpuUsage()
 { 
 	param ($hostname)
 	Try { $CpuUsage=(get-counter -ComputerName $hostname -Counter "\Processor(_Total)\% Processor Time" -SampleInterval 1 -MaxSamples 5 -ErrorAction Stop | select -ExpandProperty countersamples | select -ExpandProperty cookedvalue | Measure-Object -Average).average
-    	$CpuUsage = "{0:N1}" -f $CpuUsage; return $CpuUsage
+    	$CpuUsage = [math]::round($CpuUsage, 1); return $CpuUsage
 	} Catch { "Error returned while checking the CPU usage. Perfmon Counters may be fault" | LogMe -error; return 101 } 
 }
 #============================================================================================== 
@@ -181,7 +181,7 @@ Function CheckMemoryUsage()
     	$FreeRAM = $SystemInfo.FreePhysicalMemory/1MB 
     	$UsedRAM = $TotalRAM - $FreeRAM 
     	$RAMPercentUsed = ($UsedRAM / $TotalRAM) * 100 
-    	$RAMPercentUsed = "{0:N2}" -f $RAMPercentUsed
+    	$RAMPercentUsed = [math]::round($RAMPercentUsed, 2);
     	return $RAMPercentUsed
 	} Catch { "Error returned while checking the Memory usage. Perfmon Counters may be fault" | LogMe -error; return 101 } 
 }
@@ -200,7 +200,7 @@ Function CheckHardDiskUsage()
 		$DiskTotalSize = $HardDisk.Size 
         $DiskFreeSpace = $HardDisk.FreeSpace 
         $frSpace=[Math]::Round(($DiskFreeSpace/1073741824),2)
-		$PercentageDS = (($DiskFreeSpace / $DiskTotalSize ) * 100); $PercentageDS = "{0:N2}" -f $PercentageDS 
+		$PercentageDS = (($DiskFreeSpace / $DiskTotalSize ) * 100); $PercentageDS = [math]::round($PercentageDS, 2)
 		
 		Add-Member -InputObject $HardDisk -MemberType NoteProperty -Name PercentageDS -Value $PercentageDS
 		Add-Member -InputObject $HardDisk -MemberType NoteProperty -Name frSpace -Value $frSpace
@@ -1130,5 +1130,9 @@ $smtpClient.Send( $emailMessage )
 # # Version 0.996 - 1.00
 # Edited on September 2016 by Sacha Thomet
 # - minor bug fixes
+#
+# # Version 1.1
+# Edited on September 2016 by Tyron Scholem
+# - localization correction for systems with decimal separator of ","
 #
 #=========== History END ===========================================================================
