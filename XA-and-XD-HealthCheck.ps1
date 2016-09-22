@@ -492,7 +492,7 @@ foreach ($Catalog in $Catalogs) {
   if ($ExcludedCatalogs -contains $CatalogName) {
     "Excluded Catalog, skipping" | LogMe -display -progress
   } else {
-  #Cata  logAssignedCount
+    #CatalogAssignedCount
     $CatalogAssignedCount = $Catalog | %{ $_.AssignedCount }
     "Assigned: $CatalogAssignedCount" | LogMe -display -progress
     $tests.AssignedToUser = "NEUTRAL", $CatalogAssignedCount
@@ -518,11 +518,9 @@ foreach ($Catalog in $Catalogs) {
      $tests.AllocationType = "NEUTRAL", $CatalogAllocationType
   
     "", ""
-    
-    " --- " | LogMe -display -progress
-  
     $CatalogResults.$CatalogName = $tests
-  }
+  }  
+  " --- " | LogMe -display -progress
 }
   
 #== DeliveryGroups Check ============================================================================================
