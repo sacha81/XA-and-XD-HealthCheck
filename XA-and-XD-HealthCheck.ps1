@@ -383,16 +383,6 @@ rm $resultsHTM -force -EA SilentlyContinue
 # Log the loaded Citrix PS Snapins
 (Get-PSSnapin "Citrix.*" -EA silentlycontinue).Name | ForEach {"PSSnapIn: " + $_ | LogMe -display -progress}
   
-$controller = Get-BrokerController -AdminAddress $AdminAddress -DNSName $AdminAddress
-$controllerversion = $controller.ControllerVersion
-"Version: $controllerversion " | LogMe -display -progress
-  
-if ($controllerversion -lt 7 ) {
-"XenDesktop/XenApp Version below 7.x ($controllerversion) - only DesktopCheck will be performed" | LogMe -display -progress
-$ShowXenAppTable = 0
-}
-else { "XenDesktop/XenApp Version above 7.x ($controllerversion) - XenApp and DesktopCheck will be performed" | LogMe -display -progress }
-  
 #== Controller Check ============================================================================================
 "Check Controllers #############################################################################" | LogMe -display -progress
   
@@ -400,6 +390,17 @@ else { "XenDesktop/XenApp Version above 7.x ($controllerversion) - XenApp and De
   
 $ControllerResults = @{}
 $Controllers = Get-BrokerController -AdminAddress $AdminAddress
+
+# Get first DDC version (should be all the same unless an upgrade is in progress)
+$ControllerVersion = $Controllers[0].ControllerVersion
+"Version: $controllerversion " | LogMe -display -progress
+  
+if ($ControllerVersion -lt 7 ) {
+  "XenDesktop/XenApp Version below 7.x ($controllerversion) - only DesktopCheck will be performed" | LogMe -display -progress
+  $ShowXenAppTable = 0
+} else { 
+  "XenDesktop/XenApp Version above 7.x ($controllerversion) - XenApp and DesktopCheck will be performed" | LogMe -display -progress
+}
 
 foreach ($Controller in $Controllers) {
 $tests = @{}
