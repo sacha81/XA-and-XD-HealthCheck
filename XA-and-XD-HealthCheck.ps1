@@ -532,85 +532,81 @@ $AssigmentsResults = @{}
 $Assigments = Get-BrokerDesktopGroup -AdminAddress $AdminAddress
   
 foreach ($Assigment in $Assigments) {
-$tests = @{}
+  $tests = @{}
   
-#Name of DeliveryGroup
-$DeliveryGroupName = $Assigment | %{ $_.Name }
-"DeliveryGroup: $DeliveryGroupName" | LogMe -display -progress
+  #Name of DeliveryGroup
+  $DeliveryGroupName = $Assigment | %{ $_.Name }
+  "DeliveryGroup: $DeliveryGroupName" | LogMe -display -progress
   
-#PublishedName
-$AssigmentDesktopPublishedName = $Assigment | %{ $_.PublishedName }
-"PublishedName: $AssigmentDesktopPublishedName" | LogMe -display -progress
-$tests.PublishedName = "NEUTRAL", $AssigmentDesktopPublishedName
+  if ($ExcludedCatalogs -contains $DeliveryGroupName) {
+    "Excluded Delivery Group, skipping" | LogMe -display -progress
+  } else {
   
-#DesktopsTotal
-$TotalDesktops = $Assigment | %{ $_.TotalDesktops }
-"DesktopsAvailable: $TotalDesktops" | LogMe -display -progress
-$tests.TotalDesktops = "NEUTRAL", $TotalDesktops
+    #PublishedName
+    $AssigmentDesktopPublishedName = $Assigment | %{ $_.PublishedName }
+    "PublishedName: $AssigmentDesktopPublishedName" | LogMe -display -progress
+    $tests.PublishedName = "NEUTRAL", $AssigmentDesktopPublishedName
   
-#DesktopsAvailable
-$AssigmentDesktopsAvailable = $Assigment | %{ $_.DesktopsAvailable }
-"DesktopsAvailable: $AssigmentDesktopsAvailable" | LogMe -display -progress
-$tests.DesktopsAvailable = "NEUTRAL", $AssigmentDesktopsAvailable
+    #DesktopsTotal
+    $TotalDesktops = $Assigment | %{ $_.TotalDesktops }
+    "DesktopsAvailable: $TotalDesktops" | LogMe -display -progress
+    $tests.TotalDesktops = "NEUTRAL", $TotalDesktops
   
-#DesktopKind
-$AssigmentDesktopsKind = $Assigment | %{ $_.DesktopKind }
-"DesktopKind: $AssigmentDesktopsKind" | LogMe -display -progress
-$tests.DesktopKind = "NEUTRAL", $AssigmentDesktopsKind
+    #DesktopsAvailable
+    $AssigmentDesktopsAvailable = $Assigment | %{ $_.DesktopsAvailable }
+    "DesktopsAvailable: $AssigmentDesktopsAvailable" | LogMe -display -progress
+    $tests.DesktopsAvailable = "NEUTRAL", $AssigmentDesktopsAvailable
   
-#inMaintenanceMode
-$AssigmentDesktopsinMaintenanceMode = $Assigment | %{ $_.inMaintenanceMode }
-"inMaintenanceMode: $AssigmentDesktopsinMaintenanceMode" | LogMe -display -progress
-if ($AssigmentDesktopsinMaintenanceMode) { $tests.MaintenanceMode = "WARNING", "ON" }
-else { $tests.MaintenanceMode = "SUCCESS", "OFF" }
+    #DesktopKind
+    $AssigmentDesktopsKind = $Assigment | %{ $_.DesktopKind }
+    "DesktopKind: $AssigmentDesktopsKind" | LogMe -display -progress
+    $tests.DesktopKind = "NEUTRAL", $AssigmentDesktopsKind
   
-#DesktopsUnregistered
-$AssigmentDesktopsUnregistered = $Assigment | %{ $_.DesktopsUnregistered }
-"DesktopsUnregistered: $AssigmentDesktopsUnregistered" | LogMe -display -progress
-if($AssigmentDesktopsUnregistered -gt 0 ) {
-"DesktopsUnregistered > 0 ! ($AssigmentDesktopsUnregistered)" | LogMe -display -progress
-$tests.DesktopsUnregistered = "WARNING", $AssigmentDesktopsUnregistered
-}
-else {
-$tests.DesktopsUnregistered = "SUCCESS", $AssigmentDesktopsUnregistered
-"DesktopsUnregistered <= 0 ! ($AssigmentDesktopsUnregistered)" | LogMe -display -progress
-}
+    #inMaintenanceMode
+    $AssigmentDesktopsinMaintenanceMode = $Assigment | %{ $_.inMaintenanceMode }
+    "inMaintenanceMode: $AssigmentDesktopsinMaintenanceMode" | LogMe -display -progress
+    if ($AssigmentDesktopsinMaintenanceMode) { $tests.MaintenanceMode = "WARNING", "ON" }
+    else { $tests.MaintenanceMode = "SUCCESS", "OFF" }
   
-#DesktopsInUse
-$AssigmentDesktopsInUse = $Assigment | %{ $_.DesktopsInUse }
-"DesktopsInUse: $AssigmentDesktopsInUse" | LogMe -display -progress
-$tests.DesktopsInUse = "NEUTRAL", $AssigmentDesktopsInUse
+    #DesktopsUnregistered
+    $AssigmentDesktopsUnregistered = $Assigment | %{ $_.DesktopsUnregistered }
+    "DesktopsUnregistered: $AssigmentDesktopsUnregistered" | LogMe -display -progress    
+    if ($AssigmentDesktopsUnregistered -gt 0 ) {
+      "DesktopsUnregistered > 0 ! ($AssigmentDesktopsUnregistered)" | LogMe -display -progress
+      $tests.DesktopsUnregistered = "WARNING", $AssigmentDesktopsUnregistered
+    } else {
+      $tests.DesktopsUnregistered = "SUCCESS", $AssigmentDesktopsUnregistered
+      "DesktopsUnregistered <= 0 ! ($AssigmentDesktopsUnregistered)" | LogMe -display -progress
+    }
   
-#DesktopFree
-$AssigmentDesktopsFree = $AssigmentDesktopsAvailable - $AssigmentDesktopsInUse
-"DesktopsFree: $AssigmentDesktopsFree" | LogMe -display -progress
+    #DesktopsInUse
+    $AssigmentDesktopsInUse = $Assigment | %{ $_.DesktopsInUse }
+    "DesktopsInUse: $AssigmentDesktopsInUse" | LogMe -display -progress
+    $tests.DesktopsInUse = "NEUTRAL", $AssigmentDesktopsInUse
   
-if($AssigmentDesktopsKind -eq "shared"){
+    #DesktopFree
+    $AssigmentDesktopsFree = $AssigmentDesktopsAvailable - $AssigmentDesktopsInUse
+    "DesktopsFree: $AssigmentDesktopsFree" | LogMe -display -progress
   
-if($AssigmentDesktopsFree -gt 0 ) {
-"DesktopsFree < 1 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
-$tests.DesktopsFree = "SUCCESS", $AssigmentDesktopsFree
-}
-
-elseif($AssigmentDesktopsFree -lt 0 ) {
-"DesktopsFree < 1 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
-$tests.DesktopsFree = "SUCCESS", "N/A"
-}
-
-  
-else {
-$tests.DesktopsFree = "WARNING", $AssigmentDesktopsFree
-"DesktopsFree > 0 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
-}
-}
-  
-else {
-$tests.DesktopsFree = "SUCCESS", "N/A"
-}
-  
-" --- " | LogMe -display -progress
-#Fill $tests into array
-$AssigmentsResults.$DeliveryGroupName = $tests
+    if ($AssigmentDesktopsKind -eq "shared") {
+      if ($AssigmentDesktopsFree -gt 0 ) {
+        "DesktopsFree < 1 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
+        $tests.DesktopsFree = "SUCCESS", $AssigmentDesktopsFree
+      } elseif ($AssigmentDesktopsFree -lt 0 ) {
+        "DesktopsFree < 1 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
+        $tests.DesktopsFree = "SUCCESS", "N/A"
+      } else {
+        $tests.DesktopsFree = "WARNING", $AssigmentDesktopsFree
+        "DesktopsFree > 0 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
+      }
+    } else {
+      $tests.DesktopsFree = "SUCCESS", "N/A"
+    }
+      
+    #Fill $tests into array
+    $AssigmentsResults.$DeliveryGroupName = $tests
+  }
+  " --- " | LogMe -display -progress
 }
   
 # ======= Desktop Check ========
