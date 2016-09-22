@@ -24,6 +24,13 @@
 			<Scope>Global</Scope>
 		</Variable>
 		<Variable>
+			<!-- Raise alert if delivery controllers have been rebooted in less than this number of days -->
+			<Name>minUpTimeDaysDDC</Name>
+			<Value>1</Value>
+			<Type>[int]</Type>
+			<Scope>Global</Scope>
+		</Variable>
+		<Variable>
 			<!-- Maximum uptime of a virtual Desktop or a XenApp
 				 Example: 7 -->
 			<Name>maxUpTimeDays</Name>

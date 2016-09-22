@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.0.1
+# Created on: 11.2014 Version: 1.1.0
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -99,8 +99,8 @@ $resultsHTM = Join-Path $currentDir ("CTXXDHealthCheck.htm")
   
 #Header for Table "XD/XA Controllers" Get-BrokerController
 $XDControllerFirstheaderName = "ControllerServer"
-$XDControllerHeaderNames = "Ping", 	"State","DesktopsRegistered", 	"ActiveSiteServices", 	"CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg"
-$XDControllerHeaderWidths = "2",	"2", 	"2", 					"10",					"4",			"4",			"4",		"4"
+$XDControllerHeaderNames = "Ping", 	"State","DesktopsRegistered", 	"ActiveSiteServices", 	"CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"Uptime"
+$XDControllerHeaderWidths = "2",	"2", 	"2", 					"10",					"4",			"4",			"4",		"4",		"4"
 $XDControllerTableWidth= 1200
   
 #Header for Table "MachineCatalogs" Get-BrokerCatalog
@@ -342,6 +342,33 @@ param($fileName)
 </html>
 "@ | Out-File $FileName -append
 }
+
+# ==============================================================================================
+Function ToHumanReadable()
+{
+  param($timespan)
+  
+  If ($timespan.TotalHours -lt 1) {
+    return $timespan.Minutes + "minutes"
+  }
+
+  $sb = New-Object System.Text.StringBuilder
+  If ($timespan.Days -gt 0) {
+    [void]$sb.Append($timespan.Days)
+    [void]$sb.Append(" days")
+    [void]$sb.Append(", ")    
+  }
+  If ($timespan.Hours -gt 0) {
+    [void]$sb.Append($timespan.Hours)
+    [void]$sb.Append(" hours")
+  }
+  If ($timespan.Minutes -gt 0) {
+    [void]$sb.Append(" and ")
+    [void]$sb.Append($timespan.Minutes)
+    [void]$sb.Append(" minutes")
+  }
+  return $sb.ToString()
+}
   
 #==============================================================================================
 # == MAIN SCRIPT ==
@@ -466,6 +493,25 @@ $tests.ActiveSiteServices = "NEUTRAL", $ActiveSiteServices
 				$HardDiskd = $null
 			}
 		}
+		
+		# Check uptime (Query over WMI)
+    $tests.WMI = "ERROR","Error"
+    try { $wmi=Get-WmiObject -class Win32_OperatingSystem -computer $ControllerDNS }
+    catch { $wmi = $null }
+
+    # Perform WMI related checks
+    if ($wmi -ne $null) {
+        $tests.WMI = "SUCCESS", "Success"
+        $LBTime=$wmi.ConvertToDateTime($wmi.Lastbootuptime)
+        [TimeSpan]$uptime=New-TimeSpan $LBTime $(get-date)
+
+        if ($uptime.days -lt $minUpTimeDaysDDC){
+            "reboot warning, last reboot: {0:D}" -f $LBTime | LogMe -display -warning
+            $tests.Uptime = "WARNING", (ToHumanReadable($uptime))
+        }
+        else { $tests.Uptime = "SUCCESS", (ToHumanReadable($uptime)) }
+    }
+    else { "WMI connection failed - check WMI for corruption" | LogMe -display -error }
 }
 
 
@@ -1156,5 +1202,9 @@ $smtpClient.Send( $emailMessage )
 # # Version 1.0.1
 # Edited on September 2016 by Tyron Scholem
 # - localization correction for systems with decimal separator of ","
+#
+# # Version 1.1.0
+# Edited on September 2016 by Tyron Scholem
+# - added uptime information for Delivery Controllers
 #
 #=========== History END ===========================================================================
