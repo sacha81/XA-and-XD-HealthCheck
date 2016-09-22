@@ -62,6 +62,14 @@
 			<Scope>Global</Scope>
 		</Variable>
 		<Variable>
+			<!-- Define if you ONLY want to see bad XENAPP (Unregistered, to high Uptime, Ping-Time-out)
+				 I propose to set this value to 1 in not small environments >50 Desktops -->
+			<Name>ShowOnlyErrorXA</Name>
+			<Value>0</Value>
+			<Type>[int]</Type>
+			<Scope>Global</Scope>
+		</Variable>
+		<Variable>
 			<!-- Define if you ONLY want to see bad DESKTOPS (Unregistered, to high Uptime, Ping-Time-out)
 				 I propose to set this value to 1 in not small environments >50 Desktops -->
 			<Name>ShowOnlyErrorVDI</Name>

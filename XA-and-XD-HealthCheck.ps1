@@ -802,6 +802,8 @@ $XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $Admi
 foreach ($XAmachine in $XAmachines) {
 $tests = @{}
   
+$ErrorXA = 0
+  
 # Column Name of Machine
 $machineDNS = $XAmachine | %{ $_.DNSName }
 "Machine: $machineDNS" | LogMe -display -progress
@@ -831,6 +833,7 @@ $LBTime=$wmi.ConvertToDateTime($wmi.Lastbootuptime)
 if ($uptime.days -gt $maxUpTimeDays) {
 "reboot warning, last reboot: {0:D}" -f $LBTime | LogMe -display -warning
 $tests.Uptime = "WARNING", $uptime.days
+$ErrorXA = $ErrorXA + 1
 }
 else { $tests.Uptime = "SUCCESS", $uptime.days }
 }
@@ -873,10 +876,12 @@ $tests.WriteCacheSize = "SUCCESS", $CacheDiskGB
 elseif ($CacheDisk -lt ($PvsWriteMaxSize * 0.8)) {
 "WriteCache file size moderate" | LogMe -display -warning
 $tests.WriteCacheSize = "WARNING", $CacheDiskGB
+$ErrorXA = $ErrorXA + 1
 }
 else {
 "WriteCache file size is high" | LogMe -display -error
 $tests.WriteCacheSize = "ERROR", $CacheDiskGB
+$ErrorXA = $ErrorXA + 1
 }
 }
 $Cachedisk = 0
@@ -894,6 +899,7 @@ $tests.Spooler = "SUCCESS","Success"
 else {
 "SPOOLER service stopped" | LogMe -display -error
 $tests.Spooler = "ERROR","Error"
+$ErrorXA = $ErrorXA + 1
 }
   
 if (($services | ? {$_.Name -eq "cpsvc"}).Status -Match "Running") {
@@ -903,32 +909,45 @@ $tests.CitrixPrint = "SUCCESS","Success"
 else {
 "Citrix Print Manager service stopped" | LogMe -display -error
 $tests.CitrixPrint = "ERROR","Error"
+$ErrorXA = $ErrorXA + 1
 }
   
 }
-else { $tests.Ping = "Error", $result }
+else {
+  $tests.Ping = "Error", $result 
+  $ErrorXA = $ErrorXA + 1
+}
 #END of Ping-Section
   
 # Column Serverload
 $Serverload = $XAmachine | %{ $_.LoadIndex }
 "Serverload: $Serverload" | LogMe -display -progress
-if ($Serverload -ge $loadIndexError) { $tests.Serverload = "ERROR", $Serverload }
-elseif ($Serverload -ge $loadIndexWarning) { $tests.Serverload = "WARNING", $Serverload }
-else { $tests.Serverload = "SUCCESS", $Serverload }
+if ($Serverload -ge $loadIndexError) { 
+  $tests.Serverload = "ERROR", $Serverload 
+  $ErrorXA = $ErrorXA + 1
+} elseif ($Serverload -ge $loadIndexWarning) { 
+  $tests.Serverload = "WARNING", $Serverload 
+  $ErrorXA = $ErrorXA + 1
+} else { 
+  $tests.Serverload = "SUCCESS", $Serverload 
+}
   
 # Column MaintMode
 $MaintMode = $XAmachine | %{ $_.InMaintenanceMode }
 "MaintenanceMode: $MaintMode" | LogMe -display -progress
-if ($MaintMode) { $tests.MaintMode = "WARNING", "ON"
-$ErrorVDI = $ErrorVDI + 1
-}
-else { $tests.MaintMode = "SUCCESS", "OFF" }
+if ($MaintMode) { 
+  $tests.MaintMode = "WARNING", "ON"
+  $ErrorXA = $ErrorXA + 1
+} else { $tests.MaintMode = "SUCCESS", "OFF" }
   
 # Column RegState
 $RegState = $XAmachine | %{ $_.RegistrationState }
 "State: $RegState" | LogMe -display -progress
   
-if ($RegState -ne "Registered") { $tests.RegState = "ERROR", $RegState }
+if ($RegState -ne "Registered") { 
+  $tests.RegState = "ERROR", $RegState 
+  $ErrorXA = $ErrorXA + 1
+}
 else { $tests.RegState = "SUCCESS", $RegState }
 
 # Column VDAVersion AgentVersion
@@ -967,19 +986,19 @@ $tests.DesktopGroupName = "NEUTRAL", $DesktopGroupName
 		#$VDtests.LoadBalancingAlgorithm = "SUCCESS", "LB is set to BEST EFFORT"} 
 			
         if( [int] $XAAvgCPUval -lt 75) { "CPU usage is normal [ $XAAvgCPUval % ]" | LogMe -display; $tests.AvgCPU = "SUCCESS", "$XAAvgCPUval %" }
-		elseif([int] $XAAvgCPUval -lt 85) { "CPU usage is medium [ $XAAvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$XAAvgCPUval %" }   	
-		elseif([int] $XAAvgCPUval -lt 95) { "CPU usage is high [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %" }
-		elseif([int] $XAAvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err" }
-        else { "CPU usage is Critical [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %" }   
+		elseif([int] $XAAvgCPUval -lt 85) { "CPU usage is medium [ $XAAvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$XAAvgCPUval %"; $ErrorXA = $ErrorXA + 1 }   	
+		elseif([int] $XAAvgCPUval -lt 95) { "CPU usage is high [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %"; $ErrorXA = $ErrorXA + 1 }
+		elseif([int] $XAAvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err"; $ErrorXA = $ErrorXA + 1 }
+        else { "CPU usage is Critical [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %"; $ErrorXA = $ErrorXA + 1 }   
 		$XAAvgCPUval = 0
 
         # Check the Physical Memory usage       
         [int] $XAUsedMemory = CheckMemoryUsage ($machineDNS)
         if( [int] $XAUsedMemory -lt 75) { "Memory usage is normal [ $XAUsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$XAUsedMemory %" }
-		elseif( [int] $XAUsedMemory -lt 85) { "Memory usage is medium [ $XAUsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$XAUsedMemory %" }   	
-		elseif( [int] $XAUsedMemory -lt 95) { "Memory usage is high [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" }
-		elseif( [int] $XAUsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
-        else { "Memory usage is Critical [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" }   
+		elseif( [int] $XAUsedMemory -lt 85) { "Memory usage is medium [ $XAUsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$XAUsedMemory %"; $ErrorXA = $ErrorXA + 1 }   	
+		elseif( [int] $XAUsedMemory -lt 95) { "Memory usage is high [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %"; $ErrorXA = $ErrorXA + 1 }
+		elseif( [int] $XAUsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err"; $ErrorXA = $ErrorXA + 1 }
+        else { "Memory usage is Critical [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %"; $ErrorXA = $ErrorXA + 1 }   
 		$XAUsedMemory = 0  
 
         # Check C Disk Usage 
@@ -989,10 +1008,10 @@ $tests.DesktopGroupName = "NEUTRAL", $DesktopGroupName
 			$frSpace = $HardDisk.frSpace
 
 			If ( [int] $XAPercentageDS -gt 15) { "Disk Free is normal [ $XAPercentageDS % ]" | LogMe -display; $tests.CFreespace = "SUCCESS", "$frSpace GB" } 
-			ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests.CFreespace = "ERROR", "Err" }
-			ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpace GB" } 
-			ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests.CFreespace = "WARNING", "$frSpace GB" }     
-			Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpace GB" }
+			ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests.CFreespace = "ERROR", "Err"; $ErrorXA = $ErrorXA + 1 }
+			ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpace GB"; $ErrorXA = $ErrorXA + 1 } 
+			ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests.CFreespace = "WARNING", "$frSpace GB"; $ErrorXA = $ErrorXA + 1 }     
+			Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpace GB"; $ErrorXA = $ErrorXA + 1 }
 			
 			$XAPercentageDS = 0
 			$frSpace = 0
@@ -1008,10 +1027,10 @@ $tests.DesktopGroupName = "NEUTRAL", $DesktopGroupName
 				$frSpaced = $HardDiskd.frSpace
 
 				If ( [int] $XAPercentageDSd -gt 15) { "Disk Free is normal [ $XAPercentageDSd % ]" | LogMe -display; $tests.CFreespace = "SUCCESS", "$frSpaced GB" } 
-				ElseIf ([int] $XAPercentageDSd -eq 0) { "Disk Free test failed" | LogMe -error; $tests.CFreespace = "ERROR", "Err" }
-				ElseIf ([int] $XAPercentageDSd -lt 5) { "Disk Free is Critical [ $XAPercentageDSd % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpaced GB" } 
-				ElseIf ([int] $XAPercentageDSd -lt 15) { "Disk Free is Low [ $XAPercentageDSd % ]" | LogMe -warning; $tests.CFreespace = "WARNING", "$frSpaced GB" }     
-				Else { "Disk Free is Critical [ $XAPercentageDSd % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpaced GB" }  
+				ElseIf ([int] $XAPercentageDSd -eq 0) { "Disk Free test failed" | LogMe -error; $tests.CFreespace = "ERROR", "Err"; $ErrorXA = $ErrorXA + 1 }
+				ElseIf ([int] $XAPercentageDSd -lt 5) { "Disk Free is Critical [ $XAPercentageDSd % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpaced GB"; $ErrorXA = $ErrorXA + 1 } 
+				ElseIf ([int] $XAPercentageDSd -lt 15) { "Disk Free is Low [ $XAPercentageDSd % ]" | LogMe -warning; $tests.CFreespace = "WARNING", "$frSpaced GB"; $ErrorXA = $ErrorXA + 1 }     
+				Else { "Disk Free is Critical [ $XAPercentageDSd % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpaced GB"; $ErrorXA = $ErrorXA + 1 }  
 				
 				$XAPercentageDSd = 0
 				$frSpaced = 0
@@ -1025,9 +1044,21 @@ $tests.DesktopGroupName = "NEUTRAL", $DesktopGroupName
   
 " --- " | LogMe -display -progress
   
-# Check to see if the server is in an excluded folder path
-if ($ExcludedCatalogs -contains $CatalogName) { "$machineDNS in excluded folder - skipping" | LogMe -display -progress }
-else { $allXenAppResults.$machineDNS = $tests }
+  # Check to see if the server is in an excluded folder path
+  if ($ExcludedCatalogs -contains $CatalogName) { 
+    "$machineDNS in excluded folder - skipping" | LogMe -display -progress
+  } else { 
+  	# Check if error exists on this vdi
+  	if ($ShowOnlyErrorXA -eq 0 ) { 
+  		$allXenAppResults.$machineDNS = $tests
+  	} else {
+  		if ($ErrorXA -gt 0) { 
+  			$allXenAppResults.$machineDNS = $tests
+  		} else { 
+  			"$machineDNS is ok, no output into HTML-File" | LogMe -display -progress
+  		}
+  	}
+  }
 }
   
 }
