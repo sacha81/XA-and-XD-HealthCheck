@@ -483,44 +483,46 @@ $CatalogResults = @{}
 $Catalogs = Get-BrokerCatalog -AdminAddress $AdminAddress
   
 foreach ($Catalog in $Catalogs) {
-$tests = @{}
+  $tests = @{}
   
-#Name of MachineCatalog
-$CatalogName = $Catalog | %{ $_.Name }
-"Catalog: $CatalogName" | LogMe -display -progress
+  #Name of MachineCatalog
+  $CatalogName = $Catalog | %{ $_.Name }
+  "Catalog: $CatalogName" | LogMe -display -progress
+
+  if ($ExcludedCatalogs -contains $CatalogName) {
+    "Excluded Catalog, skipping" | LogMe -display -progress
+  } else {
+  #Cata  logAssignedCount
+    $CatalogAssignedCount = $Catalog | %{ $_.AssignedCount }
+    "Assigned: $CatalogAssignedCount" | LogMe -display -progress
+    $tests.AssignedToUser = "NEUTRAL", $CatalogAssignedCount
   
-#CatalogAssignedCount
-$CatalogAssignedCount = $Catalog | %{ $_.AssignedCount }
-"Assigned: $CatalogAssignedCount" | LogMe -display -progress
-$tests.AssignedToUser = "NEUTRAL", $CatalogAssignedCount
+    #CatalogUnassignedCount
+    $CatalogUnAssignedCount = $Catalog | %{ $_.UnassignedCount }
+    "Unassigned: $CatalogUnAssignedCount" | LogMe -display -progress
+    $tests.NotToUserAssigned = "NEUTRAL", $CatalogUnAssignedCount
   
-#CatalogUnassignedCount
-$CatalogUnAssignedCount = $Catalog | %{ $_.UnassignedCount }
-"Unassigned: $CatalogUnAssignedCount" | LogMe -display -progress
-$tests.NotToUserAssigned = "NEUTRAL", $CatalogUnAssignedCount
+    # Assigned to DeliveryGroup
+    $CatalogUsedCountCount = $Catalog | %{ $_.UsedCount }
+    "Used: $CatalogUsedCountCount" | LogMe -display -progress
+    $tests.AssignedToDG = "NEUTRAL", $CatalogUsedCountCount
   
-# Assigned to DeliveryGroup
-$CatalogUsedCountCount = $Catalog | %{ $_.UsedCount }
-"Used: $CatalogUsedCountCount" | LogMe -display -progress
-$tests.AssignedToDG = "NEUTRAL", $CatalogUsedCountCount
+     #ProvisioningType
+     $CatalogProvisioningType = $Catalog | %{ $_.ProvisioningType }
+     "ProvisioningType: $CatalogProvisioningType" | LogMe -display -progress
+     $tests.ProvisioningType = "NEUTRAL", $CatalogProvisioningType
   
- #ProvisioningType
- $CatalogProvisioningType = $Catalog | %{ $_.ProvisioningType }
- "ProvisioningType: $CatalogProvisioningType" | LogMe -display -progress
- $tests.ProvisioningType = "NEUTRAL", $CatalogProvisioningType
+     #AllocationType
+     $CatalogAllocationType = $Catalog | %{ $_.AllocationType }
+     "AllocationType: $CatalogAllocationType" | LogMe -display -progress
+     $tests.AllocationType = "NEUTRAL", $CatalogAllocationType
   
- #AllocationType
- $CatalogAllocationType = $Catalog | %{ $_.AllocationType }
- "AllocationType: $CatalogAllocationType" | LogMe -display -progress
- $tests.AllocationType = "NEUTRAL", $CatalogAllocationType
+    "", ""
+    
+    " --- " | LogMe -display -progress
   
-"", ""
-  
-  
-  
-" --- " | LogMe -display -progress
-  
-$CatalogResults.$CatalogName = $tests
+    $CatalogResults.$CatalogName = $tests
+  }
 }
   
 #== DeliveryGroups Check ============================================================================================
