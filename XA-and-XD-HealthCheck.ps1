@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.0.1
+# Created on: 11.2014 Version: 1.1.0
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -1202,5 +1202,9 @@ $smtpClient.Send( $emailMessage )
 # # Version 1.0.1
 # Edited on September 2016 by Tyron Scholem
 # - localization correction for systems with decimal separator of ","
+#
+# # Version 1.1.0
+# Edited on September 2016 by Tyron Scholem
+# - added uptime information for Delivery Controllers
 #
 #=========== History END ===========================================================================
