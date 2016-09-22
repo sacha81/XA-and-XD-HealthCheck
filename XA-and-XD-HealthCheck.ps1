@@ -342,6 +342,33 @@ param($fileName)
 </html>
 "@ | Out-File $FileName -append
 }
+
+# ==============================================================================================
+Function ToHumanReadable()
+{
+  param($timespan)
+  
+  If ($timespan.TotalHours -lt 1) {
+    return $timespan.Minutes + "minutes"
+  }
+
+  $sb = New-Object System.Text.StringBuilder
+  If ($timespan.Days -gt 0) {
+    [void]$sb.Append($timespan.Days)
+    [void]$sb.Append(" days")
+    [void]$sb.Append(", ")    
+  }
+  If ($timespan.Hours -gt 0) {
+    [void]$sb.Append($timespan.Hours)
+    [void]$sb.Append(" hours")
+  }
+  If ($timespan.Minutes -gt 0) {
+    [void]$sb.Append(" and ")
+    [void]$sb.Append($timespan.Minutes)
+    [void]$sb.Append(" minutes")
+  }
+  return $sb.ToString()
+}
   
 #==============================================================================================
 # == MAIN SCRIPT ==
@@ -466,6 +493,25 @@ $tests.ActiveSiteServices = "NEUTRAL", $ActiveSiteServices
 				$HardDiskd = $null
 			}
 		}
+		
+		# Check uptime (Query over WMI)
+    $tests.WMI = "ERROR","Error"
+    try { $wmi=Get-WmiObject -class Win32_OperatingSystem -computer $ControllerDNS }
+    catch { $wmi = $null }
+
+    # Perform WMI related checks
+    if ($wmi -ne $null) {
+        $tests.WMI = "SUCCESS", "Success"
+        $LBTime=$wmi.ConvertToDateTime($wmi.Lastbootuptime)
+        [TimeSpan]$uptime=New-TimeSpan $LBTime $(get-date)
+
+        if ($uptime.days -lt $minUpTimeDaysDDC){
+            "reboot warning, last reboot: {0:D}" -f $LBTime | LogMe -display -warning
+            $tests.Uptime = "WARNING", (ToHumanReadable($uptime))
+        }
+        else { $tests.Uptime = "SUCCESS", (ToHumanReadable($uptime)) }
+    }
+    else { "WMI connection failed - check WMI for corruption" | LogMe -display -error }
 }
 
 
