@@ -369,7 +369,15 @@ Function ToHumanReadable()
   }
   return $sb.ToString()
 }
-  
+
+# ==============================================================================================
+
+$wmiOSBlock = {param($computer)
+  try { $wmi=Get-WmiObject -class Win32_OperatingSystem -computer $computer }
+  catch { $wmi = $null }
+  return $wmi
+}
+
 #==============================================================================================
 # == MAIN SCRIPT ==
 #==============================================================================================
@@ -703,30 +711,31 @@ if ($Powered -eq "On" -OR $Powered -eq "Unknown") {
 # Column Ping Desktop
 $result = Ping $machineDNS 100
 if ($result -eq "SUCCESS") {
+  $tests.Ping = "SUCCESS", $result
   
-$tests.Ping = "SUCCESS", $result
+  #==============================================================================================
+  # Column Uptime (Query over WMI - only if Ping successfull)
+  $tests.WMI = "ERROR","Error"
+  $job = Start-Job -ScriptBlock $wmiOSBlock -ArgumentList $machineDNS
+  $wmi = Wait-job $job -Timeout 15 | Receive-Job
+
+  # Perform WMI related checks
+  if ($wmi -ne $null) {
+    $tests.WMI = "SUCCESS", "Success"
+    $LBTime=[Management.ManagementDateTimeConverter]::ToDateTime($wmi.Lastbootuptime)
+    [TimeSpan]$uptime=New-TimeSpan $LBTime $(get-date)
   
-#==============================================================================================
-# Column Uptime (Query over WMI - only if Ping successfull)
-$tests.WMI = "ERROR","Error"
-try { $wmi=Get-WmiObject -class Win32_OperatingSystem -computer $machineDNS }
-catch { $wmi = $null }
-  
-# Perform WMI related checks
-if ($wmi -ne $null) {
-$tests.WMI = "SUCCESS", "Success"
-$LBTime=$wmi.ConvertToDateTime($wmi.Lastbootuptime)
-[TimeSpan]$uptime=New-TimeSpan $LBTime $(get-date)
-  
-if ($uptime.days -gt $maxUpTimeDays){
-"reboot warning, last reboot: {0:D}" -f $LBTime | LogMe -display -warning
-$tests.Uptime = "WARNING", $uptime.days
-$ErrorVDI = $ErrorVDI + 1
-}
-else { $tests.Uptime = "SUCCESS", $uptime.days }
-}
-else { "WMI connection failed - check WMI for corruption" | LogMe -display -error }
-  
+    if ($uptime.days -gt $maxUpTimeDays) {
+      "reboot warning, last reboot: {0:D}" -f $LBTime | LogMe -display -warning
+      $tests.Uptime = "WARNING", $uptime.days
+      $ErrorVDI = $ErrorVDI + 1
+    } else { 
+      $tests.Uptime = "SUCCESS", $uptime.days 
+    }
+  } else { 
+    "WMI connection failed - check WMI for corruption" | LogMe -display -error
+    stop-job $job
+  }
 }
 else {
 $tests.Ping = "Error", $result
@@ -820,22 +829,25 @@ $tests.Ping = "SUCCESS", $result
 #==============================================================================================
 # Column Uptime (Query over WMI - only if Ping successfull)
 $tests.WMI = "ERROR","Error"
-try { $wmi = Get-WmiObject -class Win32_OperatingSystem -computer $machineDNS }
-catch { $wmi = $null }
-  
-# Column Perform WMI related checks
+$job = Start-Job -ScriptBlock $wmiOSBlock -ArgumentList $machineDNS
+$wmi = Wait-job $job -Timeout 15 | Receive-Job
+
+# Perform WMI related checks
 if ($wmi -ne $null) {
-$tests.WMI = "SUCCESS", "Success"
-$LBTime=$wmi.ConvertToDateTime($wmi.Lastbootuptime)
-[TimeSpan]$uptime=New-TimeSpan $LBTime $(get-date)
-  
-if ($uptime.days -gt $maxUpTimeDays) {
-"reboot warning, last reboot: {0:D}" -f $LBTime | LogMe -display -warning
-$tests.Uptime = "WARNING", $uptime.days
+	$tests.WMI = "SUCCESS", "Success"
+	$LBTime=[Management.ManagementDateTimeConverter]::ToDateTime($wmi.Lastbootuptime)
+	[TimeSpan]$uptime=New-TimeSpan $LBTime $(get-date)
+
+	if ($uptime.days -gt $maxUpTimeDays) {
+		"reboot warning, last reboot: {0:D}" -f $LBTime | LogMe -display -warning
+		$tests.Uptime = "WARNING", $uptime.days
+	} else {
+		$tests.Uptime = "SUCCESS", $uptime.days
+	}
+} else {
+	"WMI connection failed - check WMI for corruption" | LogMe -display -error
+	stop-job $job
 }
-else { $tests.Uptime = "SUCCESS", $uptime.days }
-}
-else { "WMI connection failed - check WMI for corruption" | LogMe -display -error }
 #----
   
 # Column WriteCacheSize (only if Ping is successful)
