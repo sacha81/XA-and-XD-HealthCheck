@@ -118,7 +118,7 @@ $Assigmenttablewidth = 900
 #Header for Table "VDI Checks" Get-BrokerMachine
 $VDIfirstheaderName = "Desktop-Name"
 
-$VDIHeaderNames = "CatalogName","PowerState", "Ping", "MaintenanceMode", 	"Uptime", 	"RegistrationState","AssociatedUserNames", "VDAVersion", "WriteCacheType", "WriteCacheSize", "HostetOn"
+$VDIHeaderNames = "CatalogName","PowerState", "Ping", "MaintenanceMode", 	"Uptime", 	"RegistrationState","AssociatedUserNames", "VDAVersion", "WriteCacheType", "WriteCacheSize", "HostedOn"
 $VDIHeaderWidths = "4", 		"4","4", 	"4", 				"4", 		"4", 				"4",			  "4",			  "4",			  "4",			  "4"
 
 $VDItablewidth = 1200
@@ -127,11 +127,11 @@ $VDItablewidth = 1200
 $XenAppfirstheaderName = "XenApp-Server"
 if ($ShowConnectedXenAppUsers -eq "1") { 
 
-	$XenAppHeaderNames = "CatalogName", "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint",  "CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "WriteCacheType", "WriteCacheSize", "ConnectedUsers" , "HostetOn"
+	$XenAppHeaderNames = "CatalogName", "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint",  "CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "WriteCacheType", "WriteCacheSize", "ConnectedUsers" , "HostedOn"
 	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"6", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4",			"4",			"4",			"4"
 }
 else { 
-	$XenAppHeaderNames = "CatalogName",  "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint", 	"CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "WriteCacheType", "WriteCacheSize", "HostetOn"
+	$XenAppHeaderNames = "CatalogName",  "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint", 	"CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "WriteCacheType", "WriteCacheSize", "HostedOn"
 	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"6", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4",			"4",			"4"
 
 }
@@ -369,7 +369,15 @@ Function ToHumanReadable()
   }
   return $sb.ToString()
 }
-  
+
+# ==============================================================================================
+
+$wmiOSBlock = {param($computer)
+  try { $wmi=Get-WmiObject -class Win32_OperatingSystem -computer $computer }
+  catch { $wmi = $null }
+  return $wmi
+}
+
 #==============================================================================================
 # == MAIN SCRIPT ==
 #==============================================================================================
@@ -383,16 +391,6 @@ rm $resultsHTM -force -EA SilentlyContinue
 # Log the loaded Citrix PS Snapins
 (Get-PSSnapin "Citrix.*" -EA silentlycontinue).Name | ForEach {"PSSnapIn: " + $_ | LogMe -display -progress}
   
-$controller = Get-BrokerController -AdminAddress $AdminAddress -DNSName $AdminAddress
-$controllerversion = $controller.ControllerVersion
-"Version: $controllerversion " | LogMe -display -progress
-  
-if ($controllerversion -lt 7 ) {
-"XenDesktop/XenApp Version below 7.x ($controllerversion) - only DesktopCheck will be performed" | LogMe -display -progress
-$ShowXenAppTable = 0
-}
-else { "XenDesktop/XenApp Version above 7.x ($controllerversion) - XenApp and DesktopCheck will be performed" | LogMe -display -progress }
-  
 #== Controller Check ============================================================================================
 "Check Controllers #############################################################################" | LogMe -display -progress
   
@@ -400,6 +398,17 @@ else { "XenDesktop/XenApp Version above 7.x ($controllerversion) - XenApp and De
   
 $ControllerResults = @{}
 $Controllers = Get-BrokerController -AdminAddress $AdminAddress
+
+# Get first DDC version (should be all the same unless an upgrade is in progress)
+$ControllerVersion = $Controllers[0].ControllerVersion
+"Version: $controllerversion " | LogMe -display -progress
+  
+if ($ControllerVersion -lt 7 ) {
+  "XenDesktop/XenApp Version below 7.x ($controllerversion) - only DesktopCheck will be performed" | LogMe -display -progress
+  $ShowXenAppTable = 0
+} else { 
+  "XenDesktop/XenApp Version above 7.x ($controllerversion) - XenApp and DesktopCheck will be performed" | LogMe -display -progress
+}
 
 foreach ($Controller in $Controllers) {
 $tests = @{}
@@ -702,30 +711,31 @@ if ($Powered -eq "On" -OR $Powered -eq "Unknown") {
 # Column Ping Desktop
 $result = Ping $machineDNS 100
 if ($result -eq "SUCCESS") {
+  $tests.Ping = "SUCCESS", $result
   
-$tests.Ping = "SUCCESS", $result
+  #==============================================================================================
+  # Column Uptime (Query over WMI - only if Ping successfull)
+  $tests.WMI = "ERROR","Error"
+  $job = Start-Job -ScriptBlock $wmiOSBlock -ArgumentList $machineDNS
+  $wmi = Wait-job $job -Timeout 15 | Receive-Job
+
+  # Perform WMI related checks
+  if ($wmi -ne $null) {
+    $tests.WMI = "SUCCESS", "Success"
+    $LBTime=[Management.ManagementDateTimeConverter]::ToDateTime($wmi.Lastbootuptime)
+    [TimeSpan]$uptime=New-TimeSpan $LBTime $(get-date)
   
-#==============================================================================================
-# Column Uptime (Query over WMI - only if Ping successfull)
-$tests.WMI = "ERROR","Error"
-try { $wmi=Get-WmiObject -class Win32_OperatingSystem -computer $machineDNS }
-catch { $wmi = $null }
-  
-# Perform WMI related checks
-if ($wmi -ne $null) {
-$tests.WMI = "SUCCESS", "Success"
-$LBTime=$wmi.ConvertToDateTime($wmi.Lastbootuptime)
-[TimeSpan]$uptime=New-TimeSpan $LBTime $(get-date)
-  
-if ($uptime.days -gt $maxUpTimeDays){
-"reboot warning, last reboot: {0:D}" -f $LBTime | LogMe -display -warning
-$tests.Uptime = "WARNING", $uptime.days
-$ErrorVDI = $ErrorVDI + 1
-}
-else { $tests.Uptime = "SUCCESS", $uptime.days }
-}
-else { "WMI connection failed - check WMI for corruption" | LogMe -display -error }
-  
+    if ($uptime.days -gt $maxUpTimeDays) {
+      "reboot warning, last reboot: {0:D}" -f $LBTime | LogMe -display -warning
+      $tests.Uptime = "WARNING", $uptime.days
+      $ErrorVDI = $ErrorVDI + 1
+    } else { 
+      $tests.Uptime = "SUCCESS", $uptime.days 
+    }
+  } else { 
+    "WMI connection failed - check WMI for corruption" | LogMe -display -error
+    stop-job $job
+  }
 }
 else {
 $tests.Ping = "Error", $result
@@ -821,23 +831,26 @@ $tests.Ping = "SUCCESS", $result
 #==============================================================================================
 # Column Uptime (Query over WMI - only if Ping successfull)
 $tests.WMI = "ERROR","Error"
-try { $wmi = Get-WmiObject -class Win32_OperatingSystem -computer $machineDNS }
-catch { $wmi = $null }
-  
-# Column Perform WMI related checks
+$job = Start-Job -ScriptBlock $wmiOSBlock -ArgumentList $machineDNS
+$wmi = Wait-job $job -Timeout 15 | Receive-Job
+
+# Perform WMI related checks
 if ($wmi -ne $null) {
-$tests.WMI = "SUCCESS", "Success"
-$LBTime=$wmi.ConvertToDateTime($wmi.Lastbootuptime)
-[TimeSpan]$uptime=New-TimeSpan $LBTime $(get-date)
-  
-if ($uptime.days -gt $maxUpTimeDays) {
-"reboot warning, last reboot: {0:D}" -f $LBTime | LogMe -display -warning
-$tests.Uptime = "WARNING", $uptime.days
-$ErrorXA = $ErrorXA + 1
+	$tests.WMI = "SUCCESS", "Success"
+	$LBTime=[Management.ManagementDateTimeConverter]::ToDateTime($wmi.Lastbootuptime)
+	[TimeSpan]$uptime=New-TimeSpan $LBTime $(get-date)
+
+	if ($uptime.days -gt $maxUpTimeDays) {
+		"reboot warning, last reboot: {0:D}" -f $LBTime | LogMe -display -warning
+		$tests.Uptime = "WARNING", $uptime.days
+		$ErrorXA = $ErrorXA + 1
+	} else {
+		$tests.Uptime = "SUCCESS", $uptime.days
+	}
+} else {
+	"WMI connection failed - check WMI for corruption" | LogMe -display -error
+	stop-job $job
 }
-else { $tests.Uptime = "SUCCESS", $uptime.days }
-}
-else { "WMI connection failed - check WMI for corruption" | LogMe -display -error }
 #----
   
 # Column WriteCacheSize (only if Ping is successful)
