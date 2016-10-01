@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.1.0
+# Created on: 11.2014 Version: 1.2.0
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -118,8 +118,8 @@ $Assigmenttablewidth = 900
 #Header for Table "VDI Checks" Get-BrokerMachine
 $VDIfirstheaderName = "Desktop-Name"
 
-$VDIHeaderNames = "CatalogName","PowerState", "Ping", "MaintenanceMode", 	"Uptime", 	"RegistrationState","AssociatedUserNames", "VDAVersion", "WriteCacheType", "WriteCacheSize", "HostedOn"
-$VDIHeaderWidths = "4", 		"4","4", 	"4", 				"4", 		"4", 				"4",			  "4",			  "4",			  "4",			  "4"
+$VDIHeaderNames = "CatalogName","PowerState", "Ping", "MaintenanceMode", 	"Uptime", 	"RegistrationState","AssociatedUserNames", "VDAVersion", "WriteCacheType", "WriteCacheSize", "HostedOn", "displaymode"
+$VDIHeaderWidths = "4", 		"4","4", 	"4", 				"4", 		"4", 				"4",			  "4",			  "4",			  "4",			  "4", "4"
 
 $VDItablewidth = 1200
   
@@ -774,6 +774,79 @@ $tests.VDAVersion = "NEUTRAL", $VDAVersion
 
 
 
+# Column displaymode
+if ( $ShowGraphicsMode -eq "1" ) {
+
+$displaymodeTable = @{}
+$displaymode = "unknown"
+
+#H264
+$displaymodeTable.H264Active = wmic /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr IsActive=*
+
+    # H.264 Pure
+    #Component_Encoder=DeepCompressionV2Encoder	
+	$displaymodeTable.Component_Encoder_DeepCompressionEncoder = wmic /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=DeepCompressionEncoder
+	if ($displaymodeTable.Component_Encoder_DeepCompressionEncoder -eq "Component_Encoder=DeepCompressionEncoder")
+	{
+	$Displaymode = "Pure H.264"
+	}
+	
+	# Thinwire H.264 + Lossless (true native H264)
+    #Component_Encoder=DeepCompressionV2Encoder
+	$displaymodeTable.Component_Encoder_DeepCompressionV2Encoder = wmic /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=DeepCompressionV2Encoder
+	if ($displaymodeTable.Component_Encoder_DeepCompressionV2Encoder -eq "Component_Encoder=DeepCompressionV2Encoder")
+	{
+	$Displaymode = "H.264 + Lossless"
+	}
+	
+	#H.264 Compatibility Mode (ThinWire +)
+    #Component_Encoder=CompatibilityEncoder
+	$displaymodeTable.Component_Encoder_CompatibilityEncoder = wmic /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=CompatibilityEncoder
+	if ($displaymodeTable.Component_Encoder_CompatibilityEncoder -eq "Component_Encoder=CompatibilityEncoder")
+	{
+	$Displaymode = "H.264 Compatibility Mode (ThinWire +)"
+	}
+		
+	# Selective H.264 Is configured
+	$displaymodeTable.Component_Encoder_Deprecated = wmic /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=Deprecated
+	#Component_Encoder=Deprecated
+	
+		#fall back to H.264 Compatibility Mode (ThinWire +)
+		# Auf Receiver selective nicht geht:
+		$displaymodeTable.Component_VideoCodecUse_None = wmic /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_VideoCodecUse=None
+		
+		if ($displaymodeTable.Component_VideoCodecUse_None -eq "Component_VideoCodecUse=None")
+		{
+		$Displaymode = "Compatibility Mode (ThinWire +), selective H264 maybe not supported by Receiver)"
+		}
+			
+		#Is used
+		$displaymodeTable.Component_VideoCodecUse_Active = wmic /node:$machineDNS /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr 'Component_VideoCodecUse=For actively changing regions'			
+		if ($displaymodeTable.Component_VideoCodecUse_Active -eq "Component_VideoCodecUse=For actively changing regions")
+		{
+		$Displaymode = "Selective H264"
+		}
+
+#Legacy Graphics
+$displaymodeTable.LegacyGraphicsIsActive = wmic /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_graphics get /value | findstr IsActive=*
+$displaymodeTable.Policy_LegacyGraphicsMode = wmic  /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_graphics get /value | findstr Policy_LegacyGraphicsMode=TRUE
+if ($displaymodeTable.LegacyGraphicsIsActive -eq "IsActive=Active")
+	{
+	$Displaymode = "Legacy Graphics"
+	}	
+
+#DCR
+$displaymodeTable.DcrIsActive = wmic /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_d3d get /value | findstr IsActive=*
+$displaymodeTable.DcrAERO = wmic /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_d3d get /value | findstr Policy_AeroRedirection=*
+if ($displaymodeTable.DcrAERO -eq "Policy_AeroRedirection=TRUE")
+	{
+	$Displaymode = "DCR"
+	}
+
+$tests.displaymode = "NEUTRAL", $displaymode
+}
+#-------------------------------------------------------------------------------------------------------------
+
   
 # Column AssociatedUserNames
 $AssociatedUserNames = $machine | %{ $_.AssociatedUserNames }
@@ -812,8 +885,6 @@ $XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $Admi
 foreach ($XAmachine in $XAmachines) {
 $tests = @{}
   
-$ErrorXA = 0
-  
 # Column Name of Machine
 $machineDNS = $XAmachine | %{ $_.DNSName }
 "Machine: $machineDNS" | LogMe -display -progress
@@ -843,7 +914,6 @@ if ($wmi -ne $null) {
 	if ($uptime.days -gt $maxUpTimeDays) {
 		"reboot warning, last reboot: {0:D}" -f $LBTime | LogMe -display -warning
 		$tests.Uptime = "WARNING", $uptime.days
-		$ErrorXA = $ErrorXA + 1
 	} else {
 		$tests.Uptime = "SUCCESS", $uptime.days
 	}
@@ -889,12 +959,10 @@ $tests.WriteCacheSize = "SUCCESS", $CacheDiskGB
 elseif ($CacheDisk -lt ($PvsWriteMaxSize * 0.8)) {
 "WriteCache file size moderate" | LogMe -display -warning
 $tests.WriteCacheSize = "WARNING", $CacheDiskGB
-$ErrorXA = $ErrorXA + 1
 }
 else {
 "WriteCache file size is high" | LogMe -display -error
 $tests.WriteCacheSize = "ERROR", $CacheDiskGB
-$ErrorXA = $ErrorXA + 1
 }
 }
 $Cachedisk = 0
@@ -912,7 +980,6 @@ $tests.Spooler = "SUCCESS","Success"
 else {
 "SPOOLER service stopped" | LogMe -display -error
 $tests.Spooler = "ERROR","Error"
-$ErrorXA = $ErrorXA + 1
 }
   
 if (($services | ? {$_.Name -eq "cpsvc"}).Status -Match "Running") {
@@ -922,45 +989,32 @@ $tests.CitrixPrint = "SUCCESS","Success"
 else {
 "Citrix Print Manager service stopped" | LogMe -display -error
 $tests.CitrixPrint = "ERROR","Error"
-$ErrorXA = $ErrorXA + 1
 }
   
 }
-else {
-  $tests.Ping = "Error", $result 
-  $ErrorXA = $ErrorXA + 1
-}
+else { $tests.Ping = "Error", $result }
 #END of Ping-Section
   
 # Column Serverload
 $Serverload = $XAmachine | %{ $_.LoadIndex }
 "Serverload: $Serverload" | LogMe -display -progress
-if ($Serverload -ge $loadIndexError) { 
-  $tests.Serverload = "ERROR", $Serverload 
-  $ErrorXA = $ErrorXA + 1
-} elseif ($Serverload -ge $loadIndexWarning) { 
-  $tests.Serverload = "WARNING", $Serverload 
-  $ErrorXA = $ErrorXA + 1
-} else { 
-  $tests.Serverload = "SUCCESS", $Serverload 
-}
+if ($Serverload -ge $loadIndexError) { $tests.Serverload = "ERROR", $Serverload }
+elseif ($Serverload -ge $loadIndexWarning) { $tests.Serverload = "WARNING", $Serverload }
+else { $tests.Serverload = "SUCCESS", $Serverload }
   
 # Column MaintMode
 $MaintMode = $XAmachine | %{ $_.InMaintenanceMode }
 "MaintenanceMode: $MaintMode" | LogMe -display -progress
-if ($MaintMode) { 
-  $tests.MaintMode = "WARNING", "ON"
-  $ErrorXA = $ErrorXA + 1
-} else { $tests.MaintMode = "SUCCESS", "OFF" }
+if ($MaintMode) { $tests.MaintMode = "WARNING", "ON"
+$ErrorVDI = $ErrorVDI + 1
+}
+else { $tests.MaintMode = "SUCCESS", "OFF" }
   
 # Column RegState
 $RegState = $XAmachine | %{ $_.RegistrationState }
 "State: $RegState" | LogMe -display -progress
   
-if ($RegState -ne "Registered") { 
-  $tests.RegState = "ERROR", $RegState 
-  $ErrorXA = $ErrorXA + 1
-}
+if ($RegState -ne "Registered") { $tests.RegState = "ERROR", $RegState }
 else { $tests.RegState = "SUCCESS", $RegState }
 
 # Column VDAVersion AgentVersion
@@ -999,19 +1053,19 @@ $tests.DesktopGroupName = "NEUTRAL", $DesktopGroupName
 		#$VDtests.LoadBalancingAlgorithm = "SUCCESS", "LB is set to BEST EFFORT"} 
 			
         if( [int] $XAAvgCPUval -lt 75) { "CPU usage is normal [ $XAAvgCPUval % ]" | LogMe -display; $tests.AvgCPU = "SUCCESS", "$XAAvgCPUval %" }
-		elseif([int] $XAAvgCPUval -lt 85) { "CPU usage is medium [ $XAAvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$XAAvgCPUval %"; $ErrorXA = $ErrorXA + 1 }   	
-		elseif([int] $XAAvgCPUval -lt 95) { "CPU usage is high [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %"; $ErrorXA = $ErrorXA + 1 }
-		elseif([int] $XAAvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err"; $ErrorXA = $ErrorXA + 1 }
-        else { "CPU usage is Critical [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %"; $ErrorXA = $ErrorXA + 1 }   
+		elseif([int] $XAAvgCPUval -lt 85) { "CPU usage is medium [ $XAAvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$XAAvgCPUval %" }   	
+		elseif([int] $XAAvgCPUval -lt 95) { "CPU usage is high [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %" }
+		elseif([int] $XAAvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err" }
+        else { "CPU usage is Critical [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %" }   
 		$XAAvgCPUval = 0
 
         # Check the Physical Memory usage       
         [int] $XAUsedMemory = CheckMemoryUsage ($machineDNS)
         if( [int] $XAUsedMemory -lt 75) { "Memory usage is normal [ $XAUsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$XAUsedMemory %" }
-		elseif( [int] $XAUsedMemory -lt 85) { "Memory usage is medium [ $XAUsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$XAUsedMemory %"; $ErrorXA = $ErrorXA + 1 }   	
-		elseif( [int] $XAUsedMemory -lt 95) { "Memory usage is high [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %"; $ErrorXA = $ErrorXA + 1 }
-		elseif( [int] $XAUsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err"; $ErrorXA = $ErrorXA + 1 }
-        else { "Memory usage is Critical [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %"; $ErrorXA = $ErrorXA + 1 }   
+		elseif( [int] $XAUsedMemory -lt 85) { "Memory usage is medium [ $XAUsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$XAUsedMemory %" }   	
+		elseif( [int] $XAUsedMemory -lt 95) { "Memory usage is high [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" }
+		elseif( [int] $XAUsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
+        else { "Memory usage is Critical [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" }   
 		$XAUsedMemory = 0  
 
         # Check C Disk Usage 
@@ -1021,10 +1075,10 @@ $tests.DesktopGroupName = "NEUTRAL", $DesktopGroupName
 			$frSpace = $HardDisk.frSpace
 
 			If ( [int] $XAPercentageDS -gt 15) { "Disk Free is normal [ $XAPercentageDS % ]" | LogMe -display; $tests.CFreespace = "SUCCESS", "$frSpace GB" } 
-			ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests.CFreespace = "ERROR", "Err"; $ErrorXA = $ErrorXA + 1 }
-			ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpace GB"; $ErrorXA = $ErrorXA + 1 } 
-			ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests.CFreespace = "WARNING", "$frSpace GB"; $ErrorXA = $ErrorXA + 1 }     
-			Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpace GB"; $ErrorXA = $ErrorXA + 1 }
+			ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests.CFreespace = "ERROR", "Err" }
+			ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpace GB" } 
+			ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests.CFreespace = "WARNING", "$frSpace GB" }     
+			Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpace GB" }
 			
 			$XAPercentageDS = 0
 			$frSpace = 0
@@ -1040,10 +1094,10 @@ $tests.DesktopGroupName = "NEUTRAL", $DesktopGroupName
 				$frSpaced = $HardDiskd.frSpace
 
 				If ( [int] $XAPercentageDSd -gt 15) { "Disk Free is normal [ $XAPercentageDSd % ]" | LogMe -display; $tests.CFreespace = "SUCCESS", "$frSpaced GB" } 
-				ElseIf ([int] $XAPercentageDSd -eq 0) { "Disk Free test failed" | LogMe -error; $tests.CFreespace = "ERROR", "Err"; $ErrorXA = $ErrorXA + 1 }
-				ElseIf ([int] $XAPercentageDSd -lt 5) { "Disk Free is Critical [ $XAPercentageDSd % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpaced GB"; $ErrorXA = $ErrorXA + 1 } 
-				ElseIf ([int] $XAPercentageDSd -lt 15) { "Disk Free is Low [ $XAPercentageDSd % ]" | LogMe -warning; $tests.CFreespace = "WARNING", "$frSpaced GB"; $ErrorXA = $ErrorXA + 1 }     
-				Else { "Disk Free is Critical [ $XAPercentageDSd % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpaced GB"; $ErrorXA = $ErrorXA + 1 }  
+				ElseIf ([int] $XAPercentageDSd -eq 0) { "Disk Free test failed" | LogMe -error; $tests.CFreespace = "ERROR", "Err" }
+				ElseIf ([int] $XAPercentageDSd -lt 5) { "Disk Free is Critical [ $XAPercentageDSd % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpaced GB" } 
+				ElseIf ([int] $XAPercentageDSd -lt 15) { "Disk Free is Low [ $XAPercentageDSd % ]" | LogMe -warning; $tests.CFreespace = "WARNING", "$frSpaced GB" }     
+				Else { "Disk Free is Critical [ $XAPercentageDSd % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpaced GB" }  
 				
 				$XAPercentageDSd = 0
 				$frSpaced = 0
@@ -1057,21 +1111,9 @@ $tests.DesktopGroupName = "NEUTRAL", $DesktopGroupName
   
 " --- " | LogMe -display -progress
   
-  # Check to see if the server is in an excluded folder path
-  if ($ExcludedCatalogs -contains $CatalogName) { 
-    "$machineDNS in excluded folder - skipping" | LogMe -display -progress
-  } else { 
-  	# Check if error exists on this vdi
-  	if ($ShowOnlyErrorXA -eq 0 ) { 
-  		$allXenAppResults.$machineDNS = $tests
-  	} else {
-  		if ($ErrorXA -gt 0) { 
-  			$allXenAppResults.$machineDNS = $tests
-  		} else { 
-  			"$machineDNS is ok, no output into HTML-File" | LogMe -display -progress
-  		}
-  	}
-  }
+# Check to see if the server is in an excluded folder path
+if ($ExcludedCatalogs -contains $CatalogName) { "$machineDNS in excluded folder - skipping" | LogMe -display -progress }
+else { $allXenAppResults.$machineDNS = $tests }
 }
   
 }
@@ -1246,5 +1288,9 @@ $smtpClient.Send( $emailMessage )
 # # Version 1.1.0
 # Edited on September 2016 by Tyron Scholem
 # - added uptime information for Delivery Controllers
+#
+# # Version 1.2.0
+# Edited on September 2016 by Sacha Thomet
+# - determine Graphic Mode
 #
 #=========== History END ===========================================================================
