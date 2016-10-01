@@ -77,6 +77,14 @@
 			<Type>[int]</Type>
 			<Scope>Global</Scope>
 		</Variable>
+		<Variable>
+			<!-- Define if you want to see the used graphic mode)
+				  -->
+			<Name>ShowGraphicsMode</Name>
+			<Value>1</Value>
+			<Type>[int]</Type>
+			<Scope>Global</Scope>
+		</Variable>
 <!-- XenApp Options -->
 		<Variable>
 			<!-- Set to 1 if you want to Check a Environment with XenApp (V 7.x and higher) - if you need a Script for versions below visit http://deptive.co.nz/xenapp-farm-health-check-v2/ -->
