@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.2.0
+# Created on: 11.2014 Version: 1.2.1
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -772,13 +772,23 @@ $VDAVersion = $machine | %{ $_.AgentVersion }
 "VDAVersion: $VDAVersion" | LogMe -display -progress
 $tests.VDAVersion = "NEUTRAL", $VDAVersion
 
+# Column AssociatedUserNames
+$AssociatedUserNames = $machine | %{ $_.AssociatedUserNames }
+"Assigned to $AssociatedUserNames" | LogMe -display -progress
+$tests.AssociatedUserNames = "NEUTRAL", $AssociatedUserNames
 
 
-# Column displaymode
+
+# Column displaymode when a User is Associated
+$displaymode = "N/A"
 if ( $ShowGraphicsMode -eq "1" ) {
 
-$displaymodeTable = @{}
+if ($AssociatedUserNames -notlike "" )
+{
+
 $displaymode = "unknown"
+$displaymodeTable = @{}
+
 
 #H264
 $displaymodeTable.H264Active = wmic /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr IsActive=*
@@ -842,16 +852,12 @@ if ($displaymodeTable.DcrAERO -eq "Policy_AeroRedirection=TRUE")
 	{
 	$Displaymode = "DCR"
 	}
-
+}
 $tests.displaymode = "NEUTRAL", $displaymode
 }
 #-------------------------------------------------------------------------------------------------------------
 
   
-# Column AssociatedUserNames
-$AssociatedUserNames = $machine | %{ $_.AssociatedUserNames }
-"Assigned to $AssociatedUserNames" | LogMe -display -progress
-$tests.AssociatedUserNames = "NEUTRAL", $AssociatedUserNames
   
 " --- " | LogMe -display -progress
   
@@ -1292,5 +1298,9 @@ $smtpClient.Send( $emailMessage )
 # # Version 1.2.0
 # Edited on September 2016 by Sacha Thomet
 # - determine Graphic Mode
+#
+# # Version 1.2.1
+# Edited on September 2016 by Sacha Thomet
+# - speed improvement for Graphic Mode - just check used desktops and assigned desktops
 #
 #=========== History END ===========================================================================
