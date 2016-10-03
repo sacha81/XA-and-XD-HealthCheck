@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.2.1
+# Created on: 11.2014 Version: 1.2.2
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -777,13 +777,13 @@ $AssociatedUserNames = $machine | %{ $_.AssociatedUserNames }
 "Assigned to $AssociatedUserNames" | LogMe -display -progress
 $tests.AssociatedUserNames = "NEUTRAL", $AssociatedUserNames
 
+# Column displaymode when a User has a Session
+$sessionUser = $machine | %{ $_.SessionUserName }
 
-
-# Column displaymode when a User is Associated
 $displaymode = "N/A"
 if ( $ShowGraphicsMode -eq "1" ) {
 
-if ($AssociatedUserNames -notlike "" )
+if ($sessionUser -notlike "" )
 {
 
 $displaymode = "unknown"
@@ -1299,8 +1299,8 @@ $smtpClient.Send( $emailMessage )
 # Edited on September 2016 by Sacha Thomet
 # - determine Graphic Mode
 #
-# # Version 1.2.1
+# # Version 1.2.1 / 1.2.2
 # Edited on September 2016 by Sacha Thomet
-# - speed improvement for Graphic Mode - just check used desktops and assigned desktops
+# - speed improvement for Graphic Mode - just check used desktops
 #
 #=========== History END ===========================================================================
