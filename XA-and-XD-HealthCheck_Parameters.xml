@@ -6,7 +6,7 @@
 			<Name>EnvironmentName</Name>
 			<Value>XenApp and XenDesktop</Value>
 			<Type>[string]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Define the hostnames of delivery controllers, you can use localhost if you run localy
@@ -14,21 +14,21 @@
 			<Name>DeliveryControllers</Name>
 			<Value>localhost</Value> <!-- Add Server separated by comma -->
 			<Type>[array]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Define the if the of delivery controllers have a D: -->
 			<Name>ControllerHaveD</Name>
 			<Value>1</Value>
 			<Type>[int]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Raise alert if delivery controllers have been rebooted in less than this number of days -->
 			<Name>minUpTimeDaysDDC</Name>
 			<Value>1</Value>
 			<Type>[int]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Maximum uptime of a virtual Desktop or a XenApp
@@ -36,7 +36,7 @@
 			<Name>maxUpTimeDays</Name>
 			<Value>7</Value>
 			<Type>[int]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Exclude Catalogs, e.g Testing or Poc-Catalogs
@@ -44,14 +44,14 @@
 			<Name>ExcludedCatalogs</Name>
 			<Value></Value>
 			<Type>[array]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- define the maximum of counted machines (default is only 250) -->
 			<Name>maxmachines</Name>
 			<Value>1000</Value>
 			<Type>[int]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 <!-- XenDesktop Options -->
 		<Variable>
@@ -59,7 +59,7 @@
 			<Name>ShowDesktopTable</Name>
 			<Value>1</Value>
 			<Type>[int]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Define if you ONLY want to see bad XENAPP (Unregistered, to high Uptime, Ping-Time-out)
@@ -67,7 +67,7 @@
 			<Name>ShowOnlyErrorXA</Name>
 			<Value>0</Value>
 			<Type>[int]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Define if you ONLY want to see bad DESKTOPS (Unregistered, to high Uptime, Ping-Time-out)
@@ -75,7 +75,7 @@
 			<Name>ShowOnlyErrorVDI</Name>
 			<Value>0</Value>
 			<Type>[int]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Define if you want to see the used graphic mode)
@@ -83,7 +83,7 @@
 			<Name>ShowGraphicsMode</Name>
 			<Value>1</Value>
 			<Type>[int]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 <!-- XenApp Options -->
 		<Variable>
@@ -91,35 +91,35 @@
 			<Name>ShowXenAppTable</Name>
 			<Value>1</Value>
 			<Type>[int]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Define the if the of XenApp servers having a D: -->
 			<Name>XAServerHaveD</Name>
 			<Value>1</Value>
 			<Type>[int]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Set to 1 if you want to see connected XenApp Users -->
 			<Name>ShowConnectedXenAppUsers</Name>
 			<Value>1</Value>
 			<Type>[int]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Set value for a load of a XenApp server that is be fine, but is needed to escalate -->
 			<Name>loadIndexWarning</Name>
 			<Value>6000</Value>
 			<Type>[int]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Set value for a load of a XenApp server that is be critical -->
 			<Name>loadIndexError</Name>
 			<Value>8500</Value>
 			<Type>[int]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 <!-- PVS-Section: If you are using WriteCache to HD -->
 		<Variable>
@@ -127,14 +127,14 @@
 			<Name>PvsWriteCacheDrive</Name>
 			<Value>D</Value>
 			<Type>[string]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Size of the local PVS write cache drive -->
 			<Name>PvsWriteMaxSize</Name>
 			<Value>15</Value> <!-- size in GB -->
 			<Type>[long]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 <!-- E-Mail Configuration -->
 		<Variable>
@@ -142,56 +142,56 @@
 			<Name>emailFrom</Name>
 			<Value>citrix@mycompany.ch</Value>
 			<Type>[string]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Address of the recipient -->
 			<Name>emailTo</Name>
 			<Value>citrix@mycompany.ch</Value>
 			<Type>[string]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- IP or name of SMTP server  -->
 			<Name>smtpServer</Name>
 			<Value>mailrelay.mycompany.ch</Value>
 			<Type>[string]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Port of SMTP server -->
 			<Name>smtpServerPort</Name>
 			<Value>25</Value>
 			<Type>[string]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Use ssl for SMTP or not -->
 			<Name>smtpEnableSSL</Name>
 			<Value>False</Value> <!-- False or True -->
 			<Type>[bool]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Priority of email -->
 			<Name>emailPrio</Name>
 			<Value>Low</Value>
 			<Type>[string]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Username -->
 			<Name>smtpUser</Name>
 			<Value></Value>
 			<Type>[string]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Key for password encryption -->
 			<Name>smtpKey</Name>
 			<Value>7,13,25,32,42,64,72,88,91,55,88,55,77,59,22,82,200,0,3,88,10,55,93,244</Value>
 			<Type>[array]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Password
@@ -201,7 +201,7 @@
 			<Name>smtpPW</Name>
 			<Value></Value>
 			<Type>[string]</Type>
-			<Scope>Global</Scope>
+			<Scope>Script</Scope>
 		</Variable>
 	</Variables>
 </settings>
