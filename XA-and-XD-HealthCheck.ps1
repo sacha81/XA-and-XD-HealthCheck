@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.2.2
+# Created on: 11.2014 Version: 1.2.3
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -371,6 +371,95 @@ Function ToHumanReadable()
 }
 
 # ==============================================================================================
+<#
+	.SYNOPSIS
+		Get information about user that set maintenance mode.
+	
+	.DESCRIPTION
+		Over the Citrix XenDeesktop or XenApp log database, you can finde the user that
+		set the maintenance mode of an worker.
+		This is version 1.0.
+	
+	.PARAMETER AdminAddress
+		Specifies the address of the Delivery Controller to which the PowerShell module will connect. This can be provided as a host name or an IP address.
+	
+	.PARAMETER Credential
+		Specifies a user account that has permission to perform this action. The default is the current user.
+	
+	.EXAMPLE
+		Get-CitrixMaintenanceInfo
+		Get the informations on an delivery controller with nedded credentials.
+	
+	.EXAMPLE
+		Get-CitrixMaintenanceInfo -AdminAddress server.domain.tld -Credential (Get-Credential)
+		Use sever.domain.tld to get the log informations and use credentials.
+
+	.LINK
+		http://www.beckmann.ch/blog/2016/11/01/get-user-who-set-maintenance-mode-for-a-server-or-client/
+#>
+function Get-CitrixMaintenanceInfo {
+	[CmdletBinding()]
+	[OutputType([System.Management.Automation.PSCustomObject])]
+	param
+	(
+		[Parameter(Mandatory = $false,
+				   ValueFromPipeline = $true,
+				   Position = 0)]
+		[System.String[]]$AdminAddress = 'localhost',
+		[Parameter(Mandatory = $false,
+				   ValueFromPipeline = $true,
+				   Position = 1)]
+		[System.Management.Automation.PSCredential]$Credential
+	) # Param
+	
+	Try {
+		$PSSessionParam = @{ }
+		If ($null -ne $Credential) { $PSSessionParam['Credential'] = $Credential } #Splatting
+		If ($null -ne $AdminAddress) { $PSSessionParam['ComputerName'] = $AdminAddress } #Splatting
+		
+		# Create Session
+		$Session = New-PSSession -ErrorAction Stop @PSSessionParam
+		
+		# Create script block for invoke command
+		$ScriptBlock = {
+			if ((Get-PSSnapin "Get-PSSnapin Citrix.ConfigurationLogging.Admin.*" -ErrorAction silentlycontinue) -eq $null) {
+				try { Add-PSSnapin Citrix.ConfigurationLogging.Admin.* -ErrorAction Stop } catch { write-error "Error Get-PSSnapin Citrix.ConfigurationLogging.Admin.* Powershell snapin"; Return }
+			} #If
+			
+			$Date = Get-Date
+			$StartDate = $Date.AddDays(-7) # Hard coded value for how many days back
+			$EndDate = $Date
+			
+			# Command to get the informations from log
+			$LogEntrys = Get-LogLowLevelOperation -MaxRecordCount 1000000 -Filter { StartTime -ge $StartDate -and EndTime -le $EndDate } | Where { $_.Details.PropertyName -eq 'MAINTENANCEMODE' } | Sort EndTime -Descending
+			
+			# Build an object with the data for the output
+			[array]$arrMaintenance = @()
+			ForEach ($LogEntry in $LogEntrys) {
+				$TempObj = New-Object -TypeName psobject -Property @{
+					User = $LogEntry.User
+					TargetName = $LogEntry.Details.TargetName
+					NewValue = $LogEntry.Details.NewValue
+					PreviousValue = $LogEntry.Details.PreviousValue
+					StartTime = $LogEntry.Details.StartTime
+					EndTime = $LogEntry.Details.EndTime
+				} #TempObj
+				$arrMaintenance += $TempObj
+			} #ForEach				
+			$arrMaintenance
+		} # ScriptBlock
+		
+		# Run the script block with invoke-command, return the values and close the session
+		$MaintLogs = Invoke-Command -Session $Session -ScriptBlock $ScriptBlock -ErrorAction Stop
+		Write-Output $MaintLogs
+		Remove-PSSession -Session $Session -ErrorAction SilentlyContinue
+		
+	} Catch {
+		Write-Warning "Error occurs: $_"
+	} # Try/Catch
+} # Get-CitrixMaintenanceInfo
+
+#==============================================================================================
 
 $wmiOSBlock = {param($computer)
   try { $wmi=Get-WmiObject -class Win32_OperatingSystem -computer $computer }
@@ -677,7 +766,9 @@ $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminA
 # SessionSupport only availiable in XD 7.x - for this reason only distinguish in Version above 7 if Desktop or XenApp
 if($controllerversion -lt 7 ) { $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress}
 else { $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress| Where-Object {$_.SessionSupport -eq "SingleSession" } }
-  
+
+$Maintenance = Get-CitrixMaintenanceInfo -AdminAddress $AdminAddress
+
 foreach($machine in $machines) {
 $tests = @{}
   
@@ -757,8 +848,12 @@ else { $tests.RegistrationState = "SUCCESS", $RegistrationState }
 # Column MaintenanceMode
 $MaintenanceMode = $machine | %{ $_.InMaintenanceMode }
 "MaintenanceMode: $MaintenanceMode" | LogMe -display -progress
-if ($MaintenanceMode) { $tests.MaintenanceMode = "WARNING", "ON"
-$ErrorVDI = $ErrorVDI + 1
+if ($MaintenanceMode) {
+	$objMaintenance = $Maintenance | Where { $_.TargetName.ToUpper() -eq $machine.MachineName.ToUpper() } | Select -First 1
+	If ($null -ne $objMaintenance){$MaintenanceModeOn = ("ON, " + $objMaintenance.User)} Else {$MaintenanceModeOn = "ON"}
+	"MaintenanceModeInfo: $MaintenanceModeOn" | LogMe -display -progress
+	$tests.MaintenanceMode = "WARNING", $MaintenanceModeOn
+	$ErrorVDI = $ErrorVDI + 1
 }
 else { $tests.MaintenanceMode = "SUCCESS", "OFF" }
   
@@ -887,6 +982,8 @@ if($ShowXenAppTable -eq 1 ) {
 $allXenAppResults = @{}
   
 $XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress | Where-Object {$_.SessionSupport -eq "MultiSession"}
+
+$Maintenance = Get-CitrixMaintenanceInfo -AdminAddress $AdminAddress
   
 foreach ($XAmachine in $XAmachines) {
 $tests = @{}
@@ -1011,8 +1108,12 @@ else { $tests.Serverload = "SUCCESS", $Serverload }
 # Column MaintMode
 $MaintMode = $XAmachine | %{ $_.InMaintenanceMode }
 "MaintenanceMode: $MaintMode" | LogMe -display -progress
-if ($MaintMode) { $tests.MaintMode = "WARNING", "ON"
-$ErrorVDI = $ErrorVDI + 1
+if ($MaintMode) { 
+	$objMaintenance = $Maintenance | Where { $_.TargetName.ToUpper() -eq $XAmachine.MachineName.ToUpper() } | Select -First 1
+	If ($null -ne $objMaintenance){$MaintenanceModeOn = ("ON, " + $objMaintenance.User)} Else {$MaintenanceModeOn = "ON"}
+	"MaintenanceModeInfo: $MaintenanceModeOn" | LogMe -display -progress
+	$tests.MaintMode = "WARNING", $MaintenanceModeOn
+	$ErrorVDI = $ErrorVDI + 1
 }
 else { $tests.MaintMode = "SUCCESS", "OFF" }
   
@@ -1302,5 +1403,10 @@ $smtpClient.Send( $emailMessage )
 # # Version 1.2.1 / 1.2.2
 # Edited on September 2016 by Sacha Thomet
 # - speed improvement for Graphic Mode - just check used desktops
+#
+# # Version 1.2.3
+# Edited on November 2016 by Stefan Beckmann
+# - Add function to get informations about the user who set maintenance mode
+# - WinRM needed if script run remote
 #
 #=========== History END ===========================================================================
