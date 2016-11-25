@@ -18,14 +18,16 @@
 # Call by : Manual or by Scheduled Task, e.g. once a day
 # Code History at the end of the file
 #==============================================================================================
+
+#Don't change below here if you don't know what you are doing ... 
+#==============================================================================================
 # Load only the snap-ins, which are used
 if ((Get-PSSnapin "Citrix.Broker.Admin.*" -EA silentlycontinue) -eq $null) {
 try { Add-PSSnapin Citrix.Broker.Admin.* -ErrorAction Stop }
 catch { write-error "Error Get-PSSnapin Citrix.Broker.Admin.* Powershell snapin"; Return }
 }
-# Change the below variables to suit your environment
-#==============================================================================================
 
+#==============================================================================================
 # Import Variables from XML:
 
 If (![string]::IsNullOrEmpty($hostinvocation)) {
