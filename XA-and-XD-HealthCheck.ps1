@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.2.3
+# Created on: 11.2014 Version: 1.2.4
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -1196,23 +1196,23 @@ $tests.DesktopGroupName = "NEUTRAL", $DesktopGroupName
 		
 		$tests.DFreespace = "NEUTRAL", "N/A" 
 		if ( $XAServerHaveD -eq "1" ) {
-			# Check D Disk Usage 
-	        $HardDiskd = CheckHardDiskUsage -hostname $machineDNS -deviceID "D:"
-			if ($HardDiskd -ne $null) {			
-				$XAPercentageDSd = $HardDiskd.PercentageDS
-				$frSpaced = $HardDiskd.frSpace
+		# Check D Disk Usage 
+        $HardDiskd = CheckHardDiskUsage -hostname $machineDNS -deviceID "D:"
+		if ($HardDiskd -ne $null) {			
+			$XAPercentageDSd = $HardDiskd.PercentageDS
+			$frSpaced = $HardDiskd.frSpace
 
-				If ( [int] $XAPercentageDSd -gt 15) { "Disk Free is normal [ $XAPercentageDSd % ]" | LogMe -display; $tests.CFreespace = "SUCCESS", "$frSpaced GB" } 
-				ElseIf ([int] $XAPercentageDSd -eq 0) { "Disk Free test failed" | LogMe -error; $tests.CFreespace = "ERROR", "Err" }
-				ElseIf ([int] $XAPercentageDSd -lt 5) { "Disk Free is Critical [ $XAPercentageDSd % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpaced GB" } 
-				ElseIf ([int] $XAPercentageDSd -lt 15) { "Disk Free is Low [ $XAPercentageDSd % ]" | LogMe -warning; $tests.CFreespace = "WARNING", "$frSpaced GB" }     
-				Else { "Disk Free is Critical [ $XAPercentageDSd % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpaced GB" }  
-				
-				$XAPercentageDSd = 0
-				$frSpaced = 0
-				$HardDiskd = $null
-			}
+			If ( [int] $XAPercentageDSd -gt 15) { "Disk Free is normal [ $XAPercentageDSd % ]" | LogMe -display; $tests.DFreespace = "SUCCESS", "$frSpaced GB" } 
+			ElseIf ([int] $XAPercentageDSd -eq 0) { "Disk Free test failed" | LogMe -error; $tests.DFreespace = "ERROR", "Err" }
+			ElseIf ([int] $XAPercentageDSd -lt 5) { "Disk Free is Critical [ $XAPercentageDSd % ]" | LogMe -error; $tests.DFreespace = "ERROR", "$frSpaced GB" } 
+			ElseIf ([int] $XAPercentageDSd -lt 15) { "Disk Free is Low [ $XAPercentageDSd % ]" | LogMe -warning; $tests.DFreespace = "WARNING", "$frSpaced GB" }     
+			Else { "Disk Free is Critical [ $XAPercentageDSd % ]" | LogMe -error; $tests.DFreespace = "ERROR", "$frSpaced GB" }  
+			
+			$XAPercentageDSd = 0
+			$frSpaced = 0
+			$HardDiskd = $null
 		}
+	}
 
 
 
@@ -1410,5 +1410,9 @@ $smtpClient.Send( $emailMessage )
 # Edited on November 2016 by Stefan Beckmann
 # - Add function to get informations about the user who set maintenance mode
 # - WinRM needed if script run remote
+# # Version 1.2.3
+#
+# Edited on December 2016 by Sacha (Input by https://github.com/sommerers)
+# - Bugfix on DFreespace is on N/A even if exists
 #
 #=========== History END ===========================================================================
