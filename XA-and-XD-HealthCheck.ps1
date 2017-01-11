@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.2.4
+# Created on: 11.2014 Version: 1.2.5
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -7,7 +7,7 @@
 # It generates a HTML output File which will be sent as Email.
 #
 # Initial versions tested on XenApp/XenDesktop 7.6-7.11 and XenDesktop 5.6 
-# Newest version tested on XenApp/XenDesktop 7.9-7.11 
+# Newest version tested on XenApp/XenDesktop 7.9-7.12 
 #
 # Prerequisite: Config file, a XenDesktop Controller with according privileges necessary 
 # Config file:  In order for the script to work properly, it needs a configuration file.
@@ -16,7 +16,11 @@
 #               Example: Script = "XA and XD HealthCheck.ps1", Config = "XA and XD HealthCheck_Parameters.xml"
 #
 # Call by : Manual or by Scheduled Task, e.g. once a day
+#           !! If you run it as scheduled task you need to add with argument “non interactive” 
+#           or your user has interactive persmission! User need farm and server admin permission to get all infos.
+#
 # Code History at the end of the file
+#
 #==============================================================================================
 
 #Don't change below here if you don't know what you are doing ... 
@@ -1259,7 +1263,7 @@ writeTableFooter $resultsHTM
 # Write Table with all XenApp Servers
 if ($ShowXenAppTable -eq 1 ) {
 writeTableHeader $resultsHTM $XenAppFirstheaderName $XenAppHeaderNames $XenAppHeaderWidths $XenApptablewidth
-$allXenAppResults | sort-object -property collectionName | %{ writeData $allXenAppResults $resultsHTM $XenAppHeaderNames }
+$allXenAppResults | sort-object -property CatalogName | %{ writeData $allXenAppResults $resultsHTM $XenAppHeaderNames }
 writeTableFooter $resultsHTM
 }
 else { "No XenApp output in HTML " | LogMe -display -progress }
@@ -1267,7 +1271,7 @@ else { "No XenApp output in HTML " | LogMe -display -progress }
 # Write Table with all Desktops
 if ($ShowDesktopTable -eq 1 ) {
 writeTableHeader $resultsHTM $VDIFirstheaderName $VDIHeaderNames $VDIHeaderWidths $VDItablewidth
-$allResults | sort-object -property collectionName | %{ writeData $allResults $resultsHTM $VDIHeaderNames }
+$allResults | sort-object -property CatalogName | %{ writeData $allResults $resultsHTM $VDIHeaderNames }
 writeTableFooter $resultsHTM
 }
 else { "No XenDesktop output in HTML " | LogMe -display -progress }
@@ -1410,9 +1414,11 @@ $smtpClient.Send( $emailMessage )
 # Edited on November 2016 by Stefan Beckmann
 # - Add function to get informations about the user who set maintenance mode
 # - WinRM needed if script run remote
-# # Version 1.2.3
-#
+# # Version 1.2.4
 # Edited on December 2016 by Sacha (Input by https://github.com/sommerers)
 # - Bugfix on DFreespace is on N/A even if exists
 #
+# # Version 1.2.5
+# descending order for the XenApp XenDesktop tables (sort-object -property CatalogName)
+# Info about running the Script as Scheduled task
 #=========== History END ===========================================================================
