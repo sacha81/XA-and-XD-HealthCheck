@@ -1,13 +1,13 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.2.5
+# Created on: 11.2014 Version: 1.2.6
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog)
 # File name: XA-and-XD-HealthCheck.ps1
 #
 # Description: This script checks a Citrix XenDesktop and/or XenApp 7.x Farm
 # It generates a HTML output File which will be sent as Email.
 #
-# Initial versions tested on XenApp/XenDesktop 7.6-7.11 and XenDesktop 5.6 
-# Newest version tested on XenApp/XenDesktop 7.9-7.12 
+# Initial versions tested on XenApp/XenDesktop 7.6 and XenDesktop 5.6 
+# Newest version tested on XenApp/XenDesktop 7.11-7.13
 #
 # Prerequisite: Config file, a XenDesktop Controller with according privileges necessary 
 # Config file:  In order for the script to work properly, it needs a configuration file.
@@ -17,7 +17,7 @@
 #
 # Call by : Manual or by Scheduled Task, e.g. once a day
 #           !! If you run it as scheduled task you need to add with argument “non interactive” 
-#           or your user has interactive persmission! User need farm and server admin permission to get all infos.
+#           or your user has interactive persmission!
 #
 # Code History at the end of the file
 #
@@ -117,15 +117,15 @@ $CatalogTablewidth = 900
   
 #Header for Table "DeliveryGroups" Get-BrokerDesktopGroup
 $AssigmentFirstheaderName = "DeliveryGroup"
-$vAssigmentHeaderNames = 	"PublishedName","DesktopKind", 	"TotalDesktops","DesktopsAvailable","DesktopsUnregistered", "DesktopsInUse","DesktopsFree", "MaintenanceMode"
-$vAssigmentHeaderWidths = 	"4", 			"4", 			"4", 			"4", 				"4", 					"4", 			"4", 			"2"
+$vAssigmentHeaderNames = 	"PublishedName","DesktopKind", "SessionSupport", 	"TotalMachines","DesktopsAvailable","DesktopsUnregistered", "DesktopsInUse","DesktopsFree", "MaintenanceMode"
+$vAssigmentHeaderWidths = 	"4", 			"4", 			"4", 	"4", 		"4", 				"4", 					"4", 			"4", 			"2"
 $Assigmenttablewidth = 900
   
 #Header for Table "VDI Checks" Get-BrokerMachine
 $VDIfirstheaderName = "Desktop-Name"
 
-$VDIHeaderNames = "CatalogName","PowerState", "Ping", "MaintenanceMode", 	"Uptime", 	"RegistrationState","AssociatedUserNames", "VDAVersion", "WriteCacheType", "WriteCacheSize", "HostedOn", "displaymode"
-$VDIHeaderWidths = "4", 		"4","4", 	"4", 				"4", 		"4", 				"4",			  "4",			  "4",			  "4",			  "4", "4"
+$VDIHeaderNames = "CatalogName","DeliveryGroup","PowerState", "Ping", "MaintMode", 	"Uptime", 	"RegState","VDAVersion","AssociatedUserNames",  "WriteCacheType", "WriteCacheSize", "HostedOn", "displaymode"
+$VDIHeaderWidths = "4", "4",		"4","4", 	"4", 				"4", 		"4", 				"4",			  "4",			  "4",			  "4",			  "4", "4"
 
 $VDItablewidth = 1200
   
@@ -133,12 +133,12 @@ $VDItablewidth = 1200
 $XenAppfirstheaderName = "XenApp-Server"
 if ($ShowConnectedXenAppUsers -eq "1") { 
 
-	$XenAppHeaderNames = "CatalogName", "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint",  "CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "WriteCacheType", "WriteCacheSize", "ConnectedUsers" , "HostedOn"
-	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"6", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4",			"4",			"4",			"4"
+	$XenAppHeaderNames = "CatalogName", "DeliveryGroup", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "VDAVersion", "Spooler", 	"CitrixPrint",  "CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions",  "WriteCacheType", "WriteCacheSize", "ConnectedUsers" , "HostedOn"
+	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"4", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4",			"4",			"4",			"4"
 }
 else { 
-	$XenAppHeaderNames = "CatalogName",  "DesktopGroupName", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint", 	"CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "WriteCacheType", "WriteCacheSize", "HostedOn"
-	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"6", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4",			"4",			"4"
+	$XenAppHeaderNames = "CatalogName",  "DeliveryGroup", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint", 	"CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "WriteCacheType", "WriteCacheSize", "HostedOn"
+	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"4", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4",			"4",			"4"
 
 }
 
@@ -341,7 +341,15 @@ param($fileName)
 <table width='1200'>
 <tr bgcolor='#CCCCCC'>
 <td colspan='7' height='25' align='left'>
-<font face='courier' color='#000000' size='2'><strong>Uptime Threshold =</strong></font><font color='#003399' face='courier' size='2'> $maxUpTimeDays days</font>
+<font face='courier' color='#000000' size='2'>
+
+<strong>Uptime Threshold: </strong> $maxUpTimeDays days <br>
+<strong>Database: </strong> $dbinfo <br>
+<strong>LicenseServerName: </strong> $lsname <strong>LicenseServerPort: </strong> $lsport <br>
+<strong>ConnectionLeasingEnabled: </strong> $CLeasing <br>
+<strong>LocalHostCacheEnabled: </strong> $LHC <br>
+
+</font>
 </td>
 </table>
 </body>
@@ -482,6 +490,15 @@ rm $resultsHTM -force -EA SilentlyContinue
 "#### Begin with Citrix XenDestop / XenApp HealthCheck ######################################################################" | LogMe -display -progress
   
 " " | LogMe -display -progress
+
+# get some farm infos, which will be presented in footer 
+$dbinfo = Get-BrokerDBConnection
+$brokersiteinfos = Get-BrokerSite
+$lsname = $brokersiteinfos.LicenseServerName
+$lsport = $brokersiteinfos.LicenseServerPort
+$CLeasing = $brokersiteinfos.ConnectionLeasingEnabled
+$LHC =$brokersiteinfos.LocalHostCacheEnabled
+
 
 # Log the loaded Citrix PS Snapins
 (Get-PSSnapin "Citrix.*" -EA silentlycontinue).Name | ForEach {"PSSnapIn: " + $_ | LogMe -display -progress}
@@ -685,10 +702,10 @@ foreach ($Assigment in $Assigments) {
   $tests = @{}
   
   #Name of DeliveryGroup
-  $DeliveryGroupName = $Assigment | %{ $_.Name }
-  "DeliveryGroup: $DeliveryGroupName" | LogMe -display -progress
+  $DeliveryGroup = $Assigment | %{ $_.Name }
+  "DeliveryGroup: $DeliveryGroup" | LogMe -display -progress
   
-  if ($ExcludedCatalogs -contains $DeliveryGroupName) {
+  if ($ExcludedCatalogs -contains $DeliveryGroup) {
     "Excluded Delivery Group, skipping" | LogMe -display -progress
   } else {
   
@@ -700,7 +717,7 @@ foreach ($Assigment in $Assigments) {
     #DesktopsTotal
     $TotalDesktops = $Assigment | %{ $_.TotalDesktops }
     "DesktopsAvailable: $TotalDesktops" | LogMe -display -progress
-    $tests.TotalDesktops = "NEUTRAL", $TotalDesktops
+    $tests.TotalMachines = "NEUTRAL", $TotalDesktops
   
     #DesktopsAvailable
     $AssigmentDesktopsAvailable = $Assigment | %{ $_.DesktopsAvailable }
@@ -711,6 +728,46 @@ foreach ($Assigment in $Assigments) {
     $AssigmentDesktopsKind = $Assigment | %{ $_.DesktopKind }
     "DesktopKind: $AssigmentDesktopsKind" | LogMe -display -progress
     $tests.DesktopKind = "NEUTRAL", $AssigmentDesktopsKind
+	
+	#SessionSupport
+	$SessionSupport = $Assigment | %{ $_.SessionSupport }
+	"SessionSupport: $SessionSupport" | LogMe -display -progress
+    $tests.SessionSupport = "NEUTRAL", $SessionSupport
+	
+	if ($SessionSupport -eq "MultiSession" ) { 
+	
+	$tests.DesktopsFree = "NEUTRAL", "N/A"
+	$tests.DesktopsInUse = "NEUTRAL", "N/A"
+		
+	}
+    else { 
+			#DesktopsInUse
+			$AssigmentDesktopsInUse = $Assigment | %{ $_.DesktopsInUse }
+			"DesktopsInUse: $AssigmentDesktopsInUse" | LogMe -display -progress
+			$tests.DesktopsInUse = "NEUTRAL", $AssigmentDesktopsInUse
+	
+			#DesktopFree
+			$AssigmentDesktopsFree = $AssigmentDesktopsAvailable - $AssigmentDesktopsInUse
+			"DesktopsFree: $AssigmentDesktopsFree" | LogMe -display -progress
+  
+			if ($AssigmentDesktopsKind -eq "shared") {
+			if ($AssigmentDesktopsFree -gt 0 ) {
+				"DesktopsFree < 1 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
+				$tests.DesktopsFree = "SUCCESS", $AssigmentDesktopsFree
+			} elseif ($AssigmentDesktopsFree -lt 0 ) {
+				"DesktopsFree < 1 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
+				$tests.DesktopsFree = "SUCCESS", "N/A"
+			} else {
+				$tests.DesktopsFree = "WARNING", $AssigmentDesktopsFree
+				"DesktopsFree > 0 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
+			}
+			} else {
+			$tests.DesktopsFree = "NEUTRAL", "N/A"
+			}
+	
+	
+	}
+		
   
     #inMaintenanceMode
     $AssigmentDesktopsinMaintenanceMode = $Assigment | %{ $_.inMaintenanceMode }
@@ -729,32 +786,10 @@ foreach ($Assigment in $Assigments) {
       "DesktopsUnregistered <= 0 ! ($AssigmentDesktopsUnregistered)" | LogMe -display -progress
     }
   
-    #DesktopsInUse
-    $AssigmentDesktopsInUse = $Assigment | %{ $_.DesktopsInUse }
-    "DesktopsInUse: $AssigmentDesktopsInUse" | LogMe -display -progress
-    $tests.DesktopsInUse = "NEUTRAL", $AssigmentDesktopsInUse
-  
-    #DesktopFree
-    $AssigmentDesktopsFree = $AssigmentDesktopsAvailable - $AssigmentDesktopsInUse
-    "DesktopsFree: $AssigmentDesktopsFree" | LogMe -display -progress
-  
-    if ($AssigmentDesktopsKind -eq "shared") {
-      if ($AssigmentDesktopsFree -gt 0 ) {
-        "DesktopsFree < 1 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
-        $tests.DesktopsFree = "SUCCESS", $AssigmentDesktopsFree
-      } elseif ($AssigmentDesktopsFree -lt 0 ) {
-        "DesktopsFree < 1 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
-        $tests.DesktopsFree = "SUCCESS", "N/A"
-      } else {
-        $tests.DesktopsFree = "WARNING", $AssigmentDesktopsFree
-        "DesktopsFree > 0 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
-      }
-    } else {
-      $tests.DesktopsFree = "SUCCESS", "N/A"
-    }
+    
       
     #Fill $tests into array
-    $AssigmentsResults.$DeliveryGroupName = $tests
+    $AssigmentsResults.$DeliveryGroup = $tests
   }
   " --- " | LogMe -display -progress
 }
@@ -788,6 +823,11 @@ $machineDNS = $machine | %{ $_.DNSName }
 $CatalogName = $machine | %{ $_.CatalogName }
 "Catalog: $CatalogName" | LogMe -display -progress
 $tests.CatalogName = "NEUTRAL", $CatalogName
+
+# Column DeliveryGroup
+$DeliveryGroup = $machine | %{ $_.DesktopGroupName }
+"DeliveryGroup: $DeliveryGroup" | LogMe -display -progress
+$tests.DeliveryGroup = "NEUTRAL", $DeliveryGroup
 
 # Column Powerstate
 $Powered = $machine | %{ $_.PowerState }
@@ -833,7 +873,59 @@ if ($result -eq "SUCCESS") {
     "WMI connection failed - check WMI for corruption" | LogMe -display -error
     stop-job $job
   }
+
+  #-----------------
+# Column WriteCacheSize (only if Ping is successful)
+################ PVS SECTION ###############
+if (test-path \\$machineDNS\c$\Personality.ini) {
+# Test if PVS cache is of type "device's hard drive"
+$PvsWriteCacheUNC = Join-Path "\\$machineDNS" ($PvsWriteCacheDrive+"$"+"\.vdiskcache")
+$CacheDiskOnHD = Test-Path $PvsWriteCacheUNC
+
+if ($CacheDiskOnHD -eq $True) {
+  $CacheDiskExists = $True
+  $CachePVSType = "Device HD"
+} else {
+  # Test if PVS cache is of type "device RAM with overflow to hard drive"
+  $PvsWriteCacheUNC = Join-Path "\\$machineDNS" ($PvsWriteCacheDrive+"$"+"\vdiskdif.vhdx")
+  $CacheDiskRAMwithOverflow = Test-Path $PvsWriteCacheUNC
+  if ($CacheDiskRAMwithOverflow -eq $True) {
+    $CacheDiskExists = $True
+    $CachePVSType = "Device RAM with overflow to disk"
+  } else {
+    $CacheDiskExists = $False
+    $CachePVSType = ""
+  }
 }
+
+if ($CacheDiskExists -eq $True) {
+$CacheDisk = [long] ((get-childitem $PvsWriteCacheUNC -force).length)
+$CacheDiskGB = "{0:n2}GB" -f($CacheDisk / 1GB)
+"PVS Cache file size: {0:n2}GB" -f($CacheDisk / 1GB) | LogMe
+#"PVS Cache max size: {0:n2}GB" -f($PvsWriteMaxSize / 1GB) | LogMe -display
+$tests.WriteCacheType = "NEUTRAL", $CachePVSType
+if ($CacheDisk -lt ($PvsWriteMaxSize * 0.5)) {
+"WriteCache file size is low" | LogMe
+$tests.WriteCacheSize = "SUCCESS", $CacheDiskGB
+}
+elseif ($CacheDisk -lt ($PvsWriteMaxSize * 0.8)) {
+"WriteCache file size moderate" | LogMe -display -warning
+$tests.WriteCacheSize = "WARNING", $CacheDiskGB
+}
+else {
+"WriteCache file size is high" | LogMe -display -error
+$tests.WriteCacheSize = "ERROR", $CacheDiskGB
+}
+}
+$Cachedisk = 0
+}
+else { $tests.WriteCacheSize = "SUCCESS", "N/A" }
+############## END PVS SECTION #############
+
+
+#---------------------
+  
+  }
 else {
 $tests.Ping = "Error", $result
 $ErrorVDI = $ErrorVDI + 1
@@ -844,10 +936,10 @@ $ErrorVDI = $ErrorVDI + 1
 $RegistrationState = $machine | %{ $_.RegistrationState }
 "State: $RegistrationState" | LogMe -display -progress
 if ($RegistrationState -ne "Registered") {
-$tests.RegistrationState = "ERROR", $RegistrationState
+$tests.RegState = "ERROR", $RegistrationState
 $ErrorVDI = $ErrorVDI + 1
 }
-else { $tests.RegistrationState = "SUCCESS", $RegistrationState }
+else { $tests.RegState = "SUCCESS", $RegistrationState }
 
 } 
  
@@ -858,10 +950,10 @@ if ($MaintenanceMode) {
 	$objMaintenance = $Maintenance | Where { $_.TargetName.ToUpper() -eq $machine.MachineName.ToUpper() } | Select -First 1
 	If ($null -ne $objMaintenance){$MaintenanceModeOn = ("ON, " + $objMaintenance.User)} Else {$MaintenanceModeOn = "ON"}
 	"MaintenanceModeInfo: $MaintenanceModeOn" | LogMe -display -progress
-	$tests.MaintenanceMode = "WARNING", $MaintenanceModeOn
+	$tests.MaintMode = "WARNING", $MaintenanceModeOn
 	$ErrorVDI = $ErrorVDI + 1
 }
-else { $tests.MaintenanceMode = "SUCCESS", "OFF" }
+else { $tests.MaintMode = "SUCCESS", "OFF" }
   
 # Column HostedOn 
 $HostedOn = $machine | %{ $_.HostingServerName }
@@ -877,6 +969,12 @@ $tests.VDAVersion = "NEUTRAL", $VDAVersion
 $AssociatedUserNames = $machine | %{ $_.AssociatedUserNames }
 "Assigned to $AssociatedUserNames" | LogMe -display -progress
 $tests.AssociatedUserNames = "NEUTRAL", $AssociatedUserNames
+
+
+
+
+
+
 
 # Column displaymode when a User has a Session
 $sessionUser = $machine | %{ $_.SessionUserName }
@@ -1151,10 +1249,10 @@ $ConnectedUsers = $XAmachine | %{ $_.AssociatedUserNames }
 "Connected users: $ConnectedUsers" | LogMe -display -progress
 $tests.ConnectedUsers = "NEUTRAL", $ConnectedUsers
   
-# Column DesktopGroupName
-$DesktopGroupName = $XAmachine | %{ $_.DesktopGroupName }
-"DesktopGroupName: $DesktopGroupName" | LogMe -display -progress
-$tests.DesktopGroupName = "NEUTRAL", $DesktopGroupName
+# Column DeliveryGroup
+$DeliveryGroup = $XAmachine | %{ $_.DesktopGroupName }
+"DeliveryGroup: $DeliveryGroup" | LogMe -display -progress
+$tests.DeliveryGroup = "NEUTRAL", $DeliveryGroup
 
 
 #==============================================================================================
@@ -1421,4 +1519,13 @@ $smtpClient.Send( $emailMessage )
 # # Version 1.2.5
 # descending order for the XenApp XenDesktop tables (sort-object -property CatalogName)
 # Info about running the Script as Scheduled task
+#
+# # Version 1.2.6
+# Edited on February 2017 by Sacha Thomet
+# - Minor changes in description of the columns (DesktopGroup is now DelvieryGroup similar like Studio)
+# - new column for DeliveryGroup in Desktops-Table
+# - new column for SessionSupport in DeliveryGroup-Table
+# - Some new additional Farm infos in footer (DB,LHC, ConnectionLeasing, LicenseServer)
+# - Fix of WriteCache in Desktop section (still not 100% ok ... Sorry!)
+# 
 #=========== History END ===========================================================================
