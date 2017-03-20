@@ -492,7 +492,7 @@ rm $resultsHTM -force -EA SilentlyContinue
 " " | LogMe -display -progress
 
 # get some farm infos, which will be presented in footer 
-$dbinfo = Get-BrokerDBConnection
+$dbinfo = Get-BrokerDBConnection -AdminAddress $DeliveryControllers[0]
 $brokersiteinfos = Get-BrokerSite
 $lsname = $brokersiteinfos.LicenseServerName
 $lsport = $brokersiteinfos.LicenseServerPort
