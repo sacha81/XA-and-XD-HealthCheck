@@ -100,8 +100,10 @@ $ReportDate = (Get-Date -UFormat "%A, %d. %B %Y %R")
 
 
 $currentDir = Split-Path $MyInvocation.MyCommand.Path
-$logfile = Join-Path $currentDir ("CTXXDHealthCheck.log")
-$resultsHTM = Join-Path $currentDir ("CTXXDHealthCheck.htm")
+$outputpath = Join-Path $currentDir "output"
+$outputdate = Get-Date -Format 'yyyyMMddHHmm'
+$logfile = Join-Path $outputpath ("CTXXDHealthCheck.log")
+$resultsHTM = Join-Path $outputpath ("CTXXDHealthCheck_$outputdate.htm")
   
 #Header for Table "XD/XA Controllers" Get-BrokerController
 $XDControllerFirstheaderName = "ControllerServer"
@@ -492,7 +494,7 @@ rm $resultsHTM -force -EA SilentlyContinue
 " " | LogMe -display -progress
 
 # get some farm infos, which will be presented in footer 
-$dbinfo = Get-BrokerDBConnection
+$dbinfo = Get-BrokerDBConnection -AdminAddress $AdminAddress
 $brokersiteinfos = Get-BrokerSite
 $lsname = $brokersiteinfos.LicenseServerName
 $lsport = $brokersiteinfos.LicenseServerPort
@@ -802,11 +804,11 @@ if($ShowDesktopTable -eq 1 ) {
   
 $allResults = @{}
   
-$machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress| Where-Object {$_.SessionSupport -eq "SingleSession"}
+$machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress| Where-Object {$_.SessionSupport -eq "SingleSession" -and @(compare $_.tags $ExcludedTags -IncludeEqual | ? {$_.sideindicator -eq '=='}).count -eq 0}
   
 # SessionSupport only availiable in XD 7.x - for this reason only distinguish in Version above 7 if Desktop or XenApp
-if($controllerversion -lt 7 ) { $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress}
-else { $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress| Where-Object {$_.SessionSupport -eq "SingleSession" } }
+if($controllerversion -lt 7 ) { $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -and @(compare $_.tags $ExcludedTags -IncludeEqual | ? {$_.sideindicator -eq '=='}).count -eq 0}
+else { $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress| Where-Object {$_.SessionSupport -eq "SingleSession" -and @(compare $_.tags $ExcludedTags -IncludeEqual | ? {$_.sideindicator -eq '=='}).count -eq 0} }
 
 $Maintenance = Get-CitrixMaintenanceInfo -AdminAddress $AdminAddress
 
@@ -1085,7 +1087,7 @@ else { "Desktop Check skipped because ShowDesktopTable = 0 " | LogMe -display -p
 if($ShowXenAppTable -eq 1 ) {
 $allXenAppResults = @{}
   
-$XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress | Where-Object {$_.SessionSupport -eq "MultiSession"}
+$XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress | Where-Object {$_.SessionSupport -eq "MultiSession" -and @(compare $_.tags $ExcludedTags -IncludeEqual | ? {$_.sideindicator -eq '=='}).count -eq 0}
 
 $Maintenance = Get-CitrixMaintenanceInfo -AdminAddress $AdminAddress
   
