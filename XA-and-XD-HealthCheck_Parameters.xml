@@ -47,6 +47,13 @@
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
+			<!-- Exclude Tags, e.g excludeFromReport, UAT, etc -->
+			<Name>ExcludedTags</Name>
+			<Value>excludeFromReport</Value>
+			<Type>[array]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
 			<!-- define the maximum of counted machines (default is only 250) -->
 			<Name>maxmachines</Name>
 			<Value>1000</Value>
