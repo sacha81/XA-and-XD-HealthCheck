@@ -494,6 +494,7 @@ rm $resultsHTM -force -EA SilentlyContinue
 " " | LogMe -display -progress
 
 # get some farm infos, which will be presented in footer 
+
 $dbinfo = Get-BrokerDBConnection -AdminAddress $AdminAddress
 $brokersiteinfos = Get-BrokerSite
 $lsname = $brokersiteinfos.LicenseServerName
