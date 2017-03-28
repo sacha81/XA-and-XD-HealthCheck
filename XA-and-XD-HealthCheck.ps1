@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.2.6
+# Created on: 11.2014 Version: 1.2.7
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -1530,5 +1530,11 @@ $smtpClient.Send( $emailMessage )
 # - new column for SessionSupport in DeliveryGroup-Table
 # - Some new additional Farm infos in footer (DB,LHC, ConnectionLeasing, LicenseServer)
 # - Fix of WriteCache in Desktop section (still not 100% ok ... Sorry!)
+#
+# # Version 1.2.7
+# Edited on March 2017 by mikekacz
+# - Fix required to work on non-controller server, like on Studio server. -adminaddress needs to be 
+#   setup only once, as it is kept in PoSh session
+# - Exclusions by tags. PS1 and XML changed! 
 # 
 #=========== History END ===========================================================================
