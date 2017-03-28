@@ -110,6 +110,12 @@ $XDControllerFirstheaderName = "ControllerServer"
 $XDControllerHeaderNames = "Ping", 	"State","DesktopsRegistered", 	"ActiveSiteServices", 	"CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"Uptime"
 $XDControllerHeaderWidths = "2",	"2", 	"2", 					"10",					"4",			"4",			"4",		"4",		"4"
 $XDControllerTableWidth= 1200
+
+#Header for Table "CTX Licenses" Get-BrokerController
+$CTXLicFirstheaderName = "LicenseName"
+$CTXLicHeaderNames = "LicenseServer", 	"Count","InUse", 	"Available"
+$CTXLicHeaderWidths = "4",	"2", 	"2", 					"2"
+$CTXLicTableWidth= 900
   
 #Header for Table "MachineCatalogs" Get-BrokerCatalog
 $CatalogHeaderName = "CatalogName"
@@ -221,7 +227,8 @@ Function CheckHardDiskUsage()
     	return $HardDisk
 	} Catch { "Error returned while checking the Hard Disk usage. Perfmon Counters may be fault" | LogMe -error; return $null } 
 }
-  
+
+
 #==============================================================================================
 Function writeHtmlHeader
 {
@@ -494,7 +501,6 @@ rm $resultsHTM -force -EA SilentlyContinue
 " " | LogMe -display -progress
 
 # get some farm infos, which will be presented in footer 
-
 $dbinfo = Get-BrokerDBConnection -AdminAddress $AdminAddress
 $brokersiteinfos = Get-BrokerSite
 $lsname = $brokersiteinfos.LicenseServerName
@@ -797,6 +803,96 @@ foreach ($Assigment in $Assigments) {
   " --- " | LogMe -display -progress
 }
   
+# ======= License Check ========
+if($ShowCTXLicense -eq 1 ){
+
+    $myCollection = @()
+    try 
+	{
+        $LicWMIQuery = get-wmiobject -namespace "ROOT\CitrixLicensing" -computer $lsname -query "select * from Citrix_GT_License_Pool" -ErrorAction Stop | ? {$_.PLD -in $CTXLicenseMode}
+        
+        foreach ($group in $($LicWMIQuery | group pld))
+        {
+            $lics = $group | select -ExpandProperty group
+            $i = 1
+
+            $myArray_Count = 0
+		    $myArray_InUse = 0
+		    $myArray_Available = 0
+		
+		    foreach ($lic in @($lics))
+		    {
+		    $myArray = "" | Select-Object LicenseServer,LicenceName,Count,InUse,Available
+		    $myArray.LicenseServer = $lsname
+		    $myArray.LicenceName = "$($lics.pld) ($i) Licence"
+		    $myArray.Count = $Lic.count - $Lic.Overdraft
+		    if ($Lic.inusecount -gt $myArray.Count) {$myArray.InUse = $myArray.Count} else {$myArray.InUse = $Lic.inusecount}
+		    $myArray.Available = $myArray.count - $myArray.InUse
+		    $myCollection += $myArray
+		
+		    $myArray = "" | Select-Object LicenseServer,LicenceName,Count,InUse,Available
+		    $myArray.LicenseServer = $lsname
+		    $myArray.LicenceName = "$($lics.pld) ($i) Overdraft"
+		    $myArray.Count = $Lic.Overdraft
+		    if ($Lic.inusecount -gt $($Lic.count - $Lic.Overdraft)) {$myArray.InUse = $Lic.inusecount - $($Lic.count - $Lic.Overdraft)} else {$myArray.InUse = 0}
+		    $myArray.Available = $myArray.count - $myArray.InUse
+		    $myCollection += $myArray
+		
+		    $myArray_Count += $Lic.count
+		    $myArray_InUse += $Lic.inusecount
+		    $myArray_Available += $Lic.pooledavailable
+				
+		    $i++
+		    }
+		
+		    $myArray = "" | Select-Object LicenseServer,LicenceName,Count,InUse,Available
+		    $myArray.LicenseServer = $lsname
+		    $myArray.LicenceName = "$($lics.pld) - Total"
+		    $myArray.Count = $myArray_Count
+		    $myArray.InUse = $myArray_InUse
+		    $myArray.Available = $myArray_Available
+		    $myCollection += $myArray
+
+    }
+    }
+    catch
+    {
+            $myArray = "" | Select-Object LicenseServer,LicenceName,Count,InUse,Available
+		    $myArray.LicenseServer = $lsname
+		    $myArray.LicenceName = "n/a"
+		    $myArray.Count = "n/a"
+		    $myArray.InUse = "n/a"
+		    $myArray.Available = "n/a"
+		    $myCollection += $myArray 
+    }
+    
+    $CTXLicResults = @{}
+
+    foreach ($line in $myCollection)
+    {
+        $tests = @{}
+
+
+        if ($line.LicenceName -eq "n/a")
+        {
+            $tests.LicenseServer ="error", $line.LicenseServer
+            $tests.Count ="error", $line.Count
+		    $tests.InUse ="error", $line.InUse
+		    $tests.Available ="error", $line.Available
+        }
+        else
+        {
+            $tests.LicenseServer ="NEUTRAL", $line.LicenseServer
+            $tests.Count ="NEUTRAL", $line.Count
+		    $tests.InUse ="NEUTRAL", $line.InUse
+		    $tests.Available ="NEUTRAL", $line.Available}
+            $CTXLicResults.($line.LicenceName) =  $tests
+        }
+
+}
+else {"CTX License Check skipped because ShowCTXLicense = 0 " | LogMe -display -progress }
+  
+
 # ======= Desktop Check ========
 "Check virtual Desktops ####################################################################################" | LogMe -display -progress
 " " | LogMe -display -progress
@@ -1349,6 +1445,11 @@ writeHtmlHeader "$EnvironmentName Farm Report" $resultsHTM
 writeTableHeader $resultsHTM $XDControllerFirstheaderName $XDControllerHeaderNames $XDControllerHeaderWidths $XDControllerTableWidth
 $ControllerResults | sort-object -property XDControllerFirstheaderName | %{ writeData $ControllerResults $resultsHTM $XDControllerHeaderNames }
 writeTableFooter $resultsHTM
+
+# Write Table with the License
+writeTableHeader $resultsHTM $CTXLicFirstheaderName $CTXLicHeaderNames $CTXLicHeaderWidths $CTXLicTableWidth
+$CTXLicResults | sort-object -property LicenseName | %{ writeData $CTXLicResults $resultsHTM $CTXLicHeaderNames }
+writeTableFooter $resultsHTM
   
 # Write Table with the Catalogs
 writeTableHeader $resultsHTM $CatalogHeaderName $CatalogHeaderNames $CatalogWidths $CatalogTablewidth
@@ -1536,5 +1637,5 @@ $smtpClient.Send( $emailMessage )
 # - Fix required to work on non-controller server, like on Studio server. -adminaddress needs to be 
 #   setup only once, as it is kept in PoSh session
 # - Exclusions by tags. PS1 and XML changed! 
-# 
+# - Citrix License report 
 #=========== History END ===========================================================================
