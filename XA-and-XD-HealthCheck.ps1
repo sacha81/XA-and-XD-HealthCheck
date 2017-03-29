@@ -100,10 +100,10 @@ $ReportDate = (Get-Date -UFormat "%A, %d. %B %Y %R")
 
 
 $currentDir = Split-Path $MyInvocation.MyCommand.Path
-$outputpath = Join-Path $currentDir "output"
+$outputpath = Join-Path $currentDir "" #add here a custom output folder if you wont have it on the same directory
 $outputdate = Get-Date -Format 'yyyyMMddHHmm'
 $logfile = Join-Path $outputpath ("CTXXDHealthCheck.log")
-$resultsHTM = Join-Path $outputpath ("CTXXDHealthCheck_$outputdate.htm")
+$resultsHTM = Join-Path $outputpath ("CTXXDHealthCheck.htm") #add $outputdate in filename if you like
   
 #Header for Table "XD/XA Controllers" Get-BrokerController
 $XDControllerFirstheaderName = "ControllerServer"
