@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.2.7
+# Created on: 11.2014 Version: 1.2.8
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -84,7 +84,7 @@ Function New-XMLVariables {
 New-XMLVariables
 
 
-$PvsWriteMaxSize = $PvsWriteMaxSize * 1Gb
+$PvsWriteMaxSizeInGB = $PvsWriteMaxSize * 1Gb
 
 ForEach ($DeliveryController in $DeliveryControllers){
     If ($DeliveryController -ieq "LocalHost"){
@@ -526,7 +526,8 @@ $ControllerVersion = $Controllers[0].ControllerVersion
   
 if ($ControllerVersion -lt 7 ) {
   "XenDesktop/XenApp Version below 7.x ($controllerversion) - only DesktopCheck will be performed" | LogMe -display -progress
-  $ShowXenAppTable = 0
+  #$ShowXenAppTable = 0 #doesent work with XML variables
+  Set-Variable -Name ShowXenAppTable -Value 0
 } else { 
   "XenDesktop/XenApp Version above 7.x ($controllerversion) - XenApp and DesktopCheck will be performed" | LogMe -display -progress
 }
@@ -1001,13 +1002,13 @@ if ($CacheDiskExists -eq $True) {
 $CacheDisk = [long] ((get-childitem $PvsWriteCacheUNC -force).length)
 $CacheDiskGB = "{0:n2}GB" -f($CacheDisk / 1GB)
 "PVS Cache file size: {0:n2}GB" -f($CacheDisk / 1GB) | LogMe
-#"PVS Cache max size: {0:n2}GB" -f($PvsWriteMaxSize / 1GB) | LogMe -display
+#"PVS Cache max size: {0:n2}GB" -f($PvsWriteMaxSizeInGB / 1GB) | LogMe -display
 $tests.WriteCacheType = "NEUTRAL", $CachePVSType
-if ($CacheDisk -lt ($PvsWriteMaxSize * 0.5)) {
+if ($CacheDisk -lt ($PvsWriteMaxSizeInGB * 0.5)) {
 "WriteCache file size is low" | LogMe
 $tests.WriteCacheSize = "SUCCESS", $CacheDiskGB
 }
-elseif ($CacheDisk -lt ($PvsWriteMaxSize * 0.8)) {
+elseif ($CacheDisk -lt ($PvsWriteMaxSizeInGB * 0.8)) {
 "WriteCache file size moderate" | LogMe -display -warning
 $tests.WriteCacheSize = "WARNING", $CacheDiskGB
 }
@@ -1256,13 +1257,13 @@ if ($CacheDiskExists -eq $True) {
 $CacheDisk = [long] ((get-childitem $PvsWriteCacheUNC -force).length)
 $CacheDiskGB = "{0:n2}GB" -f($CacheDisk / 1GB)
 "PVS Cache file size: {0:n2}GB" -f($CacheDisk / 1GB) | LogMe
-#"PVS Cache max size: {0:n2}GB" -f($PvsWriteMaxSize / 1GB) | LogMe -display
+#"PVS Cache max size: {0:n2}GB" -f($PvsWriteMaxSizeInGB / 1GB) | LogMe -display
 $tests.WriteCacheType = "NEUTRAL", $CachePVSType
-if ($CacheDisk -lt ($PvsWriteMaxSize * 0.5)) {
+if ($CacheDisk -lt ($PvsWriteMaxSizeInGB * 0.5)) {
 "WriteCache file size is low" | LogMe
 $tests.WriteCacheSize = "SUCCESS", $CacheDiskGB
 }
-elseif ($CacheDisk -lt ($PvsWriteMaxSize * 0.8)) {
+elseif ($CacheDisk -lt ($PvsWriteMaxSizeInGB * 0.8)) {
 "WriteCache file size moderate" | LogMe -display -warning
 $tests.WriteCacheSize = "WARNING", $CacheDiskGB
 }
@@ -1429,17 +1430,16 @@ else { $allXenAppResults.$machineDNS = $tests }
 }
 else { "XenApp Check skipped because ShowXenAppTable = 0 or Farm is < V7.x " | LogMe -display -progress }
   
-"####################### Check END ####################################################################################" | LogMe -display -progress
-
+####################### Check END ####################################################################################" | LogMe -display -progress
 # ======= Write all results to an html file =================================================
 # Add Version of XenDesktop to EnvironmentName
 $XDmajor, $XDminor = $controllerversion.Split(".")[0..1]
 $XDVersion = "$XDmajor.$XDminor"
-$EnvironmentName = "$EnvironmentName $XDVersion"
-$emailSubject = ("$EnvironmentName Farm Report - " + $ReportDate)
+$EnvironmentNameOut = "$EnvironmentName $XDVersion"
+$emailSubject = ("$EnvironmentNameOut Farm Report - " + $ReportDate)
 
 Write-Host ("Saving results to html report: " + $resultsHTM)
-writeHtmlHeader "$EnvironmentName Farm Report" $resultsHTM
+writeHtmlHeader "$EnvironmentNameOut Farm Report" $resultsHTM
   
 # Write Table with the Controllers
 writeTableHeader $resultsHTM $XDControllerFirstheaderName $XDControllerHeaderNames $XDControllerHeaderWidths $XDControllerTableWidth
@@ -1638,4 +1638,12 @@ $smtpClient.Send( $emailMessage )
 #   setup only once, as it is kept in PoSh session
 # - Exclusions by tags. PS1 and XML changed! 
 # - Citrix License report 
+#
+# # Version 1.2.8
+# Edited on April 2017 by Sacha Thomet
+# - Bugfixes:
+#   * Replace $PvsWriteMaxSize with $PvsWriteMaxSizeInGB (PvsWriteMaxSize is unique to take it from XML)
+#   * Replace $EnvironmentName with $EnvironmentNameOut ($EnvironmentName is unique to take it from XML)
+#   * Replace $ShowXenAppTable with $ShowXenAppTable ($ShowXenAppTable is unique to take it from XML)
+#
 #=========== History END ===========================================================================
