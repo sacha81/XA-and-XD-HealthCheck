@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.2.8
+# Created on: 11.2014 Version: 1.2.9
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -107,9 +107,18 @@ $resultsHTM = Join-Path $outputpath ("CTXXDHealthCheck.htm") #add $outputdate in
   
 #Header for Table "XD/XA Controllers" Get-BrokerController
 $XDControllerFirstheaderName = "ControllerServer"
-$XDControllerHeaderNames = "Ping", 	"State","DesktopsRegistered", 	"ActiveSiteServices", 	"CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"Uptime"
-$XDControllerHeaderWidths = "2",	"2", 	"2", 					"10",					"4",			"4",			"4",		"4",		"4"
+$XDControllerHeaderNames = "Ping", 	"State","DesktopsRegistered", 	"ActiveSiteServices"
+$XDControllerHeaderWidths = "2",	"2", 	"2", 					"10"				
 $XDControllerTableWidth= 1200
+foreach ($disk in $diskLettersControllers)
+{
+    $XDControllerHeaderNames += "$($disk)Freespace"
+    $XDControllerHeaderWidths += "4"
+}
+$XDControllerHeaderNames +=  	"AvgCPU", 	"MemUsg", 	"Uptime"
+$XDControllerHeaderWidths +=    "4",		"4",		"4"
+
+
 
 #Header for Table "CTX Licenses" Get-BrokerController
 $CTXLicFirstheaderName = "LicenseName"
@@ -139,14 +148,22 @@ $VDItablewidth = 1200
   
 #Header for Table "XenApp Checks" Get-BrokerMachine
 $XenAppfirstheaderName = "XenApp-Server"
+$XenAppHeaderNames = "CatalogName", "DeliveryGroup", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "VDAVersion", "Spooler", 	"CitrixPrint"
+$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"4", 		"4", 			"4"
+foreach ($disk in $diskLettersWorkers)
+{
+    $XenAppHeaderNames += "$($disk)Freespace"
+    $XenAppHeaderWidths += "4"
+}
+
 if ($ShowConnectedXenAppUsers -eq "1") { 
 
-	$XenAppHeaderNames = "CatalogName", "DeliveryGroup", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "VDAVersion", "Spooler", 	"CitrixPrint",  "CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions",  "WriteCacheType", "WriteCacheSize", "ConnectedUsers" , "HostedOn"
-	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"4", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4",			"4",			"4",			"4"
+	$XenAppHeaderNames += "AvgCPU", 	"MemUsg", 	"ActiveSessions",  "WriteCacheType", "WriteCacheSize", "ConnectedUsers" , "HostedOn"
+	$XenAppHeaderWidths +="4",		"4",			  "4",			"4",			"4",			"4",			"4"
 }
 else { 
-	$XenAppHeaderNames = "CatalogName",  "DeliveryGroup", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint", 	"CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "WriteCacheType", "WriteCacheSize", "HostedOn"
-	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"4", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4",			"4",			"4"
+	$XenAppHeaderNames += "AvgCPU", 	"MemUsg", 	"ActiveSessions", "WriteCacheType", "WriteCacheSize", "HostedOn"
+	$XenAppHeaderWidths +="4",		"4",		"4",			  "4",			"4",			"4"
 
 }
 
@@ -587,45 +604,27 @@ $tests.ActiveSiteServices = "NEUTRAL", $ActiveSiteServices
         else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }   
 		$UsedMemory = 0  
 
-        # Check C Disk Usage 
-		$HardDisk = CheckHardDiskUsage -hostname $ControllerDNS -deviceID "C:"
-		if ($HardDisk -ne $null) {	
-			$XAPercentageDS = $HardDisk.PercentageDS
-			$frSpace = $HardDisk.frSpace
+        foreach ($disk in $diskLettersControllers)
+        {
+            # Check Disk Usage 
+		    $HardDisk = CheckHardDiskUsage -hostname $ControllerDNS -deviceID "$($disk):"
+		    if ($HardDisk -ne $null) {	
+			    $XAPercentageDS = $HardDisk.PercentageDS
+			    $frSpace = $HardDisk.frSpace
 			
-	        If ( [int] $XAPercentageDS -gt 15) { "Disk Free is normal [ $XAPercentageDS % ]" | LogMe -display; $tests.CFreespace = "SUCCESS", "$frSpace GB" } 
-			ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests.CFreespace = "ERROR", "Err" }
-			ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpace GB" } 
-			ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests.CFreespace = "WARNING", "$frSpace GB" }     
-	        Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpace GB" }  
+	            If ( [int] $XAPercentageDS -gt 15) { "Disk Free is normal [ $XAPercentageDS % ]" | LogMe -display; $tests."$($disk)Freespace" = "SUCCESS", "$frSpace GB" } 
+			    ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "Err" }
+			    ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" } 
+			    ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests."$($disk)Freespace" = "WARNING", "$frSpace GB" }     
+	            Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" }  
         
-			$XAPercentageDS = 0
-			$frSpace = 0
-			$HardDisk = $null
-		}
-
-		$tests.DFreespace = "NEUTRAL", "N/A" 
-		if ( $ControllerHaveD -eq "1" ) {
-			# Check D Disk Usage on DeliveryController
-	        $HardDiskd = CheckHardDiskUsage -hostname $ControllerDNS -deviceID "D:"
-			if ($HardDiskd -ne $null)
-			{
-				$XAPercentageDSd = $HardDiskd.PercentageDS
-				$frSpaced = $HardDiskd.frSpace
-
-				If ( [int] $XAPercentageDSd -gt 15) { "D: Disk Free is normal [ $XAPercentageDSd % ]" | LogMe -display; $tests.DFreespace = "SUCCESS", "$frSpaced GB" } 
-				ElseIf ([int] $XAPercentageDSd -eq 0) { "D: Disk Free test failed" | LogMe -error; $tests.DFreespace = "ERROR", "Err" }
-				ElseIf ([int] $XAPercentageDSd -lt 5) { "D: Disk Free is Critical [ $XAPercentageDSd % ]" | LogMe -error; $tests.DFreespace = "ERROR", "$frSpaced GB" } 
-				ElseIf ([int] $XAPercentageDSd -lt 15) { "D: Disk Free is Low [ $XAPercentageDSd % ]" | LogMe -warning; $tests.DFreespace = "WARNING", "$frSpaced GB" }     
-				Else { "D: Disk Free is Critical [ $XAPercentageDSd % ]" | LogMe -error; $tests.DFreespace = "ERROR", "$frSpaced GB" }  
-				
-				$XAPercentageDSd = 0
-				$frSpaced = 0
-				$HardDiskd = $null
-			}
-		}
+			    $XAPercentageDS = 0
+			    $frSpace = 0
+			    $HardDisk = $null
+		    }
+        }
 		
-		# Check uptime (Query over WMI)
+    # Check uptime (Query over WMI)
     $tests.WMI = "ERROR","Error"
     try { $wmi=Get-WmiObject -class Win32_OperatingSystem -computer $ControllerDNS }
     catch { $wmi = $null }
@@ -1379,42 +1378,28 @@ $tests.DeliveryGroup = "NEUTRAL", $DeliveryGroup
         else { "Memory usage is Critical [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" }   
 		$XAUsedMemory = 0  
 
-        # Check C Disk Usage 
-        $HardDisk = CheckHardDiskUsage -hostname $machineDNS -deviceID "C:"
-		if ($HardDisk -ne $null) {	
-			$XAPercentageDS = $HardDisk.PercentageDS
-			$frSpace = $HardDisk.frSpace
+        foreach ($disk in $diskLettersWorkers)
+        {
+            # Check Disk Usage 
+            $HardDisk = CheckHardDiskUsage -hostname $machineDNS -deviceID "$($disk):"
+		    if ($HardDisk -ne $null) {	
+			    $XAPercentageDS = $HardDisk.PercentageDS
+			    $frSpace = $HardDisk.frSpace
 
-			If ( [int] $XAPercentageDS -gt 15) { "Disk Free is normal [ $XAPercentageDS % ]" | LogMe -display; $tests.CFreespace = "SUCCESS", "$frSpace GB" } 
-			ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests.CFreespace = "ERROR", "Err" }
-			ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpace GB" } 
-			ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests.CFreespace = "WARNING", "$frSpace GB" }     
-			Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpace GB" }
+			    If ( [int] $XAPercentageDS -gt 15) { "Disk Free is normal [ $XAPercentageDS % ]" | LogMe -display; $tests."$($disk)Freespace" = "SUCCESS", "$frSpace GB" } 
+			    ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests.CFreespace = "ERROR", "Err" }
+			    ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" } 
+			    ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests."$($disk)Freespace" = "WARNING", "$frSpace GB" }     
+			    Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" }
 			
-			$XAPercentageDS = 0
-			$frSpace = 0
-			$HardDisk = $null
-		}
+			    $XAPercentageDS = 0
+			    $frSpace = 0
+			    $HardDisk = $null
+		    }
 		
-		$tests.DFreespace = "NEUTRAL", "N/A" 
-		if ( $XAServerHaveD -eq "1" ) {
-		# Check D Disk Usage 
-        $HardDiskd = CheckHardDiskUsage -hostname $machineDNS -deviceID "D:"
-		if ($HardDiskd -ne $null) {			
-			$XAPercentageDSd = $HardDiskd.PercentageDS
-			$frSpaced = $HardDiskd.frSpace
+        }
 
-			If ( [int] $XAPercentageDSd -gt 15) { "Disk Free is normal [ $XAPercentageDSd % ]" | LogMe -display; $tests.DFreespace = "SUCCESS", "$frSpaced GB" } 
-			ElseIf ([int] $XAPercentageDSd -eq 0) { "Disk Free test failed" | LogMe -error; $tests.DFreespace = "ERROR", "Err" }
-			ElseIf ([int] $XAPercentageDSd -lt 5) { "Disk Free is Critical [ $XAPercentageDSd % ]" | LogMe -error; $tests.DFreespace = "ERROR", "$frSpaced GB" } 
-			ElseIf ([int] $XAPercentageDSd -lt 15) { "Disk Free is Low [ $XAPercentageDSd % ]" | LogMe -warning; $tests.DFreespace = "WARNING", "$frSpaced GB" }     
-			Else { "Disk Free is Critical [ $XAPercentageDSd % ]" | LogMe -error; $tests.DFreespace = "ERROR", "$frSpaced GB" }  
-			
-			$XAPercentageDSd = 0
-			$frSpaced = 0
-			$HardDiskd = $null
-		}
-	}
+	
 
 
 
@@ -1631,7 +1616,7 @@ $smtpClient.Send( $emailMessage )
 # - new column for SessionSupport in DeliveryGroup-Table
 # - Some new additional Farm infos in footer (DB,LHC, ConnectionLeasing, LicenseServer)
 # - Fix of WriteCache in Desktop section (still not 100% ok ... Sorry!)
-#
+# 
 # # Version 1.2.7
 # Edited on March 2017 by mikekacz
 # - Fix required to work on non-controller server, like on Studio server. -adminaddress needs to be 
@@ -1645,5 +1630,9 @@ $smtpClient.Send( $emailMessage )
 #   * Replace $PvsWriteMaxSize with $PvsWriteMaxSizeInGB (PvsWriteMaxSize is unique to take it from XML)
 #   * Replace $EnvironmentName with $EnvironmentNameOut ($EnvironmentName is unique to take it from XML)
 #   * Replace $ShowXenAppTable with $ShowXenAppTable ($ShowXenAppTable is unique to take it from XML)
+#
+# # Version 1.2.9
+# Edited on April 2017 by mikekacz
+# - Added disk to check selector in config file
 #
 #=========== History END ===========================================================================
