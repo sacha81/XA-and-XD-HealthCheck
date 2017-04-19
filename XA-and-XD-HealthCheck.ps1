@@ -110,7 +110,7 @@ $XDControllerFirstheaderName = "ControllerServer"
 $XDControllerHeaderNames = "Ping", 	"State","DesktopsRegistered", 	"ActiveSiteServices"
 $XDControllerHeaderWidths = "2",	"2", 	"2", 					"10"				
 $XDControllerTableWidth= 1200
-foreach ($disk in $diskLetters)
+foreach ($disk in $diskLettersControllers)
 {
     $XDControllerHeaderNames += "$($disk)Freespace"
     $XDControllerHeaderWidths += "4"
@@ -148,14 +148,22 @@ $VDItablewidth = 1200
   
 #Header for Table "XenApp Checks" Get-BrokerMachine
 $XenAppfirstheaderName = "XenApp-Server"
+$XenAppHeaderNames = "CatalogName", "DeliveryGroup", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "VDAVersion", "Spooler", 	"CitrixPrint"
+$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"4", 		"4", 			"4"
+foreach ($disk in $diskLettersWorkers)
+{
+    $XenAppHeaderNames += "$($disk)Freespace"
+    $XenAppHeaderWidths += "4"
+}
+
 if ($ShowConnectedXenAppUsers -eq "1") { 
 
-	$XenAppHeaderNames = "CatalogName", "DeliveryGroup", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "VDAVersion", "Spooler", 	"CitrixPrint",  "CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions",  "WriteCacheType", "WriteCacheSize", "ConnectedUsers" , "HostedOn"
-	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"4", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4",			"4",			"4",			"4"
+	$XenAppHeaderNames += "AvgCPU", 	"MemUsg", 	"ActiveSessions",  "WriteCacheType", "WriteCacheSize", "ConnectedUsers" , "HostedOn"
+	$XenAppHeaderWidths +="4",		"4",			  "4",			"4",			"4",			"4",			"4"
 }
 else { 
-	$XenAppHeaderNames = "CatalogName",  "DeliveryGroup", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "Spooler", 	"CitrixPrint", 	"CFreespace", 	"DFreespace", 	"AvgCPU", 	"MemUsg", 	"ActiveSessions", "VDAVersion", "WriteCacheType", "WriteCacheSize", "HostedOn"
-	$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"4", 		"4", 			"4",			"4",			"4",		"4",		"4",			  "4",			"4",			"4",			"4"
+	$XenAppHeaderNames += "AvgCPU", 	"MemUsg", 	"ActiveSessions", "WriteCacheType", "WriteCacheSize", "HostedOn"
+	$XenAppHeaderWidths +="4",		"4",		"4",			  "4",			"4",			"4"
 
 }
 
@@ -596,45 +604,27 @@ $tests.ActiveSiteServices = "NEUTRAL", $ActiveSiteServices
         else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }   
 		$UsedMemory = 0  
 
-        # Check C Disk Usage 
-		$HardDisk = CheckHardDiskUsage -hostname $ControllerDNS -deviceID "C:"
-		if ($HardDisk -ne $null) {	
-			$XAPercentageDS = $HardDisk.PercentageDS
-			$frSpace = $HardDisk.frSpace
+        foreach ($disk in $diskLettersControllers)
+        {
+            # Check Disk Usage 
+		    $HardDisk = CheckHardDiskUsage -hostname $ControllerDNS -deviceID "$($disk):"
+		    if ($HardDisk -ne $null) {	
+			    $XAPercentageDS = $HardDisk.PercentageDS
+			    $frSpace = $HardDisk.frSpace
 			
-	        If ( [int] $XAPercentageDS -gt 15) { "Disk Free is normal [ $XAPercentageDS % ]" | LogMe -display; $tests.CFreespace = "SUCCESS", "$frSpace GB" } 
-			ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests.CFreespace = "ERROR", "Err" }
-			ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpace GB" } 
-			ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests.CFreespace = "WARNING", "$frSpace GB" }     
-	        Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests.CFreespace = "ERROR", "$frSpace GB" }  
+	            If ( [int] $XAPercentageDS -gt 15) { "Disk Free is normal [ $XAPercentageDS % ]" | LogMe -display; $tests."$($disk)Freespace" = "SUCCESS", "$frSpace GB" } 
+			    ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "Err" }
+			    ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" } 
+			    ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests."$($disk)Freespace" = "WARNING", "$frSpace GB" }     
+	            Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" }  
         
-			$XAPercentageDS = 0
-			$frSpace = 0
-			$HardDisk = $null
-		}
-
-		$tests.DFreespace = "NEUTRAL", "N/A" 
-		if ( $ControllerHaveD -eq "1" ) {
-			# Check D Disk Usage on DeliveryController
-	        $HardDiskd = CheckHardDiskUsage -hostname $ControllerDNS -deviceID "D:"
-			if ($HardDiskd -ne $null)
-			{
-				$XAPercentageDSd = $HardDiskd.PercentageDS
-				$frSpaced = $HardDiskd.frSpace
-
-				If ( [int] $XAPercentageDSd -gt 15) { "D: Disk Free is normal [ $XAPercentageDSd % ]" | LogMe -display; $tests.DFreespace = "SUCCESS", "$frSpaced GB" } 
-				ElseIf ([int] $XAPercentageDSd -eq 0) { "D: Disk Free test failed" | LogMe -error; $tests.DFreespace = "ERROR", "Err" }
-				ElseIf ([int] $XAPercentageDSd -lt 5) { "D: Disk Free is Critical [ $XAPercentageDSd % ]" | LogMe -error; $tests.DFreespace = "ERROR", "$frSpaced GB" } 
-				ElseIf ([int] $XAPercentageDSd -lt 15) { "D: Disk Free is Low [ $XAPercentageDSd % ]" | LogMe -warning; $tests.DFreespace = "WARNING", "$frSpaced GB" }     
-				Else { "D: Disk Free is Critical [ $XAPercentageDSd % ]" | LogMe -error; $tests.DFreespace = "ERROR", "$frSpaced GB" }  
-				
-				$XAPercentageDSd = 0
-				$frSpaced = 0
-				$HardDiskd = $null
-			}
-		}
+			    $XAPercentageDS = 0
+			    $frSpace = 0
+			    $HardDisk = $null
+		    }
+        }
 		
-		# Check uptime (Query over WMI)
+    # Check uptime (Query over WMI)
     $tests.WMI = "ERROR","Error"
     try { $wmi=Get-WmiObject -class Win32_OperatingSystem -computer $ControllerDNS }
     catch { $wmi = $null }
@@ -1388,7 +1378,7 @@ $tests.DeliveryGroup = "NEUTRAL", $DeliveryGroup
         else { "Memory usage is Critical [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" }   
 		$XAUsedMemory = 0  
 
-        foreach ($disk in $diskLetters)
+        foreach ($disk in $diskLettersWorkers)
         {
             # Check Disk Usage 
             $HardDisk = CheckHardDiskUsage -hostname $machineDNS -deviceID "$($disk):"
