@@ -17,10 +17,10 @@
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
-			<!-- Define the if the of delivery controllers have a D: -->
-			<Name>ControllerHaveD</Name>
-			<Value>1</Value>
-			<Type>[int]</Type>
+			<!-- Information about the disk you want to check. -->
+			<Name>diskLetters</Name>
+			<Value>C,D</Value>
+			<Type>[array]</Type>
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
