@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.2.9
+# Created on: 11.2014 Version: 1.3.0
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -128,28 +128,28 @@ $CTXLicTableWidth= 900
   
 #Header for Table "MachineCatalogs" Get-BrokerCatalog
 $CatalogHeaderName = "CatalogName"
-$CatalogHeaderNames = 	"AssignedToUser", 	"AssignedToDG", "NotToUserAssigned","ProvisioningType", "AllocationType"
-$CatalogWidths = 		"4",				"8", 			"8", 				"8", 				"8"
+$CatalogHeaderNames = 	"AssignedToUser", 	"AssignedToDG", "NotToUserAssigned","ProvisioningType", "AllocationType", "MinimumFunctionalLevel"
+$CatalogWidths = 		"4",				"8", 			"8", 				"8", 				"8", 				"4"
 $CatalogTablewidth = 900
   
 #Header for Table "DeliveryGroups" Get-BrokerDesktopGroup
 $AssigmentFirstheaderName = "DeliveryGroup"
-$vAssigmentHeaderNames = 	"PublishedName","DesktopKind", "SessionSupport", 	"TotalMachines","DesktopsAvailable","DesktopsUnregistered", "DesktopsInUse","DesktopsFree", "MaintenanceMode"
-$vAssigmentHeaderWidths = 	"4", 			"4", 			"4", 	"4", 		"4", 				"4", 					"4", 			"4", 			"2"
+$vAssigmentHeaderNames = 	"PublishedName","DesktopKind", "SessionSupport", 	"TotalMachines","DesktopsAvailable","DesktopsUnregistered", "DesktopsInUse","DesktopsFree", "MaintenanceMode", "MinimumFunctionalLevel"
+$vAssigmentHeaderWidths = 	"4", 			"4", 			"4", 	"4", 		"4", 				"4", 					"4", 			"4", 			"2", 			"2"
 $Assigmenttablewidth = 900
   
 #Header for Table "VDI Checks" Get-BrokerMachine
 $VDIfirstheaderName = "Desktop-Name"
 
-$VDIHeaderNames = "CatalogName","DeliveryGroup","PowerState", "Ping", "MaintMode", 	"Uptime", 	"RegState","VDAVersion","AssociatedUserNames",  "WriteCacheType", "WriteCacheSize", "HostedOn", "displaymode"
-$VDIHeaderWidths = "4", "4",		"4","4", 	"4", 				"4", 		"4", 				"4",			  "4",			  "4",			  "4",			  "4", "4"
+$VDIHeaderNames = "CatalogName","DeliveryGroup","PowerState", "Ping", "MaintMode", 	"Uptime", 	"RegState","VDAVersion","AssociatedUserNames",  "WriteCacheType", "WriteCacheSize", "Tags", "HostedOn", "displaymode"
+$VDIHeaderWidths = "4", "4",		"4","4", 	"4", 				"4", 		"4", 				"4",			  "4",			  "4",			  "4",			  "4", "4", "4"
 
 $VDItablewidth = 1200
   
 #Header for Table "XenApp Checks" Get-BrokerMachine
 $XenAppfirstheaderName = "XenApp-Server"
-$XenAppHeaderNames = "CatalogName", "DeliveryGroup", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "VDAVersion", "Spooler", 	"CitrixPrint"
-$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"4", 		"4", 			"4"
+$XenAppHeaderNames = "CatalogName", "DeliveryGroup", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "VDAVersion", "Spooler",  	"CitrixPrint"
+$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"4", 		"4", 		 	"4"
 foreach ($disk in $diskLettersWorkers)
 {
     $XenAppHeaderNames += "$($disk)Freespace"
@@ -158,12 +158,12 @@ foreach ($disk in $diskLettersWorkers)
 
 if ($ShowConnectedXenAppUsers -eq "1") { 
 
-	$XenAppHeaderNames += "AvgCPU", 	"MemUsg", 	"ActiveSessions",  "WriteCacheType", "WriteCacheSize", "ConnectedUsers" , "HostedOn"
-	$XenAppHeaderWidths +="4",		"4",			  "4",			"4",			"4",			"4",			"4"
+	$XenAppHeaderNames += "AvgCPU", 	"MemUsg", 	"ActiveSessions",  "WriteCacheType", "WriteCacheSize", "ConnectedUsers" , "Tags","HostedOn"
+	$XenAppHeaderWidths +="4",		"4",			  "4",			"4",			"4",			"4",			"4","4"
 }
 else { 
-	$XenAppHeaderNames += "AvgCPU", 	"MemUsg", 	"ActiveSessions", "WriteCacheType", "WriteCacheSize", "HostedOn"
-	$XenAppHeaderWidths +="4",		"4",		"4",			  "4",			"4",			"4"
+	$XenAppHeaderNames += "AvgCPU", 	"MemUsg", 	"ActiveSessions", "WriteCacheType", "WriteCacheSize", "Tags","HostedOn"
+	$XenAppHeaderWidths +="4",		"4",		"4",			  "4",			"4",			"4","4"
 
 }
 
@@ -682,6 +682,11 @@ foreach ($Catalog in $Catalogs) {
     $CatalogUsedCountCount = $Catalog | %{ $_.UsedCount }
     "Used: $CatalogUsedCountCount" | LogMe -display -progress
     $tests.AssignedToDG = "NEUTRAL", $CatalogUsedCountCount
+
+    #MinimumFunctionalLevel
+	$MinimumFunctionalLevel = $Catalog | %{ $_.MinimumFunctionalLevel }
+	"MinimumFunctionalLevel: $MinimumFunctionalLevel" | LogMe -display -progress
+    $tests.MinimumFunctionalLevel = "NEUTRAL", $MinimumFunctionalLevel
   
      #ProvisioningType
      $CatalogProvisioningType = $Catalog | %{ $_.ProvisioningType }
@@ -742,6 +747,12 @@ foreach ($Assigment in $Assigments) {
 	$SessionSupport = $Assigment | %{ $_.SessionSupport }
 	"SessionSupport: $SessionSupport" | LogMe -display -progress
     $tests.SessionSupport = "NEUTRAL", $SessionSupport
+
+
+    #MinimumFunctionalLevel
+	$MinimumFunctionalLevel = $Assigment | %{ $_.MinimumFunctionalLevel }
+	"MinimumFunctionalLevel: $MinimumFunctionalLevel" | LogMe -display -progress
+    $tests.MinimumFunctionalLevel = "NEUTRAL", $MinimumFunctionalLevel
 	
 	if ($SessionSupport -eq "MultiSession" ) { 
 	
@@ -1069,7 +1080,10 @@ $AssociatedUserNames = $machine | %{ $_.AssociatedUserNames }
 "Assigned to $AssociatedUserNames" | LogMe -display -progress
 $tests.AssociatedUserNames = "NEUTRAL", $AssociatedUserNames
 
-
+# Column Tags 
+$Tags = $machine | %{ $_.Tags }
+"Tags: $Tags" | LogMe -display -progress
+$tests.Tags = "NEUTRAL", $Tags
 
 
 
@@ -1337,6 +1351,10 @@ $HostedOn = $XAmachine | %{ $_.HostingServerName }
 "HostedOn: $HostedOn" | LogMe -display -progress
 $tests.HostedOn = "NEUTRAL", $HostedOn
 
+# Column Tags 
+$Tags = $XAmachine | %{ $_.Tags }
+"Tags: $Tags" | LogMe -display -progress
+$tests.Tags = "NEUTRAL", $Tags
   
 # Column ActiveSessions
 $ActiveSessions = $XAmachine | %{ $_.SessionCount }
@@ -1635,4 +1653,8 @@ $smtpClient.Send( $emailMessage )
 # Edited on April 2017 by mikekacz
 # - Added disk to check selector in config file
 #
+# # Version 1.3
+# Edited on June 2017 by Sacha
+# - Added column with tags on VDI & VDA Server
+# - Added column with MinimumFunctionalLevel on Catalogs and DeliveryGroups
 #=========== History END ===========================================================================
