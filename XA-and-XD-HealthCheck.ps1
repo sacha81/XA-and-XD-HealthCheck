@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.3.0
+# Created on: 11.2014 Version: 1.3.1
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -141,15 +141,15 @@ $Assigmenttablewidth = 900
 #Header for Table "VDI Checks" Get-BrokerMachine
 $VDIfirstheaderName = "Desktop-Name"
 
-$VDIHeaderNames = "CatalogName","DeliveryGroup","PowerState", "Ping", "MaintMode", 	"Uptime", 	"RegState","VDAVersion","AssociatedUserNames",  "WriteCacheType", "WriteCacheSize", "Tags", "HostedOn", "displaymode"
-$VDIHeaderWidths = "4", "4",		"4","4", 	"4", 				"4", 		"4", 				"4",			  "4",			  "4",			  "4",			  "4", "4", "4"
+$VDIHeaderNames = "CatalogName","DeliveryGroup","PowerState", "Ping", "MaintMode", 	"Uptime", 	"RegState","VDAVersion","AssociatedUserNames",  "WriteCacheType", "WriteCacheSize", "Tags", "HostedOn", "displaymode", "OSBuild"
+$VDIHeaderWidths = "4", "4",		"4","4", 	"4", 				"4", 		"4", 				"4",			  "4",			  "4",			  "4",			  "4", "4", "4", 		"4"
 
 $VDItablewidth = 1200
   
 #Header for Table "XenApp Checks" Get-BrokerMachine
 $XenAppfirstheaderName = "XenApp-Server"
-$XenAppHeaderNames = "CatalogName", "DeliveryGroup", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "VDAVersion", "Spooler",  	"CitrixPrint"
-$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"4", 		"4", 		 	"4"
+$XenAppHeaderNames = "CatalogName", "DeliveryGroup", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "VDAVersion", "Spooler",  	"CitrixPrint", "OSBuild"
+$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"4", 		"4", 		 	"4", 		"4"
 foreach ($disk in $diskLettersWorkers)
 {
     $XenAppHeaderNames += "$($disk)Freespace"
@@ -1166,6 +1166,13 @@ if ($displaymodeTable.DcrAERO -eq "Policy_AeroRedirection=TRUE")
 	}
 }
 $tests.displaymode = "NEUTRAL", $displaymode
+
+
+# Column OSBuild 
+$MachineOSVersion = (Get-ItemProperty -Path "\\$machineDNS\C$\WINDOWS\System32\hal.dll" -ErrorAction SilentlyContinue).VersionInfo.FileVersion.Split()[0]
+$tests.OSBuild = "NEUTRAL", $MachineOSVersion
+#$OSVersion = [Version](Get-ItemProperty -Path "$($Env:Windir)\System32\hal.dll" -ErrorAction SilentlyContinue).VersionInfo.FileVersion.Split()[0]
+
 }
 #-------------------------------------------------------------------------------------------------------------
 
@@ -1310,6 +1317,12 @@ else {
 "Citrix Print Manager service stopped" | LogMe -display -error
 $tests.CitrixPrint = "ERROR","Error"
 }
+ 
+ # Column OSBuild 
+$MachineOSVersion = (Get-ItemProperty -Path "\\$machineDNS\C$\WINDOWS\System32\hal.dll" -ErrorAction SilentlyContinue).VersionInfo.FileVersion.Split()[0]
+$tests.OSBuild = "NEUTRAL", $MachineOSVersion
+#$OSVersion = [Version](Get-ItemProperty -Path "$($Env:Windir)\System32\hal.dll" -ErrorAction SilentlyContinue).VersionInfo.FileVersion.Split()[0]
+
   
 }
 else { $tests.Ping = "Error", $result }
@@ -1657,4 +1670,8 @@ $smtpClient.Send( $emailMessage )
 # Edited on June 2017 by Sacha
 # - Added column with tags on VDI & VDA Server
 # - Added column with MinimumFunctionalLevel on Catalogs and DeliveryGroups
+# # Version 1.3.1
+# Edited on July 2017 by Sacha
+# - OS Build in a Column
+#
 #=========== History END ===========================================================================
