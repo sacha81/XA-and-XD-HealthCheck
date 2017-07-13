@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.3.1
+# Created on: 11.2014 Version: 1.3.2
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -1169,9 +1169,9 @@ $tests.displaymode = "NEUTRAL", $displaymode
 
 
 # Column OSBuild 
+$MachineOSVersion = "N/A"
 $MachineOSVersion = (Get-ItemProperty -Path "\\$machineDNS\C$\WINDOWS\System32\hal.dll" -ErrorAction SilentlyContinue).VersionInfo.FileVersion.Split()[0]
 $tests.OSBuild = "NEUTRAL", $MachineOSVersion
-#$OSVersion = [Version](Get-ItemProperty -Path "$($Env:Windir)\System32\hal.dll" -ErrorAction SilentlyContinue).VersionInfo.FileVersion.Split()[0]
 
 }
 #-------------------------------------------------------------------------------------------------------------
@@ -1319,9 +1319,9 @@ $tests.CitrixPrint = "ERROR","Error"
 }
  
  # Column OSBuild 
+$MachineOSVersion = "N/A"
 $MachineOSVersion = (Get-ItemProperty -Path "\\$machineDNS\C$\WINDOWS\System32\hal.dll" -ErrorAction SilentlyContinue).VersionInfo.FileVersion.Split()[0]
 $tests.OSBuild = "NEUTRAL", $MachineOSVersion
-#$OSVersion = [Version](Get-ItemProperty -Path "$($Env:Windir)\System32\hal.dll" -ErrorAction SilentlyContinue).VersionInfo.FileVersion.Split()[0]
 
   
 }
@@ -1670,8 +1670,8 @@ $smtpClient.Send( $emailMessage )
 # Edited on June 2017 by Sacha
 # - Added column with tags on VDI & VDA Server
 # - Added column with MinimumFunctionalLevel on Catalogs and DeliveryGroups
-# # Version 1.3.1
+# # Version 1.3.2
 # Edited on July 2017 by Sacha
 # - OS Build in a Column
-#
+# - Bugfix for 1.3.1
 #=========== History END ===========================================================================
