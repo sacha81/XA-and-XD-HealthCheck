@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.3.3
+# Created on: 11.2014 Version: 1.3.4
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -134,8 +134,8 @@ $CatalogTablewidth = 900
   
 #Header for Table "DeliveryGroups" Get-BrokerDesktopGroup
 $AssigmentFirstheaderName = "DeliveryGroup"
-$vAssigmentHeaderNames = 	"PublishedName","DesktopKind", "SessionSupport", 	"TotalMachines","DesktopsAvailable","DesktopsUnregistered", "DesktopsInUse","DesktopsFree", "MaintenanceMode", "MinimumFunctionalLevel"
-$vAssigmentHeaderWidths = 	"4", 			"4", 			"4", 	"4", 		"4", 				"4", 					"4", 			"4", 			"2", 			"2"
+$vAssigmentHeaderNames = 	"PublishedName","DesktopKind", "SessionSupport", "ShutdownAfterUse", 	"TotalMachines","DesktopsAvailable","DesktopsUnregistered", "DesktopsInUse","DesktopsFree", "MaintenanceMode", "MinimumFunctionalLevel"
+$vAssigmentHeaderWidths = 	"4", 			"4", 			"4", 	"4", 		"4", 				"4", 					"4", 			"4", 			"2", 			"2", 			"2"
 $Assigmenttablewidth = 900
   
 #Header for Table "VDI Checks" Get-BrokerMachine
@@ -747,7 +747,18 @@ foreach ($Assigment in $Assigments) {
 	$SessionSupport = $Assigment | %{ $_.SessionSupport }
 	"SessionSupport: $SessionSupport" | LogMe -display -progress
     $tests.SessionSupport = "NEUTRAL", $SessionSupport
-
+	
+	#ShutdownAfterUse
+	$ShutdownDesktopsAfterUse = $Assigment | %{ $_.ShutdownDesktopsAfterUse }
+	"ShutdownDesktopsAfterUse: $ShutdownDesktopsAfterUse" | LogMe -display -progress
+    
+	if ($SessionSupport -eq "MultiSession" -and $ShutdownDesktopsAfterUse -eq "$true" ) { 
+	$tests.ShutdownAfterUse = "ERROR", $ShutdownDesktopsAfterUse
+	}
+	else { 
+	 $tests.ShutdownAfterUse = "NEUTRAL", $ShutdownDesktopsAfterUse
+	}
+	
 
     #MinimumFunctionalLevel
 	$MinimumFunctionalLevel = $Assigment | %{ $_.MinimumFunctionalLevel }
@@ -1672,8 +1683,9 @@ $smtpClient.Send( $emailMessage )
 # Edited on June 2017 by Sacha
 # - Added column with tags on VDI & VDA Server
 # - Added column with MinimumFunctionalLevel on Catalogs and DeliveryGroups
-# # Version 1.3.3
+# # Version 1.3.1-1.3.4
 # Edited on July 2017 by Sacha
 # - OS Build in a Column
-# - ...
+# - Bugfixes
+# - On Table delivery group, Error if a DG with type "MultiSession" has ShutdownDesktopsAfterUse on true
 #=========== History END ===========================================================================
