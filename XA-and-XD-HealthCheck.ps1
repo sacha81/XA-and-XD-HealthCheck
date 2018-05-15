@@ -1,6 +1,6 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.3.4
-# Created by: Sacha / sachathomet.ch & Contributers (see changelog)
+# Created on: 11.2014 Version: 1.3.5
+# Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
 # Description: This script checks a Citrix XenDesktop and/or XenApp 7.x Farm
@@ -16,7 +16,7 @@
 #               Example: Script = "XA and XD HealthCheck.ps1", Config = "XA and XD HealthCheck_Parameters.xml"
 #
 # Call by : Manual or by Scheduled Task, e.g. once a day
-#           !! If you run it as scheduled task you need to add with argument “non interactive” 
+#           !! If you run it as scheduled task you need to add with argument "non interactive"
 #           or your user has interactive persmission!
 #
 # Code History at the end of the file
@@ -82,6 +82,8 @@ Function New-XMLVariables {
 }
 
 New-XMLVariables
+
+$scriptstart = Get-Date
 
 
 $PvsWriteMaxSizeInGB = $PvsWriteMaxSize * 1Gb
@@ -1215,11 +1217,30 @@ else { "Desktop Check skipped because ShowDesktopTable = 0 " | LogMe -display -p
 " " | LogMe -display -progress
   
 # Check XenApp only if $ShowXenAppTable is 1
+#Skip2
 if($ShowXenAppTable -eq 1 ) {
 $allXenAppResults = @{}
+$tests = @{}
+$CatalogResults = @{}
+$Catalogs = Get-BrokerCatalog -AdminAddress $AdminAddress
+foreach ($Catalog in $Catalogs) {
   
-$XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress | Where-Object {$_.SessionSupport -eq "MultiSession" -and @(compare $_.tags $ExcludedTags -IncludeEqual | ? {$_.sideindicator -eq '=='}).count -eq 0}
+  
+  #Name of MachineCatalog
+  $CatalogName = $Catalog | %{ $_.Name }
 
+   if ($ExcludedCatalogs -like "*$CatalogName*" ) 
+  { 
+  "$CatalogName is excluded folder hence skipping" | LogMe -display -progress
+    }
+else 
+{
+"$CatalogName is available and processing" | LogMe -display -progress
+
+
+  
+#$XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress | Where-Object {$_.SessionSupport -eq "MultiSession" -and @(compare $_.tags $ExcludedTags -IncludeEqual | ? {$_.sideindicator -eq '=='}).count -eq 0}
+$XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -MachineName "*" -CatalogName $CatalogName -AdminAddress $AdminAddress | Where-Object {$_.SessionSupport -eq "MultiSession" -and @(compare $_.tags $ExcludedTags -IncludeEqual | ? {$_.sideindicator -eq '=='}).count -eq 0}
 $Maintenance = Get-CitrixMaintenanceInfo -AdminAddress $AdminAddress
   
 foreach ($XAmachine in $XAmachines) {
@@ -1455,8 +1476,12 @@ $tests.DeliveryGroup = "NEUTRAL", $DeliveryGroup
 if ($ExcludedCatalogs -contains $CatalogName) { "$machineDNS in excluded folder - skipping" | LogMe -display -progress }
 else { $allXenAppResults.$machineDNS = $tests }
 }
-  
 }
+  }
+
+  }#skip2end
+  
+
 else { "XenApp Check skipped because ShowXenAppTable = 0 or Farm is < V7.x " | LogMe -display -progress }
   
 ####################### Check END ####################################################################################" | LogMe -display -progress
@@ -1509,6 +1534,12 @@ else { "No XenDesktop output in HTML " | LogMe -display -progress }
   
  
 writeHtmlFooter $resultsHTM
+
+$scriptend = Get-Date
+$scriptruntime =  $scriptend - $scriptstart | select TotalSeconds
+$scriptruntimeInSeconds = $scriptruntime.TotalSeconds
+#Write-Host $scriptruntime.TotalSeconds
+"Script was running for $scriptruntimeInSeconds " | LogMe -display -progress
 
 #send email
 $emailMessage = New-Object System.Net.Mail.MailMessage
@@ -1688,4 +1719,10 @@ $smtpClient.Send( $emailMessage )
 # - OS Build in a Column
 # - Bugfixes
 # - On Table delivery group, Error if a DG with type "MultiSession" has ShutdownDesktopsAfterUse on true
+#
+# # Version 1.3.5
+# Edited on May 2018 by Sacha
+# - improvement for the excluded Catalogs (Thank you Im-Saravana, https://github.com/Im-Saravana)
+# - Added output of the Runtime (Script start - scriptend)
+#
 #=========== History END ===========================================================================
