@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.3.5
+# Created on: 11.2014 Version: 1.3.6
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -1121,11 +1121,11 @@ $displaymodeTable = @{}
 
 
 #H264
-$displaymodeTable.H264Active = wmic /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr IsActive=*
+$displaymodeTable.H264Active = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr IsActive=*
 
     # H.264 Pure
     #Component_Encoder=DeepCompressionV2Encoder	
-	$displaymodeTable.Component_Encoder_DeepCompressionEncoder = wmic /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=DeepCompressionEncoder
+	$displaymodeTable.Component_Encoder_DeepCompressionEncoder = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=DeepCompressionEncoder
 	if ($displaymodeTable.Component_Encoder_DeepCompressionEncoder -eq "Component_Encoder=DeepCompressionEncoder")
 	{
 	$Displaymode = "Pure H.264"
@@ -1133,7 +1133,7 @@ $displaymodeTable.H264Active = wmic /node:$machineDNS /namespace:\\root\citrix\h
 	
 	# Thinwire H.264 + Lossless (true native H264)
     #Component_Encoder=DeepCompressionV2Encoder
-	$displaymodeTable.Component_Encoder_DeepCompressionV2Encoder = wmic /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=DeepCompressionV2Encoder
+	$displaymodeTable.Component_Encoder_DeepCompressionV2Encoder = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=DeepCompressionV2Encoder
 	if ($displaymodeTable.Component_Encoder_DeepCompressionV2Encoder -eq "Component_Encoder=DeepCompressionV2Encoder")
 	{
 	$Displaymode = "H.264 + Lossless"
@@ -1141,19 +1141,19 @@ $displaymodeTable.H264Active = wmic /node:$machineDNS /namespace:\\root\citrix\h
 	
 	#H.264 Compatibility Mode (ThinWire +)
     #Component_Encoder=CompatibilityEncoder
-	$displaymodeTable.Component_Encoder_CompatibilityEncoder = wmic /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=CompatibilityEncoder
+	$displaymodeTable.Component_Encoder_CompatibilityEncoder = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=CompatibilityEncoder
 	if ($displaymodeTable.Component_Encoder_CompatibilityEncoder -eq "Component_Encoder=CompatibilityEncoder")
 	{
 	$Displaymode = "H.264 Compatibility Mode (ThinWire +)"
 	}
 		
 	# Selective H.264 Is configured
-	$displaymodeTable.Component_Encoder_Deprecated = wmic /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=Deprecated
+	$displaymodeTable.Component_Encoder_Deprecated = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=Deprecated
 	#Component_Encoder=Deprecated
 	
 		#fall back to H.264 Compatibility Mode (ThinWire +)
 		# Auf Receiver selective nicht geht:
-		$displaymodeTable.Component_VideoCodecUse_None = wmic /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_VideoCodecUse=None
+		$displaymodeTable.Component_VideoCodecUse_None = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_VideoCodecUse=None
 		
 		if ($displaymodeTable.Component_VideoCodecUse_None -eq "Component_VideoCodecUse=None")
 		{
@@ -1161,14 +1161,14 @@ $displaymodeTable.H264Active = wmic /node:$machineDNS /namespace:\\root\citrix\h
 		}
 			
 		#Is used
-		$displaymodeTable.Component_VideoCodecUse_Active = wmic /node:$machineDNS /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr 'Component_VideoCodecUse=For actively changing regions'			
+		$displaymodeTable.Component_VideoCodecUse_Active = wmic /node:`'$machineDNS`' /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr 'Component_VideoCodecUse=For actively changing regions'			
 		if ($displaymodeTable.Component_VideoCodecUse_Active -eq "Component_VideoCodecUse=For actively changing regions")
 		{
 		$Displaymode = "Selective H264"
 		}
 
 #Legacy Graphics
-$displaymodeTable.LegacyGraphicsIsActive = wmic /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_graphics get /value | findstr IsActive=*
+$displaymodeTable.LegacyGraphicsIsActive = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_graphics get /value | findstr IsActive=*
 $displaymodeTable.Policy_LegacyGraphicsMode = wmic  /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_graphics get /value | findstr Policy_LegacyGraphicsMode=TRUE
 if ($displaymodeTable.LegacyGraphicsIsActive -eq "IsActive=Active")
 	{
@@ -1176,8 +1176,8 @@ if ($displaymodeTable.LegacyGraphicsIsActive -eq "IsActive=Active")
 	}	
 
 #DCR
-$displaymodeTable.DcrIsActive = wmic /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_d3d get /value | findstr IsActive=*
-$displaymodeTable.DcrAERO = wmic /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_d3d get /value | findstr Policy_AeroRedirection=*
+$displaymodeTable.DcrIsActive = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_d3d get /value | findstr IsActive=*
+$displaymodeTable.DcrAERO = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_d3d get /value | findstr Policy_AeroRedirection=*
 if ($displaymodeTable.DcrAERO -eq "Policy_AeroRedirection=TRUE")
 	{
 	$Displaymode = "DCR"
@@ -1724,5 +1724,9 @@ $smtpClient.Send( $emailMessage )
 # Edited on May 2018 by Sacha
 # - improvement for the excluded Catalogs (Thank you Im-Saravana, https://github.com/Im-Saravana)
 # - Added output of the Runtime (Script start - scriptend)
+#
+# # Version 1.3.6
+# Edited on September 2018 by Stefan
+# - The command changed from wmic /node:$machineDNS to wmic /node:`'$machineDNS`'. That supports dashes in hostname.
 #
 #=========== History END ===========================================================================
