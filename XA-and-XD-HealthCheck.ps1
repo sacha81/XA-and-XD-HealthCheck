@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 Version: 1.3.6
+# Created on: 11.2014 modfied 10.2018 Version: 1.3.7
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -143,8 +143,8 @@ $Assigmenttablewidth = 900
 #Header for Table "VDI Checks" Get-BrokerMachine
 $VDIfirstheaderName = "Desktop-Name"
 
-$VDIHeaderNames = "CatalogName","DeliveryGroup","PowerState", "Ping", "MaintMode", 	"Uptime", 	"RegState","VDAVersion","AssociatedUserNames",  "WriteCacheType", "WriteCacheSize", "Tags", "HostedOn", "displaymode", "OSBuild"
-$VDIHeaderWidths = "4", "4",		"4","4", 	"4", 				"4", 		"4", 				"4",			  "4",			  "4",			  "4",			  "4", "4", "4", 		"4"
+$VDIHeaderNames = "CatalogName","DeliveryGroup","PowerState", "Ping", "MaintMode", 	"Uptime","LastConnect", 	"RegState","VDAVersion","AssociatedUserNames",  "WriteCacheType", "WriteCacheSize", "Tags", "HostedOn", "displaymode", "OSBuild"
+$VDIHeaderWidths = "4", "4",		"4","4", 	"4", 				"4", 		"4","4", 				"4",			  "4",			  "4",			  "4",			  "4", "4", "4", 		"4"
 
 $VDItablewidth = 1200
   
@@ -1104,6 +1104,32 @@ $Tags = $machine | %{ $_.Tags }
 $tests.Tags = "NEUTRAL", $Tags
 
 
+## Column LastConnect
+$yellow =((Get-Date).AddMonths(-1).ToString('yyyy-MM-dd HH:mm:s'))
+$red =((Get-Date).AddMonths(-3).ToString('yyyy-MM-dd HH:mm:s'))
+
+$machineLastConnect = $machine | %{ $_.LastConnectionTime }
+
+if ([string]::IsNullOrWhiteSpace($machineLastConnect))
+	{
+		$tests.LastConnect = "NEUTRAL", "NO DATA"
+	}
+elseif ($machineLastConnect -lt $red)
+	{
+		"LastConnect: $machineLastConnect" | LogMe -display -ERROR
+		$tests.LastConnect = "ERROR", $machineLastConnect
+	} 	
+elseif ($machineLastConnect -lt $yellow)
+	{
+		"LastConnect: $machineLastConnect" | LogMe -display -WARNING
+		$tests.LastConnect = "WARNING", $machineLastConnect
+	}
+else 
+	{
+		$tests.LastConnect = "SUCCESS", $machineLastConnect
+		"LastConnect: $machineLastConnect" | LogMe -display -progress
+	}
+## End Column LastConnect
 
 
 
@@ -1729,4 +1755,9 @@ $smtpClient.Send( $emailMessage )
 # Edited on September 2018 by Stefan
 # - The command changed from wmic /node:$machineDNS to wmic /node:`'$machineDNS`'. That supports dashes in hostname.
 #
+# # Version 1.3.7
+# Version changes by M.Löffler on Oct 2018
+# added column "LastConnect" to variable "$VDIHeaderNames" Report Table around line 149
+# added column "4" to variable "$VDIHeaderWidths" to format new column "LastConnect" in VDI Report Table around line 150
+# added Scriptblock "## Column LastConnect" around line 1108
 #=========== History END ===========================================================================
