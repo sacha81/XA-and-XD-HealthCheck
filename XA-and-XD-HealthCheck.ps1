@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 modfied 10.2018 Version: 1.3.7
+# Created on: 11.2014 modfied 10.2018 Version: 1.3.7.1
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -15,18 +15,17 @@
 #               The script name can't contain any another point, even with a version.
 #               Example: Script = "XA and XD HealthCheck.ps1", Config = "XA and XD HealthCheck_Parameters.xml"
 #
-# Call by : Manual or by Scheduled Task, e.g. once a day
-#           !! If you run it as scheduled task you need to add with argument "non interactive"
-#           or your user has interactive persmission!
+# Call by :     Manual or by Scheduled Task, e.g. once a day
+#               !! If you run it as scheduled task you need to add with argument "non interactive"
+#               or your user has interactive persmission!
 #
-# Code History at the end of the file
 #
 #==============================================================================================
 
-#Don't change below here if you don't know what you are doing ... 
+# Don't change below here if you don't know what you are doing ... 
 #==============================================================================================
 # Load only the snap-ins, which are used
-if ((Get-PSSnapin "Citrix.Broker.Admin.*" -EA silentlycontinue) -eq $null) {
+if ($null -eq (Get-PSSnapin "Citrix.Broker.Admin.*" -EA silentlycontinue)) {
 try { Add-PSSnapin Citrix.Broker.Admin.* -ErrorAction Stop }
 catch { write-error "Error Get-PSSnapin Citrix.Broker.Admin.* Powershell snapin"; Return }
 }
@@ -58,7 +57,7 @@ $Global:ParameterFilePath = $ScriptPath
 # Import variables
 Function New-XMLVariables {
 	# Create a variable reference to the XML file
-	$cfg.Settings.Variables.Variable | foreach {
+	$cfg.Settings.Variables.Variable | ForEach-Object {
 		# Set Variables contained in XML file
 		$VarValue = $_.Value
 		$CreateVariable = $True # Default value to create XML content as Variable
@@ -103,7 +102,6 @@ $ReportDate = (Get-Date -UFormat "%A, %d. %B %Y %R")
 
 $currentDir = Split-Path $MyInvocation.MyCommand.Path
 $outputpath = Join-Path $currentDir "" #add here a custom output folder if you wont have it on the same directory
-$outputdate = Get-Date -Format 'yyyyMMddHHmm'
 $logfile = Join-Path $outputpath ("CTXXDHealthCheck.log")
 $resultsHTM = Join-Path $outputpath ("CTXXDHealthCheck.htm") #add $outputdate in filename if you like
   
@@ -120,7 +118,11 @@ foreach ($disk in $diskLettersControllers)
 $XDControllerHeaderNames +=  	"AvgCPU", 	"MemUsg", 	"Uptime"
 $XDControllerHeaderWidths +=    "4",		"4",		"4"
 
-
+#Header for Table "Fail Rates" FUTURE
+#$CTXFailureFirstheaderName = "Checks"
+#$CTXFailureHeaderNames = "#","in Percentage", "CauseServiceInterruption","CausePartialServiceInterruption"
+#$CTXFailureHeaderWidths = "2", "2", "2", 	"2"
+#$CTXFailureTableWidth= 900
 
 #Header for Table "CTX Licenses" Get-BrokerController
 $CTXLicFirstheaderName = "LicenseName"
@@ -141,7 +143,7 @@ $vAssigmentHeaderWidths = 	"4", 			"4", 			"4", 	"4", 		"4", 				"4", 					"4", 
 $Assigmenttablewidth = 900
   
 #Header for Table "VDI Checks" Get-BrokerMachine
-$VDIfirstheaderName = "Desktop-Name"
+$VDIfirstheaderName = "virtualDesktops"
 
 $VDIHeaderNames = "CatalogName","DeliveryGroup","PowerState", "Ping", "MaintMode", 	"Uptime","LastConnect", 	"RegState","VDAVersion","AssociatedUserNames",  "WriteCacheType", "WriteCacheSize", "Tags", "HostedOn", "displaymode", "OSBuild"
 $VDIHeaderWidths = "4", "4",		"4","4", 	"4", 				"4", 		"4","4", 				"4",			  "4",			  "4",			  "4",			  "4", "4", "4", 		"4"
@@ -149,7 +151,7 @@ $VDIHeaderWidths = "4", "4",		"4","4", 	"4", 				"4", 		"4","4", 				"4",			  "4
 $VDItablewidth = 1200
   
 #Header for Table "XenApp Checks" Get-BrokerMachine
-$XenAppfirstheaderName = "XenApp-Server"
+$XenAppfirstheaderName = "virtualApp-Servers"
 $XenAppHeaderNames = "CatalogName", "DeliveryGroup", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "VDAVersion", "Spooler",  	"CitrixPrint", "OSBuild"
 $XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"4", 		"4", 		 	"4", 		"4"
 foreach ($disk in $diskLettersWorkers)
@@ -203,7 +205,7 @@ return $result
 Function CheckCpuUsage() 
 { 
 	param ($hostname)
-	Try { $CpuUsage=(get-counter -ComputerName $hostname -Counter "\Processor(_Total)\% Processor Time" -SampleInterval 1 -MaxSamples 5 -ErrorAction Stop | select -ExpandProperty countersamples | select -ExpandProperty cookedvalue | Measure-Object -Average).average
+	Try { $CpuUsage=(get-counter -ComputerName $hostname -Counter "\Processor(_Total)\% Processor Time" -SampleInterval 1 -MaxSamples 5 -ErrorAction Stop | select-Object -ExpandProperty countersamples | select-Object -ExpandProperty cookedvalue | Measure-Object -Average).average
     	$CpuUsage = [math]::round($CpuUsage, 1); return $CpuUsage
 	} Catch { "Error returned while checking the CPU usage. Perfmon Counters may be fault" | LogMe -error; return 101 } 
 }
@@ -232,7 +234,7 @@ Function CheckHardDiskUsage()
 	{   
     	$HardDisk = $null
 		$HardDisk = Get-WmiObject Win32_LogicalDisk -ComputerName $hostname -Filter "DeviceID='$deviceID'" -ErrorAction Stop | Select-Object Size,FreeSpace
-        if ($HardDisk -ne $null)
+        if ($null -ne $HardDisk)
 		{
 		$DiskTotalSize = $HardDisk.Size 
         $DiskFreeSpace = $HardDisk.FreeSpace 
@@ -335,12 +337,12 @@ Function writeData
 param($data, $fileName, $headerNames)
 
 $tableEntry  =""  
-$data.Keys | sort | foreach {
+$data.Keys | Sort-Object | ForEach-Object {
 $tableEntry += "<tr>"
 $computerName = $_
 $tableEntry += ("<td bgcolor='#CCCCCC' align=center><font color='#003399'>$computerName</font></td>")
 #$data.$_.Keys | foreach {
-$headerNames | foreach {
+$headerNames | ForEach-Object {
 #"$computerName : $_" | LogMe -display
 try {
 if ($data.$computerName.$_[0] -eq "SUCCESS") { $bgcolor = "#387C44"; $fontColor = "#FFFFFF" }
@@ -376,6 +378,7 @@ param($fileName)
 <strong>LicenseServerName: </strong> $lsname <strong>LicenseServerPort: </strong> $lsport <br>
 <strong>ConnectionLeasingEnabled: </strong> $CLeasing <br>
 <strong>LocalHostCacheEnabled: </strong> $LHC <br>
+<strong>HypervisorConnectionstate: </strong> $HVCS <br>
 
 </font>
 </td>
@@ -464,7 +467,7 @@ function Get-CitrixMaintenanceInfo {
 		
 		# Create script block for invoke command
 		$ScriptBlock = {
-			if ((Get-PSSnapin "Get-PSSnapin Citrix.ConfigurationLogging.Admin.*" -ErrorAction silentlycontinue) -eq $null) {
+			if ($null -eq (Get-PSSnapin "Get-PSSnapin Citrix.ConfigurationLogging.Admin.*" -ErrorAction silentlycontinue)) {
 				try { Add-PSSnapin Citrix.ConfigurationLogging.Admin.* -ErrorAction Stop } catch { write-error "Error Get-PSSnapin Citrix.ConfigurationLogging.Admin.* Powershell snapin"; Return }
 			} #If
 			
@@ -473,7 +476,7 @@ function Get-CitrixMaintenanceInfo {
 			$EndDate = $Date
 			
 			# Command to get the informations from log
-			$LogEntrys = Get-LogLowLevelOperation -MaxRecordCount 1000000 -Filter { StartTime -ge $StartDate -and EndTime -le $EndDate } | Where { $_.Details.PropertyName -eq 'MAINTENANCEMODE' } | Sort EndTime -Descending
+			$LogEntrys = Get-LogLowLevelOperation -MaxRecordCount 1000000 -Filter { StartTime -ge $StartDate -and EndTime -le $EndDate } | Where-Object { $_.Details.PropertyName -eq 'MAINTENANCEMODE' } | Sort-Object EndTime -Descending
 			
 			# Build an object with the data for the output
 			[array]$arrMaintenance = @()
@@ -512,9 +515,9 @@ $wmiOSBlock = {param($computer)
 #==============================================================================================
 # == MAIN SCRIPT ==
 #==============================================================================================
-rm $logfile -force -EA SilentlyContinue
-rm $resultsHTM -force -EA SilentlyContinue
-  
+Remove-Item $logfile -force -EA SilentlyContinue
+Remove-Item $resultsHTM -force -EA SilentlyContinue
+
 "#### Begin with Citrix XenDestop / XenApp HealthCheck ######################################################################" | LogMe -display -progress
   
 " " | LogMe -display -progress
@@ -527,9 +530,11 @@ $lsport = $brokersiteinfos.LicenseServerPort
 $CLeasing = $brokersiteinfos.ConnectionLeasingEnabled
 $LHC =$brokersiteinfos.LocalHostCacheEnabled
 
+$BrkrHvsCon = Get-Brokerhypervisorconnection
+$HVCS =$BrkrHvsCon.State
 
 # Log the loaded Citrix PS Snapins
-(Get-PSSnapin "Citrix.*" -EA silentlycontinue).Name | ForEach {"PSSnapIn: " + $_ | LogMe -display -progress}
+(Get-PSSnapin "Citrix.*" -EA silentlycontinue).Name | ForEach-Object {"PSSnapIn: " + $_ | LogMe -display -progress}
   
 #== Controller Check ============================================================================================
 "Check Controllers #############################################################################" | LogMe -display -progress
@@ -555,7 +560,7 @@ foreach ($Controller in $Controllers) {
 $tests = @{}
   
 #Name of $Controller
-$ControllerDNS = $Controller | %{ $_.DNSName }
+$ControllerDNS = $Controller | ForEach-Object{ $_.DNSName }
 "Controller: $ControllerDNS" | LogMe -display -progress
   
 #Ping $Controller
@@ -566,18 +571,20 @@ else { $tests.Ping = "SUCCESS", $result
 #Now when Ping is ok also check this:
   
 #State of this controller
-$ControllerState = $Controller | %{ $_.State }
+$ControllerState = $Controller | ForEach-Object{ $_.State }
 "State: $ControllerState" | LogMe -display -progress
 if ($ControllerState -ne "Active") { $tests.State = "ERROR", $ControllerState }
 else { $tests.State = "SUCCESS", $ControllerState }
+
+
   
 #DesktopsRegistered on this controller
-$ControllerDesktopsRegistered = $Controller | %{ $_.DesktopsRegistered }
+$ControllerDesktopsRegistered = $Controller | ForEach-Object{ $_.DesktopsRegistered }
 "Registered: $ControllerDesktopsRegistered" | LogMe -display -progress
 $tests.DesktopsRegistered = "NEUTRAL", $ControllerDesktopsRegistered
   
 #ActiveSiteServices on this controller
-$ActiveSiteServices = $Controller | %{ $_.ActiveSiteServices }
+$ActiveSiteServices = $Controller | ForEach-Object{ $_.ActiveSiteServices }
 "ActiveSiteServices $ActiveSiteServices" | LogMe -display -progress
 $tests.ActiveSiteServices = "NEUTRAL", $ActiveSiteServices
 
@@ -610,7 +617,7 @@ $tests.ActiveSiteServices = "NEUTRAL", $ActiveSiteServices
         {
             # Check Disk Usage 
 		    $HardDisk = CheckHardDiskUsage -hostname $ControllerDNS -deviceID "$($disk):"
-		    if ($HardDisk -ne $null) {	
+		    if ($null -ne $HardDisk) {	
 			    $XAPercentageDS = $HardDisk.PercentageDS
 			    $frSpace = $HardDisk.frSpace
 			
@@ -632,7 +639,7 @@ $tests.ActiveSiteServices = "NEUTRAL", $ActiveSiteServices
     catch { $wmi = $null }
 
     # Perform WMI related checks
-    if ($wmi -ne $null) {
+    if ($null -ne $wmi) {
         $tests.WMI = "SUCCESS", "Success"
         $LBTime=$wmi.ConvertToDateTime($wmi.Lastbootuptime)
         [TimeSpan]$uptime=New-TimeSpan $LBTime $(get-date)
@@ -650,6 +657,7 @@ $tests.ActiveSiteServices = "NEUTRAL", $ActiveSiteServices
   
 " --- " | LogMe -display -progress
 #Fill $tests into array
+
 $ControllerResults.$ControllerDNS = $tests
 }
   
@@ -664,39 +672,39 @@ foreach ($Catalog in $Catalogs) {
   $tests = @{}
   
   #Name of MachineCatalog
-  $CatalogName = $Catalog | %{ $_.Name }
+  $CatalogName = $Catalog | ForEach-Object{ $_.Name }
   "Catalog: $CatalogName" | LogMe -display -progress
 
   if ($ExcludedCatalogs -contains $CatalogName) {
     "Excluded Catalog, skipping" | LogMe -display -progress
   } else {
     #CatalogAssignedCount
-    $CatalogAssignedCount = $Catalog | %{ $_.AssignedCount }
+    $CatalogAssignedCount = $Catalog | ForEach-Object{ $_.AssignedCount }
     "Assigned: $CatalogAssignedCount" | LogMe -display -progress
     $tests.AssignedToUser = "NEUTRAL", $CatalogAssignedCount
   
     #CatalogUnassignedCount
-    $CatalogUnAssignedCount = $Catalog | %{ $_.UnassignedCount }
+    $CatalogUnAssignedCount = $Catalog | ForEach-Object{ $_.UnassignedCount }
     "Unassigned: $CatalogUnAssignedCount" | LogMe -display -progress
     $tests.NotToUserAssigned = "NEUTRAL", $CatalogUnAssignedCount
   
     # Assigned to DeliveryGroup
-    $CatalogUsedCountCount = $Catalog | %{ $_.UsedCount }
+    $CatalogUsedCountCount = $Catalog | ForEach-Object{ $_.UsedCount }
     "Used: $CatalogUsedCountCount" | LogMe -display -progress
     $tests.AssignedToDG = "NEUTRAL", $CatalogUsedCountCount
 
     #MinimumFunctionalLevel
-	$MinimumFunctionalLevel = $Catalog | %{ $_.MinimumFunctionalLevel }
+	$MinimumFunctionalLevel = $Catalog | ForEach-Object{ $_.MinimumFunctionalLevel }
 	"MinimumFunctionalLevel: $MinimumFunctionalLevel" | LogMe -display -progress
     $tests.MinimumFunctionalLevel = "NEUTRAL", $MinimumFunctionalLevel
   
      #ProvisioningType
-     $CatalogProvisioningType = $Catalog | %{ $_.ProvisioningType }
+     $CatalogProvisioningType = $Catalog | ForEach-Object{ $_.ProvisioningType }
      "ProvisioningType: $CatalogProvisioningType" | LogMe -display -progress
      $tests.ProvisioningType = "NEUTRAL", $CatalogProvisioningType
   
      #AllocationType
-     $CatalogAllocationType = $Catalog | %{ $_.AllocationType }
+     $CatalogAllocationType = $Catalog | ForEach-Object{ $_.AllocationType }
      "AllocationType: $CatalogAllocationType" | LogMe -display -progress
      $tests.AllocationType = "NEUTRAL", $CatalogAllocationType
   
@@ -718,7 +726,7 @@ foreach ($Assigment in $Assigments) {
   $tests = @{}
   
   #Name of DeliveryGroup
-  $DeliveryGroup = $Assigment | %{ $_.Name }
+  $DeliveryGroup = $Assigment | ForEach-Object{ $_.Name }
   "DeliveryGroup: $DeliveryGroup" | LogMe -display -progress
   
   if ($ExcludedCatalogs -contains $DeliveryGroup) {
@@ -726,32 +734,32 @@ foreach ($Assigment in $Assigments) {
   } else {
   
     #PublishedName
-    $AssigmentDesktopPublishedName = $Assigment | %{ $_.PublishedName }
+    $AssigmentDesktopPublishedName = $Assigment | ForEach-Object{ $_.PublishedName }
     "PublishedName: $AssigmentDesktopPublishedName" | LogMe -display -progress
     $tests.PublishedName = "NEUTRAL", $AssigmentDesktopPublishedName
   
     #DesktopsTotal
-    $TotalDesktops = $Assigment | %{ $_.TotalDesktops }
+    $TotalDesktops = $Assigment | ForEach-Object{ $_.TotalDesktops }
     "DesktopsAvailable: $TotalDesktops" | LogMe -display -progress
     $tests.TotalMachines = "NEUTRAL", $TotalDesktops
   
     #DesktopsAvailable
-    $AssigmentDesktopsAvailable = $Assigment | %{ $_.DesktopsAvailable }
+    $AssigmentDesktopsAvailable = $Assigment | ForEach-Object{ $_.DesktopsAvailable }
     "DesktopsAvailable: $AssigmentDesktopsAvailable" | LogMe -display -progress
     $tests.DesktopsAvailable = "NEUTRAL", $AssigmentDesktopsAvailable
   
     #DesktopKind
-    $AssigmentDesktopsKind = $Assigment | %{ $_.DesktopKind }
+    $AssigmentDesktopsKind = $Assigment | ForEach-Object{ $_.DesktopKind }
     "DesktopKind: $AssigmentDesktopsKind" | LogMe -display -progress
     $tests.DesktopKind = "NEUTRAL", $AssigmentDesktopsKind
 	
 	#SessionSupport
-	$SessionSupport = $Assigment | %{ $_.SessionSupport }
+	$SessionSupport = $Assigment | ForEach-Object{ $_.SessionSupport }
 	"SessionSupport: $SessionSupport" | LogMe -display -progress
     $tests.SessionSupport = "NEUTRAL", $SessionSupport
 	
 	#ShutdownAfterUse
-	$ShutdownDesktopsAfterUse = $Assigment | %{ $_.ShutdownDesktopsAfterUse }
+	$ShutdownDesktopsAfterUse = $Assigment | ForEach-Object{ $_.ShutdownDesktopsAfterUse }
 	"ShutdownDesktopsAfterUse: $ShutdownDesktopsAfterUse" | LogMe -display -progress
     
 	if ($SessionSupport -eq "MultiSession" -and $ShutdownDesktopsAfterUse -eq "$true" ) { 
@@ -763,7 +771,7 @@ foreach ($Assigment in $Assigments) {
 	
 
     #MinimumFunctionalLevel
-	$MinimumFunctionalLevel = $Assigment | %{ $_.MinimumFunctionalLevel }
+	$MinimumFunctionalLevel = $Assigment | ForEach-Object{ $_.MinimumFunctionalLevel }
 	"MinimumFunctionalLevel: $MinimumFunctionalLevel" | LogMe -display -progress
     $tests.MinimumFunctionalLevel = "NEUTRAL", $MinimumFunctionalLevel
 	
@@ -775,7 +783,7 @@ foreach ($Assigment in $Assigments) {
 	}
     else { 
 			#DesktopsInUse
-			$AssigmentDesktopsInUse = $Assigment | %{ $_.DesktopsInUse }
+			$AssigmentDesktopsInUse = $Assigment | ForEach-Object{ $_.DesktopsInUse }
 			"DesktopsInUse: $AssigmentDesktopsInUse" | LogMe -display -progress
 			$tests.DesktopsInUse = "NEUTRAL", $AssigmentDesktopsInUse
 	
@@ -803,13 +811,13 @@ foreach ($Assigment in $Assigments) {
 		
   
     #inMaintenanceMode
-    $AssigmentDesktopsinMaintenanceMode = $Assigment | %{ $_.inMaintenanceMode }
+    $AssigmentDesktopsinMaintenanceMode = $Assigment | ForEach-Object{ $_.inMaintenanceMode }
     "inMaintenanceMode: $AssigmentDesktopsinMaintenanceMode" | LogMe -display -progress
     if ($AssigmentDesktopsinMaintenanceMode) { $tests.MaintenanceMode = "WARNING", "ON" }
     else { $tests.MaintenanceMode = "SUCCESS", "OFF" }
   
     #DesktopsUnregistered
-    $AssigmentDesktopsUnregistered = $Assigment | %{ $_.DesktopsUnregistered }
+    $AssigmentDesktopsUnregistered = $Assigment | ForEach-Object{ $_.DesktopsUnregistered }
     "DesktopsUnregistered: $AssigmentDesktopsUnregistered" | LogMe -display -progress    
     if ($AssigmentDesktopsUnregistered -gt 0 ) {
       "DesktopsUnregistered > 0 ! ($AssigmentDesktopsUnregistered)" | LogMe -display -progress
@@ -833,11 +841,11 @@ if($ShowCTXLicense -eq 1 ){
     $myCollection = @()
     try 
 	{
-        $LicWMIQuery = get-wmiobject -namespace "ROOT\CitrixLicensing" -computer $lsname -query "select * from Citrix_GT_License_Pool" -ErrorAction Stop | ? {$_.PLD -in $CTXLicenseMode}
+        $LicWMIQuery = get-wmiobject -namespace "ROOT\CitrixLicensing" -computer $lsname -query "Select-Object * from Citrix_GT_License_Pool" -ErrorAction Stop | Where-Object {$_.PLD -in $CTXLicenseMode}
         
-        foreach ($group in $($LicWMIQuery | group pld))
+        foreach ($group in $($LicWMIQuery | Group-Object pld))
         {
-            $lics = $group | select -ExpandProperty group
+            $lics = $group | Select-Object -ExpandProperty group
             $i = 1
 
             $myArray_Count = 0
@@ -925,11 +933,11 @@ if($ShowDesktopTable -eq 1 ) {
   
 $allResults = @{}
   
-$machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress| Where-Object {$_.SessionSupport -eq "SingleSession" -and @(compare $_.tags $ExcludedTags -IncludeEqual | ? {$_.sideindicator -eq '=='}).count -eq 0}
+$machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress| Where-Object {$_.SessionSupport -eq "SingleSession" -and @(Compare-Object $_.tags $ExcludedTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0}
   
 # SessionSupport only availiable in XD 7.x - for this reason only distinguish in Version above 7 if Desktop or XenApp
-if($controllerversion -lt 7 ) { $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -and @(compare $_.tags $ExcludedTags -IncludeEqual | ? {$_.sideindicator -eq '=='}).count -eq 0}
-else { $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress| Where-Object {$_.SessionSupport -eq "SingleSession" -and @(compare $_.tags $ExcludedTags -IncludeEqual | ? {$_.sideindicator -eq '=='}).count -eq 0} }
+if($controllerversion -lt 7 ) { $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -and @(Compare-Object $_.tags $ExcludedTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0}
+else { $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress| Where-Object {$_.SessionSupport -eq "SingleSession" -and @(Compare-Object $_.tags $ExcludedTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0} }
 
 $Maintenance = Get-CitrixMaintenanceInfo -AdminAddress $AdminAddress
 
@@ -939,21 +947,21 @@ $tests = @{}
 $ErrorVDI = 0
   
 # Column Name of Desktop
-$machineDNS = $machine | %{ $_.DNSName }
+$machineDNS = $machine | ForEach-Object{ $_.DNSName }
 "Machine: $machineDNS" | LogMe -display -progress
   
 # Column CatalogName
-$CatalogName = $machine | %{ $_.CatalogName }
+$CatalogName = $machine | ForEach-Object{ $_.CatalogName }
 "Catalog: $CatalogName" | LogMe -display -progress
 $tests.CatalogName = "NEUTRAL", $CatalogName
 
 # Column DeliveryGroup
-$DeliveryGroup = $machine | %{ $_.DesktopGroupName }
+$DeliveryGroup = $machine | ForEach-Object{ $_.DesktopGroupName }
 "DeliveryGroup: $DeliveryGroup" | LogMe -display -progress
 $tests.DeliveryGroup = "NEUTRAL", $DeliveryGroup
 
 # Column Powerstate
-$Powered = $machine | %{ $_.PowerState }
+$Powered = $machine | ForEach-Object{ $_.PowerState }
 "PowerState: $Powered" | LogMe -display -progress
 $tests.PowerState = "NEUTRAL", $Powered
 
@@ -980,7 +988,7 @@ if ($result -eq "SUCCESS") {
   $wmi = Wait-job $job -Timeout 15 | Receive-Job
 
   # Perform WMI related checks
-  if ($wmi -ne $null) {
+  if ($null -ne $wmi) {
     $tests.WMI = "SUCCESS", "Success"
     $LBTime=[Management.ManagementDateTimeConverter]::ToDateTime($wmi.Lastbootuptime)
     [TimeSpan]$uptime=New-TimeSpan $LBTime $(get-date)
@@ -1061,7 +1069,7 @@ $ErrorVDI = $ErrorVDI + 1
 #END of Ping-Section
 
 # Column RegistrationState
-$RegistrationState = $machine | %{ $_.RegistrationState }
+$RegistrationState = $machine | ForEach-Object{ $_.RegistrationState }
 "State: $RegistrationState" | LogMe -display -progress
 if ($RegistrationState -ne "Registered") {
 $tests.RegState = "ERROR", $RegistrationState
@@ -1072,10 +1080,10 @@ else { $tests.RegState = "SUCCESS", $RegistrationState }
 } 
  
 # Column MaintenanceMode
-$MaintenanceMode = $machine | %{ $_.InMaintenanceMode }
+$MaintenanceMode = $machine | ForEach-Object{ $_.InMaintenanceMode }
 "MaintenanceMode: $MaintenanceMode" | LogMe -display -progress
 if ($MaintenanceMode) {
-	$objMaintenance = $Maintenance | Where { $_.TargetName.ToUpper() -eq $machine.MachineName.ToUpper() } | Select -First 1
+	$objMaintenance = $Maintenance | Where-Object { $_.TargetName.ToUpper() -eq $machine.MachineName.ToUpper() } | Select-Object -First 1
 	If ($null -ne $objMaintenance){$MaintenanceModeOn = ("ON, " + $objMaintenance.User)} Else {$MaintenanceModeOn = "ON"}
 	"MaintenanceModeInfo: $MaintenanceModeOn" | LogMe -display -progress
 	$tests.MaintMode = "WARNING", $MaintenanceModeOn
@@ -1084,22 +1092,22 @@ if ($MaintenanceMode) {
 else { $tests.MaintMode = "SUCCESS", "OFF" }
   
 # Column HostedOn 
-$HostedOn = $machine | %{ $_.HostingServerName }
+$HostedOn = $machine | ForEach-Object{ $_.HostingServerName }
 "HostedOn: $HostedOn" | LogMe -display -progress
 $tests.HostedOn = "NEUTRAL", $HostedOn
 
 # Column VDAVersion AgentVersion
-$VDAVersion = $machine | %{ $_.AgentVersion }
+$VDAVersion = $machine | ForEach-Object{ $_.AgentVersion }
 "VDAVersion: $VDAVersion" | LogMe -display -progress
 $tests.VDAVersion = "NEUTRAL", $VDAVersion
 
 # Column AssociatedUserNames
-$AssociatedUserNames = $machine | %{ $_.AssociatedUserNames }
+$AssociatedUserNames = $machine | ForEach-Object{ $_.AssociatedUserNames }
 "Assigned to $AssociatedUserNames" | LogMe -display -progress
 $tests.AssociatedUserNames = "NEUTRAL", $AssociatedUserNames
 
 # Column Tags 
-$Tags = $machine | %{ $_.Tags }
+$Tags = $machine | ForEach-Object{ $_.Tags }
 "Tags: $Tags" | LogMe -display -progress
 $tests.Tags = "NEUTRAL", $Tags
 
@@ -1108,7 +1116,7 @@ $tests.Tags = "NEUTRAL", $Tags
 $yellow =((Get-Date).AddMonths(-1).ToString('yyyy-MM-dd HH:mm:s'))
 $red =((Get-Date).AddMonths(-3).ToString('yyyy-MM-dd HH:mm:s'))
 
-$machineLastConnect = $machine | %{ $_.LastConnectionTime }
+$machineLastConnect = $machine | ForEach-Object{ $_.LastConnectionTime }
 
 if ([string]::IsNullOrWhiteSpace($machineLastConnect))
 	{
@@ -1134,7 +1142,7 @@ else
 
 
 # Column displaymode when a User has a Session
-$sessionUser = $machine | %{ $_.SessionUserName }
+$sessionUser = $machine | ForEach-Object{ $_.SessionUserName }
 
 $displaymode = "N/A"
 if ( $ShowGraphicsMode -eq "1" ) {
@@ -1253,7 +1261,7 @@ foreach ($Catalog in $Catalogs) {
   
   
   #Name of MachineCatalog
-  $CatalogName = $Catalog | %{ $_.Name }
+  $CatalogName = $Catalog | ForEach-Object{ $_.Name }
 
    if ($ExcludedCatalogs -like "*$CatalogName*" ) 
   { 
@@ -1266,18 +1274,18 @@ else
 
   
 #$XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress | Where-Object {$_.SessionSupport -eq "MultiSession" -and @(compare $_.tags $ExcludedTags -IncludeEqual | ? {$_.sideindicator -eq '=='}).count -eq 0}
-$XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -MachineName "*" -CatalogName $CatalogName -AdminAddress $AdminAddress | Where-Object {$_.SessionSupport -eq "MultiSession" -and @(compare $_.tags $ExcludedTags -IncludeEqual | ? {$_.sideindicator -eq '=='}).count -eq 0}
+$XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -MachineName "*" -CatalogName $CatalogName -AdminAddress $AdminAddress | Where-Object {$_.SessionSupport -eq "MultiSession" -and @(Compare-Object $_.tags $ExcludedTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0}
 $Maintenance = Get-CitrixMaintenanceInfo -AdminAddress $AdminAddress
   
 foreach ($XAmachine in $XAmachines) {
 $tests = @{}
   
 # Column Name of Machine
-$machineDNS = $XAmachine | %{ $_.DNSName }
+$machineDNS = $XAmachine | ForEach-Object{ $_.DNSName }
 "Machine: $machineDNS" | LogMe -display -progress
   
 # Column CatalogNameName
-$CatalogName = $XAmachine | %{ $_.CatalogName }
+$CatalogName = $XAmachine | ForEach-Object{ $_.CatalogName }
 "Catalog: $CatalogName" | LogMe -display -progress
 $tests.CatalogName = "NEUTRAL", $CatalogName
   
@@ -1293,7 +1301,7 @@ $job = Start-Job -ScriptBlock $wmiOSBlock -ArgumentList $machineDNS
 $wmi = Wait-job $job -Timeout 15 | Receive-Job
 
 # Perform WMI related checks
-if ($wmi -ne $null) {
+if ($null -ne $wmi) {
 	$tests.WMI = "SUCCESS", "Success"
 	$LBTime=[Management.ManagementDateTimeConverter]::ToDateTime($wmi.Lastbootuptime)
 	[TimeSpan]$uptime=New-TimeSpan $LBTime $(get-date)
@@ -1360,7 +1368,7 @@ else { $tests.WriteCacheSize = "SUCCESS", "N/A" }
 # Check services
 $services = Get-Service -Computer $machineDNS
   
-if (($services | ? {$_.Name -eq "Spooler"}).Status -Match "Running") {
+if (($services | Where-Object {$_.Name -eq "Spooler"}).Status -Match "Running") {
 "SPOOLER service running..." | LogMe
 $tests.Spooler = "SUCCESS","Success"
 }
@@ -1369,7 +1377,7 @@ else {
 $tests.Spooler = "ERROR","Error"
 }
   
-if (($services | ? {$_.Name -eq "cpsvc"}).Status -Match "Running") {
+if (($services | Where-Object {$_.Name -eq "cpsvc"}).Status -Match "Running") {
 "Citrix Print Manager service running..." | LogMe
 $tests.CitrixPrint = "SUCCESS","Success"
 }
@@ -1389,17 +1397,17 @@ else { $tests.Ping = "Error", $result }
 #END of Ping-Section
   
 # Column Serverload
-$Serverload = $XAmachine | %{ $_.LoadIndex }
+$Serverload = $XAmachine | ForEach-Object{ $_.LoadIndex }
 "Serverload: $Serverload" | LogMe -display -progress
 if ($Serverload -ge $loadIndexError) { $tests.Serverload = "ERROR", $Serverload }
 elseif ($Serverload -ge $loadIndexWarning) { $tests.Serverload = "WARNING", $Serverload }
 else { $tests.Serverload = "SUCCESS", $Serverload }
   
 # Column MaintMode
-$MaintMode = $XAmachine | %{ $_.InMaintenanceMode }
+$MaintMode = $XAmachine | ForEach-Object{ $_.InMaintenanceMode }
 "MaintenanceMode: $MaintMode" | LogMe -display -progress
 if ($MaintMode) { 
-	$objMaintenance = $Maintenance | Where { $_.TargetName.ToUpper() -eq $XAmachine.MachineName.ToUpper() } | Select -First 1
+	$objMaintenance = $Maintenance | Where-Object { $_.TargetName.ToUpper() -eq $XAmachine.MachineName.ToUpper() } | Select-Object -First 1
 	If ($null -ne $objMaintenance){$MaintenanceModeOn = ("ON, " + $objMaintenance.User)} Else {$MaintenanceModeOn = "ON"}
 	"MaintenanceModeInfo: $MaintenanceModeOn" | LogMe -display -progress
 	$tests.MaintMode = "WARNING", $MaintenanceModeOn
@@ -1408,39 +1416,39 @@ if ($MaintMode) {
 else { $tests.MaintMode = "SUCCESS", "OFF" }
   
 # Column RegState
-$RegState = $XAmachine | %{ $_.RegistrationState }
+$RegState = $XAmachine | ForEach-Object{ $_.RegistrationState }
 "State: $RegState" | LogMe -display -progress
   
 if ($RegState -ne "Registered") { $tests.RegState = "ERROR", $RegState }
 else { $tests.RegState = "SUCCESS", $RegState }
 
 # Column VDAVersion AgentVersion
-$VDAVersion = $XAmachine | %{ $_.AgentVersion }
+$VDAVersion = $XAmachine | ForEach-Object{ $_.AgentVersion }
 "VDAVersion: $VDAVersion" | LogMe -display -progress
 $tests.VDAVersion = "NEUTRAL", $VDAVersion
 
 # Column HostedOn 
-$HostedOn = $XAmachine | %{ $_.HostingServerName }
+$HostedOn = $XAmachine | ForEach-Object{ $_.HostingServerName }
 "HostedOn: $HostedOn" | LogMe -display -progress
 $tests.HostedOn = "NEUTRAL", $HostedOn
 
 # Column Tags 
-$Tags = $XAmachine | %{ $_.Tags }
+$Tags = $XAmachine | ForEach-Object{ $_.Tags }
 "Tags: $Tags" | LogMe -display -progress
 $tests.Tags = "NEUTRAL", $Tags
   
 # Column ActiveSessions
-$ActiveSessions = $XAmachine | %{ $_.SessionCount }
+$ActiveSessions = $XAmachine | ForEach-Object{ $_.SessionCount }
 "Active Sessions: $ActiveSessions" | LogMe -display -progress
 $tests.ActiveSessions = "NEUTRAL", $ActiveSessions
 
 # Column ConnectedUsers
-$ConnectedUsers = $XAmachine | %{ $_.AssociatedUserNames }
+$ConnectedUsers = $XAmachine | ForEach-Object{ $_.AssociatedUserNames }
 "Connected users: $ConnectedUsers" | LogMe -display -progress
 $tests.ConnectedUsers = "NEUTRAL", $ConnectedUsers
   
 # Column DeliveryGroup
-$DeliveryGroup = $XAmachine | %{ $_.DesktopGroupName }
+$DeliveryGroup = $XAmachine | ForEach-Object{ $_.DesktopGroupName }
 "DeliveryGroup: $DeliveryGroup" | LogMe -display -progress
 $tests.DeliveryGroup = "NEUTRAL", $DeliveryGroup
 
@@ -1473,7 +1481,7 @@ $tests.DeliveryGroup = "NEUTRAL", $DeliveryGroup
         {
             # Check Disk Usage 
             $HardDisk = CheckHardDiskUsage -hostname $machineDNS -deviceID "$($disk):"
-		    if ($HardDisk -ne $null) {	
+		    if ($null -ne $HardDisk) {	
 			    $XAPercentageDS = $HardDisk.PercentageDS
 			    $frSpace = $HardDisk.frSpace
 
@@ -1520,32 +1528,37 @@ $emailSubject = ("$EnvironmentNameOut Farm Report - " + $ReportDate)
 
 Write-Host ("Saving results to html report: " + $resultsHTM)
 writeHtmlHeader "$EnvironmentNameOut Farm Report" $resultsHTM
-  
+
+# Write Table with the Failures #FUTURE !!!!
+#writeTableHeader $resultsHTM $CTXFailureFirstheaderName $CTXFailureHeaderNames $CTXFailureHeaderWidths $CTXFailureTableWidth
+#$ControllerResults | sort-object -property XDControllerFirstheaderName | ForEach-Object{ writeData $CTXFailureResults $resultsHTM $CTXFailureFirstheaderName }
+#writeTableFooter $resultsHTM
+
 # Write Table with the Controllers
 writeTableHeader $resultsHTM $XDControllerFirstheaderName $XDControllerHeaderNames $XDControllerHeaderWidths $XDControllerTableWidth
-$ControllerResults | sort-object -property XDControllerFirstheaderName | %{ writeData $ControllerResults $resultsHTM $XDControllerHeaderNames }
+$ControllerResults | sort-object -property XDControllerFirstheaderName | ForEach-Object{ writeData $ControllerResults $resultsHTM $XDControllerHeaderNames }
 writeTableFooter $resultsHTM
 
 # Write Table with the License
 writeTableHeader $resultsHTM $CTXLicFirstheaderName $CTXLicHeaderNames $CTXLicHeaderWidths $CTXLicTableWidth
-$CTXLicResults | sort-object -property LicenseName | %{ writeData $CTXLicResults $resultsHTM $CTXLicHeaderNames }
+$CTXLicResults | sort-object -property LicenseName | ForEach-Object{ writeData $CTXLicResults $resultsHTM $CTXLicHeaderNames }
 writeTableFooter $resultsHTM
   
 # Write Table with the Catalogs
 writeTableHeader $resultsHTM $CatalogHeaderName $CatalogHeaderNames $CatalogWidths $CatalogTablewidth
-$CatalogResults | %{ writeData $CatalogResults $resultsHTM $CatalogHeaderNames}
+$CatalogResults | ForEach-Object{ writeData $CatalogResults $resultsHTM $CatalogHeaderNames}
 writeTableFooter $resultsHTM
   
   
 # Write Table with the Assignments (Delivery Groups)
 writeTableHeader $resultsHTM $AssigmentFirstheaderName $vAssigmentHeaderNames $vAssigmentHeaderWidths $Assigmenttablewidth
-$AssigmentsResults | sort-object -property ReplState | %{ writeData $AssigmentsResults $resultsHTM $vAssigmentHeaderNames }
+$AssigmentsResults | sort-object -property ReplState | ForEach-Object{ writeData $AssigmentsResults $resultsHTM $vAssigmentHeaderNames }
 writeTableFooter $resultsHTM
 
 # Write Table with all XenApp Servers
 if ($ShowXenAppTable -eq 1 ) {
 writeTableHeader $resultsHTM $XenAppFirstheaderName $XenAppHeaderNames $XenAppHeaderWidths $XenApptablewidth
-$allXenAppResults | sort-object -property CatalogName | %{ writeData $allXenAppResults $resultsHTM $XenAppHeaderNames }
+$allXenAppResults | sort-object -property CatalogName | ForEach-Object{ writeData $allXenAppResults $resultsHTM $XenAppHeaderNames }
 writeTableFooter $resultsHTM
 }
 else { "No XenApp output in HTML " | LogMe -display -progress }
@@ -1553,7 +1566,7 @@ else { "No XenApp output in HTML " | LogMe -display -progress }
 # Write Table with all Desktops
 if ($ShowDesktopTable -eq 1 ) {
 writeTableHeader $resultsHTM $VDIFirstheaderName $VDIHeaderNames $VDIHeaderWidths $VDItablewidth
-$allResults | sort-object -property CatalogName | %{ writeData $allResults $resultsHTM $VDIHeaderNames }
+$allResults | sort-object -property CatalogName | ForEach-Object{ writeData $allResults $resultsHTM $VDIHeaderNames }
 writeTableFooter $resultsHTM
 }
 else { "No XenDesktop output in HTML " | LogMe -display -progress }
@@ -1562,7 +1575,7 @@ else { "No XenDesktop output in HTML " | LogMe -display -progress }
 writeHtmlFooter $resultsHTM
 
 $scriptend = Get-Date
-$scriptruntime =  $scriptend - $scriptstart | select TotalSeconds
+$scriptruntime =  $scriptend - $scriptstart | Select-Object TotalSeconds
 $scriptruntimeInSeconds = $scriptruntime.TotalSeconds
 #Write-Host $scriptruntime.TotalSeconds
 "Script was running for $scriptruntimeInSeconds " | LogMe -display -progress
@@ -1573,7 +1586,7 @@ $emailMessage.From = $emailFrom
 $emailMessage.To.Add( $emailTo )
 $emailMessage.Subject = $emailSubject 
 $emailMessage.IsBodyHtml = $true
-$emailMessage.Body = (gc $resultsHTM) | Out-String
+$emailMessage.Body = (Get-Content $resultsHTM) | Out-String
 $emailMessage.Attachments.Add($resultsHTM)
 $emailMessage.Priority = ($emailPrio)
 
@@ -1760,4 +1773,21 @@ $smtpClient.Send( $emailMessage )
 # added column "LastConnect" to variable "$VDIHeaderNames" Report Table around line 149
 # added column "4" to variable "$VDIHeaderWidths" to format new column "LastConnect" in VDI Report Table around line 150
 # added Scriptblock "## Column LastConnect" around line 1108
+#
+#  1.3.7.1
+# Version changes by S.Thomet, removed a lot of Alias according suggestion of VSCode
+#
+#  1.3.8
+# - Implement Issue/Idea #70 show Hypervisorconnection
+#  
+#
+# == FUTURE ==
+# #  1.4
+# Version changes by S.Thomet
+# - CREATE Proper functions
+#
+# #  1.4.1
+# Version changes by S.Thomet
+# - Implement Idea #27 from GitHub: Fail-Rate in %
+#
 #=========== History END ===========================================================================
