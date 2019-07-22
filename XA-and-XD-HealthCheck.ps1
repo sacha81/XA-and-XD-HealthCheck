@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 modfied 10.2018 Version: 1.3.8
+# Created on: 11.2014 modfied 10.2018 Version: 1.3.9
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -205,13 +205,15 @@ return $result
 Function CheckCpuUsage() 
 { 
 	param ($hostname)
-	Try { $CpuUsage=(get-counter -ComputerName $hostname -Counter "\Processor(_Total)\% Processor Time" -SampleInterval 1 -MaxSamples 5 -ErrorAction Stop | select-Object -ExpandProperty countersamples | select-Object -ExpandProperty cookedvalue | Measure-Object -Average).average
-    	$CpuUsage = [math]::round($CpuUsage, 1); return $CpuUsage
+	Try { $CpuUsage=(Get-WmiObject -computer $hostname -class win32_processor | Measure-Object -property LoadPercentage -Average | Select-Object -ExpandProperty Average)
+    $CpuUsage = [math]::round($CpuUsage, 1); return $CpuUsage
+
+
 	} Catch { "Error returned while checking the CPU usage. Perfmon Counters may be fault" | LogMe -error; return 101 } 
 }
 #============================================================================================== 
 # The function check the memory usage and report the usage value in percentage
-Function CheckMemoryUsage() 
+Function CheckMemoryUsage()
 { 
 	param ($hostname)
     Try 
@@ -1779,7 +1781,9 @@ $smtpClient.Send( $emailMessage )
 #
 #  1.3.8
 # - Implement Issue/Idea #70 show Hypervisorconnection
-#  
+#
+#  1.3.9
+# - Changed the way how to gather the AvgCGPU for more comptaibility. 
 #
 # == FUTURE ==
 # #  1.4
