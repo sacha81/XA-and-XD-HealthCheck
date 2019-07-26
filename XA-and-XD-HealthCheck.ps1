@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 modfied 10.2018 Version: 1.3.9
+# Created on: 11.2014 modfied 10.2018 Version: 1.3.9.1
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -845,7 +845,7 @@ if($ShowCTXLicense -eq 1 ){
 	{
         $LicWMIQuery = get-wmiobject -namespace "ROOT\CitrixLicensing" -computer $lsname -query "Select-Object * from Citrix_GT_License_Pool" -ErrorAction Stop | Where-Object {$_.PLD -in $CTXLicenseMode}
         
-        foreach ($group in $($LicWMIQuery | Group-Object pld))
+        foreach ($group in $($LicWMIQuery | group pld))
         {
             $lics = $group | Select-Object -ExpandProperty group
             $i = 1
@@ -1783,7 +1783,9 @@ $smtpClient.Send( $emailMessage )
 # - Implement Issue/Idea #70 show Hypervisorconnection
 #
 #  1.3.9
-# - Changed the way how to gather the AvgCGPU for more comptaibility. 
+# - Changed the way how to gather the AvgCGPU for more comptaibility.
+#  1.3.9.1
+# - Bugfix for licesne reading.  
 #
 # == FUTURE ==
 # #  1.4
