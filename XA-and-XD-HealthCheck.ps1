@@ -843,8 +843,9 @@ if($ShowCTXLicense -eq 1 ){
     $myCollection = @()
     try 
 	{
-        $LicWMIQuery = get-wmiobject -namespace "ROOT\CitrixLicensing" -computer $lsname -query "Select-Object * from Citrix_GT_License_Pool" -ErrorAction Stop | Where-Object {$_.PLD -in $CTXLicenseMode}
+        $LicWMIQuery = get-wmiobject -namespace "ROOT\CitrixLicensing" -computer $lsname -query "select * from Citrix_GT_License_Pool" -ErrorAction Stop | ? {$_.PLD -in $CTXLicenseMode}
         
+	
         foreach ($group in $($LicWMIQuery | group pld))
         {
             $lics = $group | Select-Object -ExpandProperty group
