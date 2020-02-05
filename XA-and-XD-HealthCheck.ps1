@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 modfied 10.2018 Version: 1.3.9.1
+# Created on: 11.2014 modfied 10.2018 Version: 1.4
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -25,8 +25,8 @@
 # Don't change below here if you don't know what you are doing ... 
 #==============================================================================================
 # Load only the snap-ins, which are used
-if ($null -eq (Get-PSSnapin "Citrix.Broker.Admin.*" -EA silentlycontinue)) {
-try { Add-PSSnapin Citrix.Broker.Admin.* -ErrorAction Stop }
+if ($null -eq (Get-PSSnapin "Citrix.*" -EA silentlycontinue)) {
+try { Add-PSSnapin Citrix.* -ErrorAction Stop }
 catch { write-error "Error Get-PSSnapin Citrix.Broker.Admin.* Powershell snapin"; Return }
 }
 
@@ -132,8 +132,8 @@ $CTXLicTableWidth= 900
   
 #Header for Table "MachineCatalogs" Get-BrokerCatalog
 $CatalogHeaderName = "CatalogName"
-$CatalogHeaderNames = 	"AssignedToUser", 	"AssignedToDG", "NotToUserAssigned","ProvisioningType", "AllocationType", "MinimumFunctionalLevel"
-$CatalogWidths = 		"4",				"8", 			"8", 				"8", 				"8", 				"4"
+$CatalogHeaderNames = 	"AssignedToUser", 	"AssignedToDG", "NotToUserAssigned","ProvisioningType", "AllocationType", "MinimumFunctionalLevel", "UsedMCSSnapshot"
+$CatalogWidths = 		"4",				"8", 			"8", 				"8", 				"8", 				"4", 				"4"
 $CatalogTablewidth = 900
   
 #Header for Table "DeliveryGroups" Get-BrokerDesktopGroup
@@ -145,15 +145,15 @@ $Assigmenttablewidth = 900
 #Header for Table "VDI Checks" Get-BrokerMachine
 $VDIfirstheaderName = "virtualDesktops"
 
-$VDIHeaderNames = "CatalogName","DeliveryGroup","PowerState", "Ping", "MaintMode", 	"Uptime","LastConnect", 	"RegState","VDAVersion","AssociatedUserNames",  "WriteCacheType", "WriteCacheSize", "Tags", "HostedOn", "displaymode", "OSBuild"
-$VDIHeaderWidths = "4", "4",		"4","4", 	"4", 				"4", 		"4","4", 				"4",			  "4",			  "4",			  "4",			  "4", "4", "4", 		"4"
+$VDIHeaderNames = "CatalogName","DeliveryGroup","PowerState", "Ping", "MaintMode", 	"Uptime","LastConnect", 	"RegState","VDAVersion","AssociatedUserNames",  "WriteCacheType", "WriteCacheSize", "Tags", "HostedOn", "displaymode", "OSBuild", "MCSVDIImageOutOfDate"
+$VDIHeaderWidths = "4", "4",		"4","4", 	"4", 				"4", 		"4","4", 				"4",			  "4",			  "4",			  "4",			  "4", "4", "4", 		"4", "4"
 
 $VDItablewidth = 1200
   
 #Header for Table "XenApp Checks" Get-BrokerMachine
 $XenAppfirstheaderName = "virtualApp-Servers"
-$XenAppHeaderNames = "CatalogName", "DeliveryGroup", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "VDAVersion", "Spooler",  	"CitrixPrint", "OSBuild"
-$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"4", 		"4", 		 	"4", 		"4"
+$XenAppHeaderNames = "CatalogName", "DeliveryGroup", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "VDAVersion", "Spooler",  	"CitrixPrint", "OSBuild", "MCSImageOutOfDate"
+$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"4", 		"4", 		 	"4", 		"4", 		"4"
 foreach ($disk in $diskLettersWorkers)
 {
     $XenAppHeaderNames += "$($disk)Freespace"
@@ -709,6 +709,27 @@ foreach ($Catalog in $Catalogs) {
      $CatalogAllocationType = $Catalog | ForEach-Object{ $_.AllocationType }
      "AllocationType: $CatalogAllocationType" | LogMe -display -progress
      $tests.AllocationType = "NEUTRAL", $CatalogAllocationType
+
+
+     #UsedMcsSnapshot 
+     
+     $CatalogProvisioningSchemeId = $Catalog | ForEach-Object{ $_.ProvisioningSchemeId }
+
+     "ProvisioningSchemeId: $CatalogProvisioningSchemeId " | LogMe -display -progress
+     $MCSInfo = (Get-ProvScheme -ProvisioningSchemeUid $CatalogProvisioningSchemeId)
+
+     $UsedMcsSnapshot = $MCSInfo.MasterImageVM
+
+
+     #"MasterImageVM: $MCSInfo.MasterImageVM"
+     $UsedMcsSnapshot = $UsedMcsSnapshot.trimstart("XDHyp:\HostingUnits\") = $MCSInfo.MasterImageVM
+     $UsedMcsSnapshot = $UsedMcsSnapshot.trimend(".template")
+     "UsedMcsSnapshot: = $UsedMcsSnapshot"
+
+
+     $tests.UsedMcsSnapshot  = "NEUTRAL", $UsedMcsSnapshot 
+
+
   
     "", ""
     $CatalogResults.$CatalogName = $tests
@@ -1114,6 +1135,13 @@ $Tags = $machine | ForEach-Object{ $_.Tags }
 "Tags: $Tags" | LogMe -display -progress
 $tests.Tags = "NEUTRAL", $Tags
 
+# Column MCSVDIImageOutOfDate
+$MCSVDIImageOutOfDate = $machine | ForEach-Object{ $_.ImageOutOfDate }
+"ImageOutOfDate: $MCSVDIImageOutOfDate" | LogMe -display -progress
+if ($MCSVDIImageOutOfDate -eq $true) { $tests.MCSImageOutOfDate = "ERROR", $MCSVDIImageOutOfDate }
+elseif ($MCSVDIImageOutOfDate -eq $false) { $tests.MCSImageOutOfDate = "SUCCESS", $MCSVDIImageOutOfDate  }
+else { $tests.MCSVDIImageOutOfDate = "NEUTRAL", $MCSVDIImageOutOfDate }
+
 
 ## Column LastConnect
 $yellow =((Get-Date).AddMonths(-1).ToString('yyyy-MM-dd HH:mm:s'))
@@ -1291,6 +1319,7 @@ $machineDNS = $XAmachine | ForEach-Object{ $_.DNSName }
 $CatalogName = $XAmachine | ForEach-Object{ $_.CatalogName }
 "Catalog: $CatalogName" | LogMe -display -progress
 $tests.CatalogName = "NEUTRAL", $CatalogName
+
   
 # Ping Machine
 $result = Ping $machineDNS 100
@@ -1454,6 +1483,16 @@ $tests.ConnectedUsers = "NEUTRAL", $ConnectedUsers
 $DeliveryGroup = $XAmachine | ForEach-Object{ $_.DesktopGroupName }
 "DeliveryGroup: $DeliveryGroup" | LogMe -display -progress
 $tests.DeliveryGroup = "NEUTRAL", $DeliveryGroup
+
+# Column MCSImageOutOfDate
+$MCSImageOutOfDate = $XAmachine | ForEach-Object{ $_.ImageOutOfDate }
+"ImageOutOfDate: $MCSImageOutOfDate" | LogMe -display -progress
+if ($MCSImageOutOfDate -eq $true) { $tests.MCSImageOutOfDate = "ERROR", $MCSImageOutOfDate }
+elseif ($MCSImageOutOfDate -eq $false) { $tests.MCSImageOutOfDate = "SUCCESS", $MCSImageOutOfDate  }
+else { $tests.MCSImageOutOfDate = "NEUTRAL", $MCSImageOutOfDate }
+
+
+
 
 
 #==============================================================================================
@@ -1787,13 +1826,17 @@ $smtpClient.Send( $emailMessage )
 # - Changed the way how to gather the AvgCGPU for more comptaibility.
 #  1.3.9.1
 # - Bugfix for licesne reading.  
+# 
+#  1.4 Enable MCS Features 
+# - Add MCSImageOutOfDate (PendingUpdate) Column for Desktops & Apps
+# - Add Name of MCS Snapshot which is used by MachineCatalog
 #
 # == FUTURE ==
-# #  1.4
+# #  1.5
 # Version changes by S.Thomet
 # - CREATE Proper functions
 #
-# #  1.4.1
+# #  1.5.1
 # Version changes by S.Thomet
 # - Implement Idea #27 from GitHub: Fail-Rate in %
 #
