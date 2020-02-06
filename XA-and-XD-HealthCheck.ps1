@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 modfied 10.2018 Version: 1.4
+# Created on: 11.2014 modfied 10.2018 Version: 1.4.1
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -1286,7 +1286,6 @@ else { "Desktop Check skipped because ShowDesktopTable = 0 " | LogMe -display -p
 if($ShowXenAppTable -eq 1 ) {
 $allXenAppResults = @{}
 $tests = @{}
-$CatalogResults = @{}
 $Catalogs = Get-BrokerCatalog -AdminAddress $AdminAddress
 foreach ($Catalog in $Catalogs) {
   
@@ -1829,7 +1828,7 @@ $smtpClient.Send( $emailMessage )
 # 
 #  1.4 Enable MCS Features 
 # - Add MCSImageOutOfDate (PendingUpdate) Column for Desktops & Apps
-# - Add Name of MCS Snapshot which is used by MachineCatalog
+# - ...
 #
 # == FUTURE ==
 # #  1.5
