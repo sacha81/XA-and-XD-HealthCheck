@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 modfied 10.2018 Version: 1.4.1
+# Created on: 11.2014 modfied 10.2018 Version: 1.4.2
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -712,7 +712,9 @@ foreach ($Catalog in $Catalogs) {
 
 
      #UsedMcsSnapshot 
-     
+     $UsedMcsSnapshot = ""
+     $MCSInfo.MasterImageVM = ""
+
      $CatalogProvisioningSchemeId = $Catalog | ForEach-Object{ $_.ProvisioningSchemeId }
 
      "ProvisioningSchemeId: $CatalogProvisioningSchemeId " | LogMe -display -progress
