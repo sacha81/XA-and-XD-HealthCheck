@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 modfied 10.2018 Version: 1.4.2
+# Created on: 11.2014 modfied 10.2018 Version: 1.4.3
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -999,7 +999,8 @@ if ($Powered -eq "On") {
 $tests.PowerState = "SUCCESS", $Powered
 }
 
-if ($Powered -eq "On" -OR $Powered -eq "Unknown") {
+if ($Powered -eq "On" -OR $Powered -eq "Unknown" -OR $Powered -eq "Unmanaged") {
+
 
 
 # Column Ping Desktop
@@ -1830,7 +1831,7 @@ $smtpClient.Send( $emailMessage )
 # 
 #  1.4 Enable MCS Features 
 # - Add MCSImageOutOfDate (PendingUpdate) Column for Desktops & Apps
-# - ...
+# - 1.4.2, Bugfix for https://github.com/sacha81/XA-and-XD-HealthCheck/issues/73 
 #
 # == FUTURE ==
 # #  1.5
