@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 modfied 10.2018 Version: 1.4.3
+# Created on: 11.2014 modfied 10.2018 Version: 1.4.4
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -145,8 +145,8 @@ $Assigmenttablewidth = 900
 #Header for Table "VDI Checks" Get-BrokerMachine
 $VDIfirstheaderName = "virtualDesktops"
 
-$VDIHeaderNames = "CatalogName","DeliveryGroup","PowerState", "Ping", "MaintMode", 	"Uptime","LastConnect", 	"RegState","VDAVersion","AssociatedUserNames",  "WriteCacheType", "WriteCacheSize", "Tags", "HostedOn", "displaymode", "OSBuild", "MCSVDIImageOutOfDate"
-$VDIHeaderWidths = "4", "4",		"4","4", 	"4", 				"4", 		"4","4", 				"4",			  "4",			  "4",			  "4",			  "4", "4", "4", 		"4", "4"
+$VDIHeaderNames = "CatalogName","DeliveryGroup","PowerState", "Ping", "MaintMode", 	"Uptime","LastConnect", 	"RegState","VDAVersion","AssociatedUserNames",  "WriteCacheType", "WriteCacheSize", "Tags", "HostedOn", "displaymode", "EDT_MTU", "OSBuild", "MCSVDIImageOutOfDate"
+$VDIHeaderWidths = "4", "4",		"4","4", 	"4", 				"4", 		"4","4", 				"4",			  "4",			  "4",			  "4",			  "4", "4", "4", 		"4", "4", "4"
 
 $VDItablewidth = 1200
   
@@ -1173,6 +1173,11 @@ else
 	}
 ## End Column LastConnect
 
+## EDT MTU (set by default.ica or MTUDiscovery)
+$EDTMTU = Invoke-Command -ComputerName $machineDNS -ScriptBlock {(ctxsession -v | findstr "EDT MTU:" | select -Last 1).split(":")[1].trimstart()}
+$tests.EDT_MTU = "NEUTRAL", $EDTMTU
+"EDT MTU Size is set to $EDTMTU" | LogMe -display -progress
+
 
 
 # Column displaymode when a User has a Session
@@ -1832,6 +1837,7 @@ $smtpClient.Send( $emailMessage )
 #  1.4 Enable MCS Features 
 # - Add MCSImageOutOfDate (PendingUpdate) Column for Desktops & Apps
 # - 1.4.2, Bugfix for https://github.com/sacha81/XA-and-XD-HealthCheck/issues/73 
+# - 1.4.4, Column EDT_MTU added für virtual Desktops 
 #
 # == FUTURE ==
 # #  1.5
