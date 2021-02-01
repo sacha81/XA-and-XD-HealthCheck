@@ -24,7 +24,17 @@
 
 # Don't change below here if you don't know what you are doing ... 
 #==============================================================================================
+
+#==============================================================================================
+#Define variable to count script execution time and clear screen
+$scriptstart = Get-Date
+
+Clear-Host
+
+#==============================================================================================
+
 # Load only the snap-ins, which are used
+
 if ($null -eq (Get-PSSnapin "Citrix.*" -EA silentlycontinue)) {
 try { Add-PSSnapin Citrix.* -ErrorAction Stop }
 catch { write-error "Error Get-PSSnapin Citrix.Broker.Admin.* Powershell snapin"; Return }
@@ -81,9 +91,6 @@ Function New-XMLVariables {
 }
 
 New-XMLVariables
-
-$scriptstart = Get-Date
-
 
 $PvsWriteMaxSizeInGB = $PvsWriteMaxSize * 1Gb
 
@@ -509,7 +516,7 @@ function Get-CitrixMaintenanceInfo {
 #==============================================================================================
 
 $wmiOSBlock = {param($computer)
-  try { $wmi=Get-WmiObject -class Win32_OperatingSystem -computer $computer }
+  try { $wmi=Get-WmiObject -Class Win32_OperatingSystem -ComputerName $computer -ErrorAction Stop }
   catch { $wmi = $null }
   return $wmi
 }
@@ -1336,171 +1343,29 @@ $tests.Ping = "SUCCESS", $result
 #==============================================================================================
 # Column Uptime (Query over WMI - only if Ping successfull)
 $tests.WMI = "ERROR","Error"
+
 $job = Start-Job -ScriptBlock $wmiOSBlock -ArgumentList $machineDNS
+
 $wmi = Wait-job $job -Timeout 15 | Receive-Job
 
 # Perform WMI related checks
-if ($null -ne $wmi) {
-	$tests.WMI = "SUCCESS", "Success"
-	$LBTime=[Management.ManagementDateTimeConverter]::ToDateTime($wmi.Lastbootuptime)
-	[TimeSpan]$uptime=New-TimeSpan $LBTime $(get-date)
+    if ($null -ne $wmi) {
+	    
+        $tests.WMI = "SUCCESS", "Success"
+	    
+        $LBTime=[Management.ManagementDateTimeConverter]::ToDateTime($wmi.Lastbootuptime)
+	    
+        [TimeSpan]$uptime=New-TimeSpan $LBTime $(get-date)
 
-	if ($uptime.days -gt $maxUpTimeDays) {
-		"reboot warning, last reboot: {0:D}" -f $LBTime | LogMe -display -warning
-		$tests.Uptime = "WARNING", $uptime.days
-	} else {
-		$tests.Uptime = "SUCCESS", $uptime.days
-	}
-} else {
-	"WMI connection failed - check WMI for corruption" | LogMe -display -error
-	stop-job $job
-}
-#----
-  
-# Column WriteCacheSize (only if Ping is successful)
-################ PVS SECTION ###############
-if (test-path \\$machineDNS\c$\Personality.ini) {
-# Test if PVS cache is of type "device's hard drive"
-$PvsWriteCacheUNC = Join-Path "\\$machineDNS" ($PvsWriteCacheDrive+"$"+"\.vdiskcache")
-$CacheDiskOnHD = Test-Path $PvsWriteCacheUNC
-
-if ($CacheDiskOnHD -eq $True) {
-  $CacheDiskExists = $True
-  $CachePVSType = "Device HD"
-} else {
-  # Test if PVS cache is of type "device RAM with overflow to hard drive"
-  $PvsWriteCacheUNC = Join-Path "\\$machineDNS" ($PvsWriteCacheDrive+"$"+"\vdiskdif.vhdx")
-  $CacheDiskRAMwithOverflow = Test-Path $PvsWriteCacheUNC
-  if ($CacheDiskRAMwithOverflow -eq $True) {
-    $CacheDiskExists = $True
-    $CachePVSType = "Device RAM with overflow to disk"
-  } else {
-    $CacheDiskExists = $False
-    $CachePVSType = ""
-  }
-}
-
-if ($CacheDiskExists -eq $True) {
-$CacheDisk = [long] ((get-childitem $PvsWriteCacheUNC -force).length)
-$CacheDiskGB = "{0:n2}GB" -f($CacheDisk / 1GB)
-"PVS Cache file size: {0:n2}GB" -f($CacheDisk / 1GB) | LogMe
-#"PVS Cache max size: {0:n2}GB" -f($PvsWriteMaxSizeInGB / 1GB) | LogMe -display
-$tests.WriteCacheType = "NEUTRAL", $CachePVSType
-if ($CacheDisk -lt ($PvsWriteMaxSizeInGB * 0.5)) {
-"WriteCache file size is low" | LogMe
-$tests.WriteCacheSize = "SUCCESS", $CacheDiskGB
-}
-elseif ($CacheDisk -lt ($PvsWriteMaxSizeInGB * 0.8)) {
-"WriteCache file size moderate" | LogMe -display -warning
-$tests.WriteCacheSize = "WARNING", $CacheDiskGB
-}
-else {
-"WriteCache file size is high" | LogMe -display -error
-$tests.WriteCacheSize = "ERROR", $CacheDiskGB
-}
-}
-$Cachedisk = 0
-}
-else { $tests.WriteCacheSize = "SUCCESS", "N/A" }
-############## END PVS SECTION #############
-  
-# Check services
-$services = Get-Service -Computer $machineDNS
-  
-if (($services | Where-Object {$_.Name -eq "Spooler"}).Status -Match "Running") {
-"SPOOLER service running..." | LogMe
-$tests.Spooler = "SUCCESS","Success"
-}
-else {
-"SPOOLER service stopped" | LogMe -display -error
-$tests.Spooler = "ERROR","Error"
-}
-  
-if (($services | Where-Object {$_.Name -eq "cpsvc"}).Status -Match "Running") {
-"Citrix Print Manager service running..." | LogMe
-$tests.CitrixPrint = "SUCCESS","Success"
-}
-else {
-"Citrix Print Manager service stopped" | LogMe -display -error
-$tests.CitrixPrint = "ERROR","Error"
-}
- 
- # Column OSBuild 
-$MachineOSVersion = "N/A"
-$MachineOSVersion = (Get-ItemProperty -Path "\\$machineDNS\C$\WINDOWS\System32\hal.dll" -ErrorAction SilentlyContinue).VersionInfo.FileVersion.Split()[0]
-$tests.OSBuild = "NEUTRAL", $MachineOSVersion
-
-  
-}
-else { $tests.Ping = "Error", $result }
-#END of Ping-Section
-  
-# Column Serverload
-$Serverload = $XAmachine | ForEach-Object{ $_.LoadIndex }
-"Serverload: $Serverload" | LogMe -display -progress
-if ($Serverload -ge $loadIndexError) { $tests.Serverload = "ERROR", $Serverload }
-elseif ($Serverload -ge $loadIndexWarning) { $tests.Serverload = "WARNING", $Serverload }
-else { $tests.Serverload = "SUCCESS", $Serverload }
-  
-# Column MaintMode
-$MaintMode = $XAmachine | ForEach-Object{ $_.InMaintenanceMode }
-"MaintenanceMode: $MaintMode" | LogMe -display -progress
-if ($MaintMode) { 
-	$objMaintenance = $Maintenance | Where-Object { $_.TargetName.ToUpper() -eq $XAmachine.MachineName.ToUpper() } | Select-Object -First 1
-	If ($null -ne $objMaintenance){$MaintenanceModeOn = ("ON, " + $objMaintenance.User)} Else {$MaintenanceModeOn = "ON"}
-	"MaintenanceModeInfo: $MaintenanceModeOn" | LogMe -display -progress
-	$tests.MaintMode = "WARNING", $MaintenanceModeOn
-	$ErrorVDI = $ErrorVDI + 1
-}
-else { $tests.MaintMode = "SUCCESS", "OFF" }
-  
-# Column RegState
-$RegState = $XAmachine | ForEach-Object{ $_.RegistrationState }
-"State: $RegState" | LogMe -display -progress
-  
-if ($RegState -ne "Registered") { $tests.RegState = "ERROR", $RegState }
-else { $tests.RegState = "SUCCESS", $RegState }
-
-# Column VDAVersion AgentVersion
-$VDAVersion = $XAmachine | ForEach-Object{ $_.AgentVersion }
-"VDAVersion: $VDAVersion" | LogMe -display -progress
-$tests.VDAVersion = "NEUTRAL", $VDAVersion
-
-# Column HostedOn 
-$HostedOn = $XAmachine | ForEach-Object{ $_.HostingServerName }
-"HostedOn: $HostedOn" | LogMe -display -progress
-$tests.HostedOn = "NEUTRAL", $HostedOn
-
-# Column Tags 
-$Tags = $XAmachine | ForEach-Object{ $_.Tags }
-"Tags: $Tags" | LogMe -display -progress
-$tests.Tags = "NEUTRAL", $Tags
-  
-# Column ActiveSessions
-$ActiveSessions = $XAmachine | ForEach-Object{ $_.SessionCount }
-"Active Sessions: $ActiveSessions" | LogMe -display -progress
-$tests.ActiveSessions = "NEUTRAL", $ActiveSessions
-
-# Column ConnectedUsers
-$ConnectedUsers = $XAmachine | ForEach-Object{ $_.AssociatedUserNames }
-"Connected users: $ConnectedUsers" | LogMe -display -progress
-$tests.ConnectedUsers = "NEUTRAL", $ConnectedUsers
-  
-# Column DeliveryGroup
-$DeliveryGroup = $XAmachine | ForEach-Object{ $_.DesktopGroupName }
-"DeliveryGroup: $DeliveryGroup" | LogMe -display -progress
-$tests.DeliveryGroup = "NEUTRAL", $DeliveryGroup
-
-# Column MCSImageOutOfDate
-$MCSImageOutOfDate = $XAmachine | ForEach-Object{ $_.ImageOutOfDate }
-"ImageOutOfDate: $MCSImageOutOfDate" | LogMe -display -progress
-if ($MCSImageOutOfDate -eq $true) { $tests.MCSImageOutOfDate = "ERROR", $MCSImageOutOfDate }
-elseif ($MCSImageOutOfDate -eq $false) { $tests.MCSImageOutOfDate = "SUCCESS", $MCSImageOutOfDate  }
-else { $tests.MCSImageOutOfDate = "NEUTRAL", $MCSImageOutOfDate }
-
-
-
-
+	    if ($uptime.days -gt $maxUpTimeDays) {
+		    "reboot warning, last reboot: {0:D}" -f $LBTime | LogMe -display -warning
+		    
+            $tests.Uptime = "WARNING", $uptime.days
+	    }#If Uptime
+        else {
+		    
+            $tests.Uptime = "SUCCESS", $uptime.days
+	    }#Else Uptime
 
 #==============================================================================================
 #               CHECK CPU AND MEMORY USAGE 
@@ -1547,13 +1412,209 @@ else { $tests.MCSImageOutOfDate = "NEUTRAL", $MCSImageOutOfDate }
 		
         }
 
-	
-
-
-
-
   
 " --- " | LogMe -display -progress
+
+
+    }#If WMI Not Null
+    else {
+	    
+        "WMI connection failed - check WMI for corruption" | LogMe -display -error
+	    
+        #Original Line v1.4.4
+        #stop-job $job
+
+        #ALTERED LINES
+        $JobID = $Job.Id
+
+        Get-Job -Id $JobID | Remove-Job -Force
+
+        $XAAvgCPUval = 101 | LogMe -error; $tests.AvgCPU = "ERROR", "Wmi Err"
+    
+        $XAUsedMemory = 101 | LogMe -error; $tests.MemUsg = "ERROR", "Wmi Err"
+    
+            foreach ($disk in $diskLettersWorkers){
+        
+                $XAPercentageDS = 0 | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "Wmi Err"
+
+                $XAPercentageDS = 0
+		        $frSpace = 0
+		        $HardDisk = $null
+                
+            }#end of Foreach disk
+
+    }#Else WMI Not Null
+#----
+  
+# Column WriteCacheSize (only if Ping is successful)
+################ PVS SECTION ###############
+if (test-path "\\$machineDNS\c$\Personality.ini") {
+    # Test if PVS cache is of type "device's hard drive"
+    $PvsWriteCacheUNC = Join-Path "\\$machineDNS" ($PvsWriteCacheDrive+"$"+"\.vdiskcache")
+    
+    $CacheDiskOnHD = Test-Path $PvsWriteCacheUNC
+
+if ($CacheDiskOnHD -eq $True) {
+    
+    $CacheDiskExists = $True
+    
+    $CachePVSType = "Device HD"
+}
+else{
+  # Test if PVS cache is of type "device RAM with overflow to hard drive"
+  $PvsWriteCacheUNC = Join-Path "\\$machineDNS" ($PvsWriteCacheDrive+"$"+"\vdiskdif.vhdx")
+  
+  $CacheDiskRAMwithOverflow = Test-Path $PvsWriteCacheUNC
+  if ($CacheDiskRAMwithOverflow -eq $True) {
+    
+    $CacheDiskExists = $True
+    
+    $CachePVSType = "Device RAM with overflow to disk"
+  }
+  else {
+    
+    $CacheDiskExists = $False
+    
+    $CachePVSType = ""
+  }
+}
+
+if ($CacheDiskExists -eq $True) {
+    $CacheDisk = [long] ((get-childitem $PvsWriteCacheUNC -force).length)
+    $CacheDiskGB = "{0:n2}GB" -f($CacheDisk / 1GB)
+    "PVS Cache file size: {0:n2}GB" -f($CacheDisk / 1GB) | LogMe
+    #"PVS Cache max size: {0:n2}GB" -f($PvsWriteMaxSizeInGB / 1GB) | LogMe -display
+    $tests.WriteCacheType = "NEUTRAL", $CachePVSType
+    if ($CacheDisk -lt ($PvsWriteMaxSizeInGB * 0.5)) {
+        "WriteCache file size is low" | LogMe
+        $tests.WriteCacheSize = "SUCCESS", $CacheDiskGB
+    }
+    elseif ($CacheDisk -lt ($PvsWriteMaxSizeInGB * 0.8)) {
+        "WriteCache file size moderate" | LogMe -display -warning
+        $tests.WriteCacheSize = "WARNING", $CacheDiskGB
+    }
+    else {
+        "WriteCache file size is high" | LogMe -display -error
+        $tests.WriteCacheSize = "ERROR", $CacheDiskGB
+    }
+}
+$Cachedisk = 0
+}
+else {
+
+    $tests.WriteCacheSize = "SUCCESS", "N/A"
+}
+############## END PVS SECTION #############
+  
+# Check services
+$services = Get-Service -ComputerName $machineDNS
+  
+if (($services | Where-Object {$_.Name -eq "Spooler"}).Status -Match "Running") {
+    "SPOOLER service running..." | LogMe
+    $tests.Spooler = "SUCCESS","Success"
+}
+else {
+    "SPOOLER service stopped" | LogMe -display -error
+    $tests.Spooler = "ERROR","Error"
+}
+  
+if (($services | Where-Object {$_.Name -eq "cpsvc"}).Status -Match "Running") {
+    "Citrix Print Manager service running..." | LogMe
+    $tests.CitrixPrint = "SUCCESS","Success"
+}
+else {
+    "Citrix Print Manager service stopped" | LogMe -display -error
+    $tests.CitrixPrint = "ERROR","Error"
+}
+ 
+ # Column OSBuild 
+$MachineOSVersion = "N/A"
+$MachineOSVersion = (Get-ItemProperty -Path "\\$machineDNS\C$\WINDOWS\System32\hal.dll" -ErrorAction SilentlyContinue).VersionInfo.FileVersion.Split()[0]
+$tests.OSBuild = "NEUTRAL", $MachineOSVersion
+
+  
+}
+else { $tests.Ping = "Error", $result }
+#END of Ping-Section
+  
+# Column Serverload
+$Serverload = $XAmachine | ForEach-Object{ $_.LoadIndex }
+"Serverload: $Serverload" | LogMe -display -progress
+if ($Serverload -ge $loadIndexError) { $tests.Serverload = "ERROR", $Serverload }
+elseif ($Serverload -ge $loadIndexWarning) { $tests.Serverload = "WARNING", $Serverload }
+else { $tests.Serverload = "SUCCESS", $Serverload }
+  
+# Column MaintMode
+$MaintMode = $XAmachine | ForEach-Object{ $_.InMaintenanceMode }
+"MaintenanceMode: $MaintMode" | LogMe -display -progress
+if ($MaintMode) { 
+	$objMaintenance = $Maintenance | Where-Object { $_.TargetName.ToUpper() -eq $XAmachine.MachineName.ToUpper() } | Select-Object -First 1
+	If ($null -ne $objMaintenance){$MaintenanceModeOn = ("ON, " + $objMaintenance.User)} Else {$MaintenanceModeOn = "ON"}
+	"MaintenanceModeInfo: $MaintenanceModeOn" | LogMe -display -progress
+	$tests.MaintMode = "WARNING", $MaintenanceModeOn
+	$ErrorVDI = $ErrorVDI + 1
+}
+else { $tests.MaintMode = "SUCCESS", "OFF" }
+  
+# Column RegState
+$RegState = $XAmachine | ForEach-Object{ $_.RegistrationState }
+"State: $RegState" | LogMe -display -progress
+  
+if ($RegState -ne "Registered") { $tests.RegState = "ERROR", $RegState }
+else { $tests.RegState = "SUCCESS", $RegState }
+
+# Column VDAVersion AgentVersion
+$VDAVersion = $XAmachine | ForEach-Object{ $_.AgentVersion }
+"VDAVersion: $VDAVersion" | LogMe -display -progress
+$tests.VDAVersion = "NEUTRAL", $VDAVersion
+
+# Column HostedOn - v1.4.4 Lines
+#$HostedOn = $XAmachine | ForEach-Object{ $_.HostingServerName }
+#"HostedOn: $HostedOn" | LogMe -display -progress
+#$tests.HostedOn = "NEUTRAL", $HostedOn
+
+# Column HostedOn 
+$HostedOn = $XAmachine | ForEach-Object{ 
+ if ($_.HostingServerName){
+
+$_.HostingServerName.Split(".")[0]
+
+}else{
+
+"Not Known"
+
+    }
+}#end ForEach
+"HostedOn: $HostedOn" | LogMe -display -progress
+$tests.HostedOn = "NEUTRAL", $HostedOn
+
+# Column Tags 
+$Tags = $XAmachine | ForEach-Object{ $_.Tags }
+"Tags: $Tags" | LogMe -display -progress
+$tests.Tags = "NEUTRAL", $Tags
+  
+# Column ActiveSessions
+$ActiveSessions = $XAmachine | ForEach-Object{ $_.SessionCount }
+"Active Sessions: $ActiveSessions" | LogMe -display -progress
+$tests.ActiveSessions = "NEUTRAL", $ActiveSessions
+
+# Column ConnectedUsers
+$ConnectedUsers = $XAmachine | ForEach-Object{ $_.AssociatedUserNames }
+"Connected users: $ConnectedUsers" | LogMe -display -progress
+$tests.ConnectedUsers = "NEUTRAL", $ConnectedUsers
+  
+# Column DeliveryGroup
+$DeliveryGroup = $XAmachine | ForEach-Object{ $_.DesktopGroupName }
+"DeliveryGroup: $DeliveryGroup" | LogMe -display -progress
+$tests.DeliveryGroup = "NEUTRAL", $DeliveryGroup
+
+# Column MCSImageOutOfDate
+$MCSImageOutOfDate = $XAmachine | ForEach-Object{ $_.ImageOutOfDate }
+"ImageOutOfDate: $MCSImageOutOfDate" | LogMe -display -progress
+if ($MCSImageOutOfDate -eq $true) { $tests.MCSImageOutOfDate = "ERROR", $MCSImageOutOfDate }
+elseif ($MCSImageOutOfDate -eq $false) { $tests.MCSImageOutOfDate = "SUCCESS", $MCSImageOutOfDate  }
+else { $tests.MCSImageOutOfDate = "NEUTRAL", $MCSImageOutOfDate }
+
   
 # Check to see if the server is in an excluded folder path
 if ($ExcludedCatalogs -contains $CatalogName) { "$machineDNS in excluded folder - skipping" | LogMe -display -progress }
@@ -1629,10 +1690,14 @@ $scriptruntimeInSeconds = $scriptruntime.TotalSeconds
 #Write-Host $scriptruntime.TotalSeconds
 "Script was running for $scriptruntimeInSeconds " | LogMe -display -progress
 
+#Only Send Email if Variable in XML file is equal to 1
+if ($CheckSendMail -eq 1){
+
 #send email
 $emailMessage = New-Object System.Net.Mail.MailMessage
 $emailMessage.From = $emailFrom
 $emailMessage.To.Add( $emailTo )
+$emailMessage.CC.Add( $emailCC )
 $emailMessage.Subject = $emailSubject 
 $emailMessage.IsBodyHtml = $true
 $emailMessage.Body = (Get-Content $resultsHTM) | Out-String
@@ -1655,6 +1720,15 @@ If ((![string]::IsNullOrEmpty($smtpUser)) -and (![string]::IsNullOrEmpty($smtpPW
 }
 
 $smtpClient.Send( $emailMessage )
+
+
+
+}#end of IF CheckSendMail
+else{
+
+    "XenApp Check skipped because CheckSendMail = 0" | LogMe -display -progress
+
+}#Skip Send Mail
 
 
 #=========== History ===========================================================================

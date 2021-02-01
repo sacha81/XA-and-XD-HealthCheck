@@ -159,6 +159,13 @@
 		</Variable>
 <!-- E-Mail Configuration -->
 		<Variable>
+			<!-- Set to 1 if you want to send E-mail -->
+			<Name>CheckSendMail</Name>
+			<Value>1</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
 			<!-- Address of the sender -->
 			<Name>emailFrom</Name>
 			<Value>citrix@mycompany.ch</Value>
