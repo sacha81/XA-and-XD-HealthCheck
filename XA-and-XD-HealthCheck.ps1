@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 modfied 10.2018 Version: 1.4.4
+# Created on: 11.2014 modfied 10.2018 Version: 1.4.5
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -422,6 +422,14 @@ Function ToHumanReadable()
     [void]$sb.Append(" minutes")
   }
   return $sb.ToString()
+}
+
+
+# if enabled for Citrix Cloud set the credential profile: 
+# Help from https://www.citrix.com/blogs/2016/07/01/introducing-remote-powershell-sdk-v2-for-citrix-cloud/ and 
+# from https://hallspalmer.wordpress.com/2019/02/19/manage-citrix-cloud-using-powershell/ 
+if ( $CitrixCloudCheck -eq "1" ) {
+Set-XDCredentials -CustomerId $CustomerID -SecureClientFile $SecureClientFile -ProfileType CloudApi -StoreAs default
 }
 
 # ==============================================================================================
@@ -1912,6 +1920,7 @@ else{
 # - Add MCSImageOutOfDate (PendingUpdate) Column for Desktops & Apps
 # - 1.4.2, Bugfix for https://github.com/sacha81/XA-and-XD-HealthCheck/issues/73 
 # - 1.4.4, Column EDT_MTU added für virtual Desktops 
+# - 1.4.5, Enabled to work for Citrix Cloud (see also changes in XML!) 
 #
 # == FUTURE ==
 # #  1.5
