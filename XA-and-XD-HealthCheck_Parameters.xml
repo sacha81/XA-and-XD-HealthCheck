@@ -9,6 +9,27 @@
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
+			<!-- Is the HealthCheck used in a Citrix Cloud enviornment and running on a CloudConnector -->
+			<Name>CitrixCloudCheck</Name>
+			<Value>0</Value> <!-- 1 or 0 -->
+			<Type>[int]</Type>
+			<Scope>Script</Scope> <!-- global ? -->
+		</Variable>
+		<Variable>
+			<!-- Cloud API for Enviornments in Citrix Cloud e.g. https://eu.cloud.com/identity/api-access/secure-clients -->
+			<Name>CustomerID</Name>
+			<Value>a12345b78cde</Value> <!-- this is the short ID like a12345b78cde -->
+			<Type>[string]</Type>
+			<Scope>Script</Scope> <!-- global ? -->
+		</Variable>
+		<Variable>
+			<!-- Cloud API for Enviornments in Citrix Cloud https://eu.cloud.com/identity/api-access/secure-clients -->
+			<Name>SecureClientFile</Name>
+			<Value>C:\Company\myCredentialfiles\secureclient.csv</Value> <-- you need to download the CSX file and locate it on the server running this script, e.g the CloudConnector ---> 
+			<Type>[string]</Type>
+			<Scope>Script</Scope> <!-- global ? -->
+		</Variable>
+		<Variable>
 			<!-- Define the hostnames of delivery controllers, you can use localhost if you run localy
 			     Example: CXDC01.domain.tld,CXDC02.domain.tld -->
 			<Name>DeliveryControllers</Name>
