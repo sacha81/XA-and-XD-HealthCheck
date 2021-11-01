@@ -25,7 +25,7 @@
 		<Variable>
 			<!-- Cloud API for Enviornments in Citrix Cloud https://eu.cloud.com/identity/api-access/secure-clients -->
 			<Name>SecureClientFile</Name>
-			<Value>C:\Company\myCredentialfiles\secureclient.csv</Value> <-- you need to download the CSX file and locate it on the server running this script, e.g the CloudConnector ---> 
+			<Value>C:\Company\myCredentialfiles\secureclient.csv</Value> <!--  you need to download the CSV file and locate it on the server running this script, e.g the CloudConnector --> 
 			<Type>[string]</Type>
 			<Scope>Script</Scope> <!-- global ? -->
 		</Variable>
