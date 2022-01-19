@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 modfied 10.2018 Version: 1.4.5
+# Created on: 11.2014 modfied 01.2022 Version: 1.4.6
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -1105,8 +1105,8 @@ $tests.OSBuild = "NEUTRAL", $MachineOSVersion
   
   }
 else {
-$tests.Ping = "Error", $result
-$ErrorVDI = $ErrorVDI + 1
+$tests.Ping = "Neutral", $result
+$ErrorVDI = $ErrorVDI + 0 # Ping is no definitve indicator for a problem
 }
 #END of Ping-Section
 
@@ -1542,7 +1542,7 @@ $tests.OSBuild = "NEUTRAL", $MachineOSVersion
 
   
 }
-else { $tests.Ping = "Error", $result }
+else { $tests.Ping = "Neutral", $result }
 #END of Ping-Section
   
 # Column Serverload
@@ -1921,6 +1921,7 @@ else{
 # - 1.4.2, Bugfix for https://github.com/sacha81/XA-and-XD-HealthCheck/issues/73 
 # - 1.4.4, Column EDT_MTU added für virtual Desktops 
 # - 1.4.5, Enabled to work for Citrix Cloud (see also changes in XML!) 
+# - 1.4.6, Ping to Desktop or AppServer is no more red because not critical
 #
 # == FUTURE ==
 # #  1.5
