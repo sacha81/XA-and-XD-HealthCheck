@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 modfied 01.2022 Version: 1.4.6
+# Created on: 11.2014 modfied 10.2018 Version: 1.4.6
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -670,13 +670,15 @@ $tests.ActiveSiteServices = "NEUTRAL", $ActiveSiteServices
     else { "WMI connection failed - check WMI for corruption" | LogMe -display -error }
 }
 
-
-  
 " --- " | LogMe -display -progress
 #Fill $tests into array
 
+
+
 $ControllerResults.$ControllerDNS = $tests
+
 }
+
   
 #== Catalog Check ============================================================================================
 "Check Catalog #################################################################################" | LogMe -display -progress
@@ -974,11 +976,11 @@ if($ShowDesktopTable -eq 1 ) {
   
 $allResults = @{}
   
-$machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress| Where-Object {$_.SessionSupport -eq "SingleSession" -and @(Compare-Object $_.tags $ExcludedTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0}
+$machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress| Where-Object {$_.SessionSupport -eq "SingleSession" -and @(Compare-Object $_.tags $ExcludedTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and $_.catalogname -notin $ExcludedCatalogs}
   
 # SessionSupport only availiable in XD 7.x - for this reason only distinguish in Version above 7 if Desktop or XenApp
-if($controllerversion -lt 7 ) { $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -and @(Compare-Object $_.tags $ExcludedTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0}
-else { $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress| Where-Object {$_.SessionSupport -eq "SingleSession" -and @(Compare-Object $_.tags $ExcludedTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0} }
+if($controllerversion -lt 7 ) { $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -and @(Compare-Object $_.tags $ExcludedTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and $_.catalogname -notin $ExcludedCatalogs}
+else { $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress| Where-Object {$_.SessionSupport -eq "SingleSession" -and @(Compare-Object $_.tags $ExcludedTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and $_.catalogname -notin $ExcludedCatalogs} }
 
 $Maintenance = Get-CitrixMaintenanceInfo -AdminAddress $AdminAddress
 
@@ -1327,7 +1329,7 @@ else
 
   
 #$XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress | Where-Object {$_.SessionSupport -eq "MultiSession" -and @(compare $_.tags $ExcludedTags -IncludeEqual | ? {$_.sideindicator -eq '=='}).count -eq 0}
-$XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -MachineName "*" -CatalogName $CatalogName -AdminAddress $AdminAddress | Where-Object {$_.SessionSupport -eq "MultiSession" -and @(Compare-Object $_.tags $ExcludedTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0}
+$XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -MachineName "*" -CatalogName $CatalogName -AdminAddress $AdminAddress | Where-Object {$_.SessionSupport -eq "MultiSession" -and @(Compare-Object $_.tags $ExcludedTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and $_.catalogname -notin $ExcludedCatalogs}
 $Maintenance = Get-CitrixMaintenanceInfo -AdminAddress $AdminAddress
   
 foreach ($XAmachine in $XAmachines) {
@@ -1653,14 +1655,21 @@ writeHtmlHeader "$EnvironmentNameOut Farm Report" $resultsHTM
 #writeTableFooter $resultsHTM
 
 # Write Table with the Controllers
+if ( $CitrixCloudCheck -eq "0" ) {
 writeTableHeader $resultsHTM $XDControllerFirstheaderName $XDControllerHeaderNames $XDControllerHeaderWidths $XDControllerTableWidth
 $ControllerResults | sort-object -property XDControllerFirstheaderName | ForEach-Object{ writeData $ControllerResults $resultsHTM $XDControllerHeaderNames }
 writeTableFooter $resultsHTM
+}
+else { "No Controller output in HTML (CitrixCloud) " | LogMe -display -progress }
+
 
 # Write Table with the License
+if ( $CitrixCloudCheck -eq "0" ) {
 writeTableHeader $resultsHTM $CTXLicFirstheaderName $CTXLicHeaderNames $CTXLicHeaderWidths $CTXLicTableWidth
 $CTXLicResults | sort-object -property LicenseName | ForEach-Object{ writeData $CTXLicResults $resultsHTM $CTXLicHeaderNames }
 writeTableFooter $resultsHTM
+}
+else { "No License output in HTML (CitrixCloud) " | LogMe -display -progress }
   
 # Write Table with the Catalogs
 writeTableHeader $resultsHTM $CatalogHeaderName $CatalogHeaderNames $CatalogWidths $CatalogTablewidth
@@ -1921,7 +1930,8 @@ else{
 # - 1.4.2, Bugfix for https://github.com/sacha81/XA-and-XD-HealthCheck/issues/73 
 # - 1.4.4, Column EDT_MTU added für virtual Desktops 
 # - 1.4.5, Enabled to work for Citrix Cloud (see also changes in XML!) 
-# - 1.4.6, Ping to Desktop or AppServer is no more red because not critical
+# - 1.4.5.1, Ping to Desktop or AppServer is no more red because not critical
+# - 1.4.6, Removed HTML Output of Controller / License for CitrixCloud and added a proper exclude from check when catalog is excluded GitHub issue #56
 #
 # == FUTURE ==
 # #  1.5
