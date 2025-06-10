@@ -4,7 +4,21 @@
 		<Variable>
 			<!-- Define a EnvironmentName e.g. Integration/Production etc. - this will be used in HTML & Email Subject -->
 			<Name>EnvironmentName</Name>
-			<Value>XenApp and XenDesktop</Value>
+			<Value>Citrix Health Status</Value>
+			<Type>[string]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Define an Output log file e.g CTXXDHealthCheck.log -->
+			<Name>OutputLog</Name>
+			<Value>CTXXDHealthCheck.log</Value>
+			<Type>[string]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Define an Output HTML file e.g CTXXDHealthCheck.html -->
+			<Name>OutputHTML</Name>
+			<Value>CTXXDHealthCheck.htm</Value>
 			<Type>[string]</Type>
 			<Scope>Script</Scope>
 		</Variable>
@@ -26,6 +40,20 @@
 			<!-- Cloud API for Enviornments in Citrix Cloud https://eu.cloud.com/identity/api-access/secure-clients -->
 			<Name>SecureClientFile</Name>
 			<Value>C:\Company\myCredentialfiles\secureclient.csv</Value> <!--  you need to download the CSV file and locate it on the server running this script, e.g the CloudConnector --> 
+			<Type>[string]</Type>
+			<Scope>Script</Scope> <!-- global ? -->
+		</Variable>
+		<Variable>
+			<!-- Cloud API for Enviornments in Citrix Cloud e.g. https://eu.cloud.com/identity/api-access/secure-clients -->
+			<Name>APIKey</Name>
+			<Value>20f97466-76ff-4cfc-ac2a-52790387540a</Value> <!-- this is the GUID ID like 20f97466-76ff-4cfc-ac2a-52790387540a . Only needed when the SecureClientFile is not present -->
+			<Type>[string]</Type>
+			<Scope>Script</Scope> <!-- global ? -->
+		</Variable>
+		<Variable>
+			<!-- Cloud API for Enviornments in Citrix Cloud e.g. https://eu.cloud.com/identity/api-access/secure-clients -->
+			<Name>SecretKey</Name>
+			<Value>eoFfKREqbx620gTrJH0JFA==</Value> <!-- this is the secret like eoFfKREqbx620gTrJH0JFA== . Only needed when the SecureClientFile is not present -->
 			<Type>[string]</Type>
 			<Scope>Script</Scope> <!-- global ? -->
 		</Variable>
@@ -52,6 +80,36 @@
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
+			<!-- # Set to 1 if you want to Check a Environment with Cloud Connectors -->
+			<Name>ShowCloudConnectorTable</Name>
+			<Value>0</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Define the hostnames of Cloud Connector Servers, you can use localhost if you run localy
+			     Example: CCS01.domain.tld,CCS02.domain.tld -->
+			<Name>CloudConnectorServers</Name>
+			<Value></Value> <!-- Add Server separated by comma -->
+			<Type>[array]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- # Set to 1 if you want to Check a Environment with Storefront -->
+			<Name>ShowStorefrontTable</Name>
+			<Value>0</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Define the hostnames of Storefront Servers, you can use localhost if you run localy
+			     Example: CXS01.domain.tld,CXS02.domain.tld -->
+			<Name>StoreFrontServers</Name>
+			<Value></Value> <!-- Add Server separated by comma -->
+			<Type>[array]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
 			<!-- Maximum uptime of a virtual Desktop or a XenApp
 				 Example: 7 -->
 			<Name>maxUpTimeDays</Name>
@@ -61,14 +119,25 @@
 		</Variable>
 		<Variable>
 			<!-- Exclude Catalogs, e.g Testing or Poc-Catalogs
-				 Example: Windows 7,Windows 8 Test -->
+				 Example: Windows 7,Windows 8 Test
+				 Supports wildcards -->
 			<Name>ExcludedCatalogs</Name>
 			<Value></Value>
 			<Type>[array]</Type>
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
-			<!-- Exclude Tags, e.g excludeFromReport, UAT, etc -->
+			<!-- Exclude Delivery Groups, e.g Testing or Poc-DGs
+				 Example: Windows 7,Windows 8 Test
+				 Supports wildcards -->
+			<Name>ExcludedDeliveryGroups</Name>
+			<Value></Value>
+			<Type>[array]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Exclude Tags, e.g excludeFromReport, UAT, etc
+				 Supports wildcards -->
 			<Name>ExcludedTags</Name>
 			<Value>excludeFromReport</Value>
 			<Type>[array]</Type>
@@ -77,7 +146,27 @@
 		<Variable>
 			<!-- define the maximum of counted machines (default is only 250) -->
 			<Name>maxmachines</Name>
-			<Value>1000</Value>
+			<Value>5000</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Time (In Days) that it will look back for maintenance mode actions
+				 Example: 30
+				 This is handy data to have in the reports so you can see who placed the
+				 machines, Delivery Groups and Hypervisor Connections into maintenance mode -->
+			<Name>MaintenanceModeActionsFromPastinDays</Name>
+			<Value>30</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Time (In Hours) of that it will look back for Broker Connection Failures
+				 Example: 12
+				 If the report is run first thing in the morning, this will help see any
+				 brokering issues that occurred overnight -->
+			<Name>BrokerConnectionFailuresinHours</Name>
+			<Value>12</Value>
 			<Type>[int]</Type>
 			<Scope>Script</Scope>
 		</Variable>
@@ -90,7 +179,7 @@
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
-			<!-- Define if you ONLY want to see bad XENAPP (Unregistered, to high Uptime, Ping-Time-out)
+			<!-- Define if you ONLY want to see bad XENAPP (Unregistered, to high Uptime)
 				 I propose to set this value to 1 in not small environments >50 Desktops -->
 			<Name>ShowOnlyErrorXA</Name>
 			<Value>0</Value>
@@ -98,7 +187,7 @@
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
-			<!-- Define if you ONLY want to see bad DESKTOPS (Unregistered, to high Uptime, Ping-Time-out)
+			<!-- Define if you ONLY want to see bad DESKTOPS (Unregistered, to high Uptime)
 				 I propose to set this value to 1 in not small environments >50 Desktops -->
 			<Name>ShowOnlyErrorVDI</Name>
 			<Value>0</Value>
@@ -159,11 +248,44 @@
 		<Variable>
 			<!-- # Select types of licenses to report, eg: XDT_PLT_UD, PVSD_STD_CCS -->
 			<Name>CTXLicenseMode</Name>
-			<Value>XDT_PLT_UD,PVSD_STD_CCS</Value>
+			<Value>XDT_PLT_CCS,XDT_PLT_UD,PVSD_STD_CCS</Value>
 			<Type>[array]</Type>
 			<Scope>Script</Scope>
 		</Variable>
-<!-- PVS-Section: If you are using WriteCache to HD -->
+<!-- Stuck Sessions Options -->
+		<Variable>
+			<!-- Set to 1 if you want to process and display the Stuck Sessions Table -->
+			<Name>ShowStuckSessionsTable</Name>
+			<Value>1</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Maximum Disconnect Time (In Hours) of a virtual Desktop or a XenApp host
+				 Example: 8
+				 This will help to evaluate stuck or stale sessions -->
+			<Name>MaxDisconnectTimeInHours</Name>
+			<Value>96</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Exclude user accounts from being flagged as a Stuck Session
+			      Example: kiosk
+				  Supports wildcards -->
+			<Name>ExcludedStuckSessionUserAccounts</Name>
+			<Value>*kiosk*</Value>
+			<Type>[array]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+<!-- MCS/PVS-Section: If you are using WriteCache to HD -->
+		<Variable>
+			<!-- Drive to MCSIO vDisk write cache file -->
+			<Name>MCSIOWriteCacheDrive</Name>
+			<Value>D</Value>
+			<Type>[string]</Type>
+			<Scope>Script</Scope>
+		</Variable>
 		<Variable>
 			<!-- Drive to PVS vDisk write cache file -->
 			<Name>PvsWriteCacheDrive</Name>
@@ -172,8 +294,8 @@
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
-			<!-- Size of the local PVS write cache drive -->
-			<Name>PvsWriteMaxSize</Name>
+			<!-- Maximum size of the local PVS (vdiskdif.vhdx) and MCSIO (mcsdif.vhdx) write cache file -->
+			<Name>WriteCacheMaxSizeInGB</Name>
 			<Value>15</Value> <!-- size in GB -->
 			<Type>[long]</Type>
 			<Scope>Script</Scope>
@@ -197,6 +319,13 @@
 			<!-- Address of the recipient -->
 			<Name>emailTo</Name>
 			<Value>citrix@mycompany.ch</Value>
+			<Type>[string]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Address of the recipient for CC -->
+			<Name>emailCC</Name>
+			<Value></Value>
 			<Type>[string]</Type>
 			<Scope>Script</Scope>
 		</Variable>
