@@ -1,5 +1,5 @@
-#==============================================================================================
-# Created on: 11.2014 modfied 10.2018 Version: 1.4.6
+﻿#==============================================================================================
+# Created on: 11.2014 modfied 06.2025 Version: 1.4.7
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -7,7 +7,7 @@
 # It generates a HTML output File which will be sent as Email.
 #
 # Initial versions tested on XenApp/XenDesktop 7.6 and XenDesktop 5.6 
-# Newest version tested on XenApp/XenDesktop 7.11-7.13
+# Newest version tested on CVAD 2203 and above, including Citrix Cloud.
 #
 # Prerequisite: Config file, a XenDesktop Controller with according privileges necessary 
 # Config file:  In order for the script to work properly, it needs a configuration file.
@@ -19,11 +19,38 @@
 #               !! If you run it as scheduled task you need to add with argument "non interactive"
 #               or your user has interactive persmission!
 #
+# IMPORTANT: For this script to function correctly it requires:
+#            If using on-prem Delivery Controllers, it requires TCP Ports 80 and 443 for the PowerShell SDK.
+#            For all other tests it is important to ensure WinRM is configured and enabled on all the Citrix
+#            Infrastructure servers and Session Hosts. This script requires WinRM, and will attempt to
+#            fallback to WMI (DCOM) if WinRM is not available. It also tries the UNC path for drive shares,
+#            such as C$ and D$. It also does a ping test, but that's not as important as the script has been
+#            changed from version 1.4.7 to proceed, even if ping times out or fails. This allows for complex
+#            environments where Session Hosts may be in different security zones. If you use the Windows
+#            host-based firewall, or a 3rd party product, add some rules to allow for this connectivity. As
+#            of version 1.4.7 the script now has 3 extra columns in the VDI and XenApp/RDSH tables labeled
+#            WinRM, WMI and UNC. These will either be flagged as True or False, which will help you to easily
+#            identify connectivity issues experienced by the script.
+#
+# Example Syntax:
+#   Default:
+#     powershell -executionpolicy bypass .\XA-and-XD-HealthCheck.ps1
+#   Specify a different Parameters file:
+#     powershell -executionpolicy bypass .\XA-and-XD-HealthCheck.ps1 -ParamsFile:"IOC-OPS_Params.xml"
+#   Process ALL parameters files in the same folder as the script:
+#     powershell -executionpolicy bypass .\XA-and-XD-HealthCheck.ps1 -All
+#   Process ALL parameters files in the same folder as the script in runspaces, so they run in parallel:
+#     powershell -executionpolicy bypass .\XA-and-XD-HealthCheck.ps1 -All -UseRunspace
 #
 #==============================================================================================
 
 # Don't change below here if you don't know what you are doing ... 
 #==============================================================================================
+Param (
+       [String]$ParamsFile,
+       [Switch]$All,
+       [Switch]$UseRunspace
+      )
 
 #==============================================================================================
 #Define variable to count script execution time and clear screen
@@ -36,12 +63,11 @@ Clear-Host
 # Load only the snap-ins, which are used
 
 if ($null -eq (Get-PSSnapin "Citrix.*" -EA silentlycontinue)) {
-try { Add-PSSnapin Citrix.* -ErrorAction Stop }
-catch { write-error "Error Get-PSSnapin Citrix.Broker.Admin.* Powershell snapin"; Return }
+  try { Add-PSSnapin Citrix.* -ErrorAction Stop }
+  catch { write-error "Error Get-PSSnapin Citrix.Broker.Admin.* Powershell snapin"; Return }
 }
 
 #==============================================================================================
-# Import Variables from XML:
 
 If (![string]::IsNullOrEmpty($hostinvocation)) {
 	[string]$Global:ScriptPath = [System.IO.Path]::GetDirectoryName([System.Windows.Forms.Application]::ExecutablePath)
@@ -59,207 +85,1300 @@ If (![string]::IsNullOrEmpty($hostinvocation)) {
 
 Set-StrictMode -Version Latest
 
+#==============================================================================================
+
+# Create the runspace pool.
+
+Function Get-LogicalProcessorCount {
+  $NumberOfLogicalProcessors = 0
+  $ProcessorCountArray = @()
+  Try {
+    $VerbosePreference = 'SilentlyContinue'
+    $ProcessorCountArray = Get-CimInstance -ClassName win32_processor -ErrorAction Stop | Select-Object DeviceID, SocketDesignation, NumberOfLogicalProcessors
+    $VerbosePreference = 'Continue'
+    ForEach ($ProcessorCount in $ProcessorCountArray) {
+      $NumberOfLogicalProcessors = $NumberOfLogicalProcessors + $ProcessorCount.NumberOfLogicalProcessors
+    }
+  }
+  Catch [System.Exception]{
+    #$($Error[0].Exception.Message)
+  }
+  return $NumberOfLogicalProcessors
+}
+
+If ($UseRunspace) {
+  $MaxThreads = (Get-LogicalProcessorCount)
+  If ($MaxThreads -gt 1) {
+    $MaxThreads = $MaxThreads - 1
+  } Else {
+    $MaxThreads = 4
+  }
+  write-verbose "$(Get-Date): Runspace pool configuration:" -verbose
+  write-verbose "$(Get-Date): - minimum number of opened/concurrent runspaces for the pool: 1" -verbose
+  write-verbose "$(Get-Date): - maximum number of opened/concurrent runspaces for the pool: $($MaxThreads)" -verbose
+  $RunspacePool = [runspacefactory]::CreateRunspacePool(
+      1, # minimum number of opened/concurrent runspaces for the pool
+      $MaxThreads # maximum number of opened/concurrent runspaces for the pool
+    )
+  $RunspacePool.open()
+  $runspaces = New-Object System.Collections.ArrayList
+}
+
+#==============================================================================================
+
+# Get all XML Files
+
 # Import parameter file
-$Global:ParameterFile = $ScriptName + "_Parameters.xml"
+$Global:ParameterFiles = @()
 $Global:ParameterFilePath = $ScriptPath
-[xml]$cfg = Get-Content ($ParameterFilePath + "\" + $ParameterFile) # Read content of XML file
-
-# Import variables
-Function New-XMLVariables {
-	# Create a variable reference to the XML file
-	$cfg.Settings.Variables.Variable | ForEach-Object {
-		# Set Variables contained in XML file
-		$VarValue = $_.Value
-		$CreateVariable = $True # Default value to create XML content as Variable
-		switch ($_.Type) {
-			# Format data types for each variable 
-			'[string]' { $VarValue = [string]$VarValue } # Fixed-length string of Unicode characters
-			'[char]' { $VarValue = [char]$VarValue } # A Unicode 16-bit character
-			'[byte]' { $VarValue = [byte]$VarValue } # An 8-bit unsigned character
-            '[bool]' { If ($VarValue.ToLower() -eq 'false'){$VarValue = [bool]$False} ElseIf ($VarValue.ToLower() -eq 'true'){$VarValue = [bool]$True} } # An boolean True/False value
-			'[int]' { $VarValue = [int]$VarValue } # 32-bit signed integer
-			'[long]' { $VarValue = [long]$VarValue } # 64-bit signed integer
-			'[decimal]' { $VarValue = [decimal]$VarValue } # A 128-bit decimal value
-			'[single]' { $VarValue = [single]$VarValue } # Single-precision 32-bit floating point number
-			'[double]' { $VarValue = [double]$VarValue } # Double-precision 64-bit floating point number
-			'[DateTime]' { $VarValue = [DateTime]$VarValue } # Date and Time
-			'[Array]' { $VarValue = [Array]$VarValue.Split(',') } # Array
-			'[Command]' { $VarValue = Invoke-Expression $VarValue; $CreateVariable = $False } # Command
-		}
-		If ($CreateVariable) { New-Variable -Name $_.Name -Value $VarValue -Scope $_.Scope -Force }
-	}
+$Global:CountParameterFiles = 0
+If ($All -eq $False) {
+  $Global:ParameterFile = $ScriptName + "_Parameters.xml"
+  If (![string]::IsNullOrEmpty($ParamsFile)) {
+    $Global:ParameterFile = $ParamsFile
+  }
+  $Global:ParameterFiles += $ParameterFile
+} Else {
+  # Get the XML files
+  # Using the Get-ChildItem –Filter parameter provides the fastest outcome, but we then need to pipe the
+  # output to Where-Object for further filtering so we don't pick up any .xmlold files, as an example.
+  $Global:ParameterFiles += Get-ChildItem -Path "$($ParameterFilePath + '\')" -Filter '*.xml' | Where-Object {$_.Extension -eq ".xml"} | Select-Object -ExpandProperty Name
+  $CountParameterFiles = ($ParameterFiles | Measure-Object).Count
+  Write-Verbose "$(Get-Date): There are $CountParameterFiles XML files to process" -verbose
 }
-
-New-XMLVariables
-
-$PvsWriteMaxSizeInGB = $PvsWriteMaxSize * 1Gb
-
-ForEach ($DeliveryController in $DeliveryControllers){
-    If ($DeliveryController -ieq "LocalHost"){
-        $DeliveryController = [System.Net.DNS]::GetHostByName('').HostName
-    }
-    If (Test-Connection $DeliveryController) {
-        $AdminAddress = $DeliveryController
-        break
-    }
-}
-
-$ReportDate = (Get-Date -UFormat "%A, %d. %B %Y %R")
-
 
 $currentDir = Split-Path $MyInvocation.MyCommand.Path
 $outputpath = Join-Path $currentDir "" #add here a custom output folder if you wont have it on the same directory
+
+ForEach ($ParameterFile in $ParameterFiles) {
+
+  Write-Verbose "$(Get-Date): Processing $($ParameterFilePath + '\' + $ParameterFile)" -verbose
+
+#==============================================================================================
+
+# Scriptblock
+
+$scriptBlockExecute = {
+  param(
+        [string]$ParameterFilePath,
+        [string]$ParameterFile,
+        [string]$outputpath
+       )
+
+# Import variables
+Function New-XMLVariables {
+  param(
+        [xml]$cfg,
+        [switch]$output
+       )
+  # Create a variable reference to the XML file
+  $cfg.Settings.Variables.Variable | ForEach-Object {
+    # Set Variables contained in XML file
+    $VarValue = $_.Value
+    $CreateVariable = $True # Default value to create XML content as Variable
+    switch ($_.Type) {
+      # Format data types for each variable 
+      '[string]' { $VarValue = [string]$VarValue } # Fixed-length string of Unicode characters
+      '[char]' { $VarValue = [char]$VarValue } # A Unicode 16-bit character
+      '[byte]' { $VarValue = [byte]$VarValue } # An 8-bit unsigned character
+      '[bool]' { If ($VarValue.ToLower() -eq 'false'){$VarValue = [bool]$False} ElseIf ($VarValue.ToLower() -eq 'true'){$VarValue = [bool]$True} } # An boolean True/False value
+      '[int]' { $VarValue = [int]$VarValue } # 32-bit signed integer
+      '[long]' { $VarValue = [long]$VarValue } # 64-bit signed integer
+      '[decimal]' { $VarValue = [decimal]$VarValue } # A 128-bit decimal value
+      '[single]' { $VarValue = [single]$VarValue } # Single-precision 32-bit floating point number
+      '[double]' { $VarValue = [double]$VarValue } # Double-precision 64-bit floating point number
+      '[DateTime]' { $VarValue = [DateTime]$VarValue } # Date and Time
+      '[Array]' { $VarValue = [Array]$VarValue.Split(',') } # Array
+      '[Command]' { $VarValue = Invoke-Expression $VarValue; $CreateVariable = $False } # Command
+    }
+    If ($CreateVariable) {
+      If ($output) {
+        write-verbose "Creating variable $($_.Name) with the value $($VarValue)" -verbose
+      }
+      New-Variable -Name $_.Name -Value $VarValue -Scope $_.Scope -Force
+    }
+  }
+}
+
+[xml]$cfg = Get-Content ($ParameterFilePath + '\' + $ParameterFile) # Read content of XML file
+
+New-XMLVariables -cfg:$cfg
+
+#==============================================================================================
+
+$ReportDate = (Get-Date -UFormat "%A, %d. %B %Y %R")
+
 $logfile = Join-Path $outputpath ("CTXXDHealthCheck.log")
+If (![string]::IsNullOrEmpty($OutputLog)) {
+  $logfile = Join-Path $outputpath ($OutputLog)
+}
 $resultsHTM = Join-Path $outputpath ("CTXXDHealthCheck.htm") #add $outputdate in filename if you like
-  
-#Header for Table "XD/XA Controllers" Get-BrokerController
-$XDControllerFirstheaderName = "ControllerServer"
-$XDControllerHeaderNames = "Ping", 	"State","DesktopsRegistered", 	"ActiveSiteServices"
-$XDControllerHeaderWidths = "2",	"2", 	"2", 					"10"				
-$XDControllerTableWidth= 1200
-foreach ($disk in $diskLettersControllers)
-{
+If (![string]::IsNullOrEmpty($OutputHTML)) {
+  $resultsHTM = Join-Path $outputpath ($OutputHTML) #add $outputdate in filename if you like
+}
+
+Remove-Item $logfile -force -EA SilentlyContinue
+Remove-Item $resultsHTM -force -EA SilentlyContinue
+
+#==============================================================================================
+
+#log function
+function LogMe() {
+  Param(
+    [parameter(Mandatory = $true, ValueFromPipeline = $true)] $logEntry,
+    [switch]$display,
+    [switch]$error,
+    [switch]$warning,
+    [switch]$progress
+  )
+  if ($error) { $logEntry = "[ERROR] $logEntry" ; Write-Host "$logEntry" -Foregroundcolor Red	}
+  elseif ($warning) { Write-Warning "$logEntry" ; $logEntry = "[WARNING] $logEntry" }
+  elseif ($progress) { Write-Host "$logEntry" -Foregroundcolor Green }
+  elseif ($display) { Write-Host "$logEntry" }
+
+  #$logEntry = ((Get-Date -uformat "%D %T") + " - " + $logEntry)
+  $logEntry | Out-File $logFile -Append
+}
+
+#==============================================================================================
+
+Function Test-OpenPort {
+<#
+  .SYNOPSIS
+  Test-OpenPort is an advanced Powershell function. Test-OpenPort acts like a port scanner. 
+  .DESCRIPTION
+  Uses Test-NetConnection. Define multiple targets and multiple ports. 
+  .PARAMETER
+  Target
+  Define the target by hostname or IP-Address. Separate them by comma. Default: localhost 
+  .PARAMETER
+  Port
+  Mandatory. Define the TCP port. Separate them by comma. 
+  .EXAMPLE
+  Test-OpenPort -Target sid-500.com,cnn.com,10.0.0.1 -Port 80,443 
+  .NOTES
+  Author: Patrick Gruenauer
+  Web: https://sid-500.com
+  Modified by Jeremy Saunders (jeremy@jhouseconsulting.com)
+  .LINK
+  None. 
+  .INPUTS
+  None. 
+  .OUTPUTS
+  None.
+#>
+[CmdletBinding()]
+param (
+       [string[]]$Targets='localhost',
+       [Parameter(Mandatory=$true, Helpmessage = 'Enter Port Numbers. Separate them by comma.')]
+       [string[]]$Ports,
+       [switch]$DisableProgressBar,
+       [switch]$Output
+      )
+  $result=@()
+  foreach ($t in $Targets) {
+    If ($Output) { write-verbose "Target: $t" -verbose }
+    foreach ($p in $Ports) {
+      If ($Output) { write-verbose "Testing Port: $p" -verbose }
+      If ($DisableProgressBar) {
+        $OriginalProgressPreference = $Global:ProgressPreference
+        $Global:ProgressPreference = 'SilentlyContinue'
+      }
+      $a = Test-NetConnection -ComputerName $t -Port $p -WarningAction SilentlyContinue
+      If ($Output) { write-verbose "Success: $($a.tcpTestSucceeded)" -verbose }
+      $result += New-Object -TypeName PSObject -Property ([ordered]@{
+        'Target' = $a.ComputerName;
+        'RemoteAddress' = $a.RemoteAddress;
+        'Port' = $a.RemotePort;
+        'Status' = $a.tcpTestSucceeded
+        })
+      If ($DisableProgressBar) {
+        $Global:ProgressPreference = $OriginalProgressPreference
+      }
+    }
+  }
+  return $result
+}
+
+# ==============================================================================================
+
+# if enabled for Citrix Cloud set the credential profile: 
+# Help from https://www.citrix.com/blogs/2016/07/01/introducing-remote-powershell-sdk-v2-for-citrix-cloud/ and 
+# from https://hallspalmer.wordpress.com/2019/02/19/manage-citrix-cloud-using-powershell/
+$ProfileName = $OutputLog.Substring(0, $OutputLog.Length - 4)
+if ( $CitrixCloudCheck -eq "1" ) {
+  "Connecting to Citrix Cloud" | LogMe -display -progress
+  "- CustomerId: $CustomerID" | LogMe -display -progress
+  $ProfileType = "CloudApi"
+  If (Test-Path -path "$SecureClientFile") {
+    "- Using the SecureClientFile: $SecureClientFile" | LogMe -display -progress
+    Set-XDCredentials -CustomerId "$CustomerID" -SecureClientFile "$SecureClientFile" -ProfileType "$ProfileType" -StoreAs "$ProfileName"
+  } Else {
+    "- Using the APIKey and SecretKey" | LogMe -display -progress
+    Set-XDCredentials -CustomerId "$CustomerID" -APIKey "$APIKey" -SecretKey "$SecretKey" -ProfileType "$ProfileType" -StoreAs "$ProfileName"
+  }
+  Get-XDAuthentication -ProfileName "$ProfileName" -CustomerId "$CustomerID"
+  "- The XDSDKProxy address is: $($XDSDKProxy)" | LogMe -display -progress
+} Else {
+  $ProfileType = "OnPrem"
+  Try {
+    Set-XDCredentials -ProfileType "$ProfileType" -StoreAs "$ProfileName"
+    "Connecting to $ProfileType" | LogMe -display -progress
+  }
+  Catch {
+    # The Set-XDCredentials cmdlet is not included with the Studio PowerShell cmdlets
+    "Using the PowerShell cmdlets from Citrix Studio and not the PowerShell SDK" | LogMe -display -progress
+  }
+}
+" " | LogMe -display -progress
+
+#==============================================================================================
+
+If ($CitrixCloudCheck -ne 1) { 
+
+  "#### Validating the Delivery Controllers before continuing #########################################" | LogMe -display -progress
+
+  " " | LogMe -display -progress
+
+  $FoundHealthyDeliveryController = $False
+  ForEach ($DeliveryController in $DeliveryControllers){
+    "Validating Delivery Controller: $DeliveryController" | LogMe -display -progress
+    If ($DeliveryController -ieq "LocalHost"){
+        $DeliveryController = [System.Net.DNS]::GetHostByName('').HostName
+    }
+    $results = Test-OpenPort -Targets:"$DeliveryController" -Ports:"80","443" -DisableProgressBar
+    ForEach ($result in $results) {
+      If ($result.Status) {
+        $FoundHealthyDeliveryController = $True
+      } Else {
+        $FoundHealthyDeliveryController = $False
+      }
+    }
+    If ($FoundHealthyDeliveryController) {
+        $AdminAddress = $DeliveryController
+        $FoundHealthyDeliveryController = $True
+        "- Using: $DeliveryController" | LogMe -display -progress
+        break
+    }
+  }
+
+  If ($FoundHealthyDeliveryController -eq $False) {
+    "Unable to validate a healthy Delivery Controller" | LogMe -display -progress
+    "- Locally installed Studio or the PowerShell SDK requires TCP 80, 443 open to the remote Delivery Controllers at minimum"| LogMe -display -progress
+    "- Exiting the script" | LogMe -display -progress
+    Exit
+  }
+
+  " " | LogMe -display -progress
+} Else {
+  "Delivery Controllers/Cloud Connectors are not required for PowerShell SDK connectivity to Citrix Cloud" | LogMe -display -progress
+  $AdminAddress = ""
+}
+
+" " | LogMe -display -progress
+
+#==============================================================================================
+
+If ($CitrixCloudCheck -ne 1) {
+  #Header for Table "XD/XA Controllers" Get-BrokerController
+  $XDControllerFirstheaderName = "ControllerServer"
+  $XDControllerHeaderNames = "Ping", "State", "DesktopsRegistered", "ActiveSiteServices"
+  $XDControllerHeaderWidths = "2", "2", "2", "10"				
+  $XDControllerTableWidth= 1200
+  foreach ($disk in $diskLettersControllers)
+  {
     $XDControllerHeaderNames += "$($disk)Freespace"
     $XDControllerHeaderWidths += "4"
+  }
+  $XDControllerHeaderNames += "AvgCPU", "MemUsg", "Uptime"
+  #$XDControllerHeaderWidths += "4", "4", "4"
 }
-$XDControllerHeaderNames +=  	"AvgCPU", 	"MemUsg", 	"Uptime"
-$XDControllerHeaderWidths +=    "4",		"4",		"4"
+
+if ($CitrixCloudCheck -ne "1" -AND $ShowCloudConnectorTable -eq 1 ) {
+  #Header for Table "Cloud Connector Servers"
+  $CCFirstheaderName = "CloudConnectorServer"
+  $CCHeaderNames = "Ping",  "CitrixServices"
+  $CCHeaderWidths = "2", "4"
+  $CCTableWidth= 1200
+  foreach ($disk in $diskLettersControllers)
+  {
+    $CCHeaderNames += "$($disk)Freespace"
+    $CCHeaderWidths += "4"
+  }
+  $CCHeaderNames += "AvgCPU", "MemUsg", "Uptime"
+  #$CCHeaderWidths += "4", "4", "6"
+}
+
+If ($ShowStorefrontTable -eq 1) {
+  #Header for Table "Storefront Servers"
+  $SFFirstheaderName = "StorefrontServer"
+  $SFHeaderNames = "Ping",  "CitrixServices"
+  $SFHeaderWidths = "2", "4"
+  $SFTableWidth= 1200
+  foreach ($disk in $diskLettersControllers)
+  {
+    $SFHeaderNames += "$($disk)Freespace"
+    $SFHeaderWidths += "4"
+  }
+  $SFHeaderNames += "AvgCPU", "MemUsg", "Uptime"
+  #$SFHeaderWidths += "4", "4", "6"
+}
 
 #Header for Table "Fail Rates" FUTURE
 #$CTXFailureFirstheaderName = "Checks"
-#$CTXFailureHeaderNames = "#","in Percentage", "CauseServiceInterruption","CausePartialServiceInterruption"
-#$CTXFailureHeaderWidths = "2", "2", "2", 	"2"
+#$CTXFailureHeaderNames = "#", "in Percentage", "CauseServiceInterruption", "CausePartialServiceInterruption"
 #$CTXFailureTableWidth= 900
 
 #Header for Table "CTX Licenses" Get-BrokerController
 $CTXLicFirstheaderName = "LicenseName"
-$CTXLicHeaderNames = "LicenseServer", 	"Count","InUse", 	"Available"
-$CTXLicHeaderWidths = "4",	"2", 	"2", 					"2"
+$CTXLicHeaderNames = "LicenseServer", "Count", "InUse", "Available"
+$CTXLicHeaderWidths = "4", "2", "2", "2"
 $CTXLicTableWidth= 900
   
 #Header for Table "MachineCatalogs" Get-BrokerCatalog
 $CatalogHeaderName = "CatalogName"
-$CatalogHeaderNames = 	"AssignedToUser", 	"AssignedToDG", "NotToUserAssigned","ProvisioningType", "AllocationType", "MinimumFunctionalLevel", "UsedMCSSnapshot"
-$CatalogWidths = 		"4",				"8", 			"8", 				"8", 				"8", 				"4", 				"4"
+$CatalogHeaderNames = "AssignedToUser", "AssignedToDG", "NotToUserAssigned", "ProvisioningType", "AllocationType", "MinimumFunctionalLevel", "UsedMCSSnapshot", "MasterImageVMDate", "UseFullDiskClone", "UseWriteBackCache", "WriteBackCacheMemSize"
 $CatalogTablewidth = 900
-  
+
 #Header for Table "DeliveryGroups" Get-BrokerDesktopGroup
 $AssigmentFirstheaderName = "DeliveryGroup"
-$vAssigmentHeaderNames = 	"PublishedName","DesktopKind", "SessionSupport", "ShutdownAfterUse", 	"TotalMachines","DesktopsAvailable","DesktopsUnregistered", "DesktopsInUse","DesktopsFree", "MaintenanceMode", "MinimumFunctionalLevel"
-$vAssigmentHeaderWidths = 	"4", 			"4", 			"4", 	"4", 		"4", 				"4", 					"4", 			"4", 			"2", 			"2", 			"2"
+$vAssigmentHeaderNames = "PublishedName", "DesktopKind", "SessionSupport", "ShutdownAfterUse", "TotalMachines", "DesktopsAvailable", "DesktopsUnregistered", "DesktopsInUse", "DesktopsFree", "MaintenanceMode", "MinimumFunctionalLevel"
 $Assigmenttablewidth = 900
-  
-#Header for Table "VDI Checks" Get-BrokerMachine
+
+#Header for Table "ConnectionFailureOnMachine" Get-BrokerConnectionLog
+$BrkrConFailureFirstheaderName = "ConnectionFailureOnMachine"
+$BrkrConFailureHeaderNames = "BrokeringTime", "ConnectionFailureReason", "BrokeringUserName", "BrokeringUserUPN"
+$BrkrConFailureTableWidth= 900
+
+#Header for Table "HypervisorConnection" Get-BrokerHypervisorConnection
+$HypervisorConnectionFirstheaderName = "HypervisorConnection"
+$HypervisorConnectionHeaderNames = "State", "IsReady", "MachineCount", "FaultState", "FaultReason", "TimeFaultStateEntered", "FaultStateDuration"
+$HypervisorConnectiontablewidth = 900
+
+#Header for Table "VDI Singlesession Checks" Get-BrokerMachine
 $VDIfirstheaderName = "virtualDesktops"
-
-$VDIHeaderNames = "CatalogName","DeliveryGroup","PowerState", "Ping", "MaintMode", 	"Uptime","LastConnect", 	"RegState","VDAVersion","AssociatedUserNames",  "WriteCacheType", "WriteCacheSize", "Tags", "HostedOn", "displaymode", "EDT_MTU", "OSBuild", "MCSVDIImageOutOfDate"
-$VDIHeaderWidths = "4", "4",		"4","4", 	"4", 				"4", 		"4","4", 				"4",			  "4",			  "4",			  "4",			  "4", "4", "4", 		"4", "4", "4"
-
+$VDIHeaderNames = "CatalogName", "DeliveryGroup", "Ping", "WinRM", "WMI", "UNC", "MaintMode", "Uptime", "LastConnect", "RegState", "PowerState", "VDAVersion", "OSBuild", "AssociatedUserNames", "Tags", "HostedOn", "displaymode", "EDT_MTU", "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace", "NvidiaLicense","NvidiaDriverVer"
 $VDItablewidth = 1200
   
-#Header for Table "XenApp Checks" Get-BrokerMachine
+#Header for Table "XenApp/RDS/Multisession Checks" Get-BrokerMachine
 $XenAppfirstheaderName = "virtualApp-Servers"
-$XenAppHeaderNames = "CatalogName", "DeliveryGroup", "Serverload", 	"Ping", "MaintMode","Uptime", 	"RegState", "VDAVersion", "Spooler",  	"CitrixPrint", "OSBuild", "MCSImageOutOfDate"
-$XenAppHeaderWidths = "4", 			"4", 				"4", 			"4", 	"4", 		"4", 		"4", 		"4", 		"4", 		 	"4", 		"4", 		"4"
+$XenAppHeaderNames = "CatalogName", "DeliveryGroup", "Ping", "WinRM", "WMI", "UNC", "Serverload", "MaintMode", "Uptime", "RegState", "PowerState", "VDAVersion", "Spooler", "CitrixPrint", "OSBuild", "RDSGracePeriod", "TerminalServerMode", "LicensingName", "LicensingType", "LicenseServerList", "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace", "NvidiaLicense","NvidiaDriverVer"
 foreach ($disk in $diskLettersWorkers)
 {
-    $XenAppHeaderNames += "$($disk)Freespace"
-    $XenAppHeaderWidths += "4"
+  $XenAppHeaderNames += "$($disk)Freespace"
 }
-
 if ($ShowConnectedXenAppUsers -eq "1") { 
-
-	$XenAppHeaderNames += "AvgCPU", 	"MemUsg", 	"ActiveSessions",  "WriteCacheType", "WriteCacheSize", "ConnectedUsers" , "Tags","HostedOn"
-	$XenAppHeaderWidths +="4",		"4",			  "4",			"4",			"4",			"4",			"4","4"
+  $XenAppHeaderNames += "AvgCPU", "MemUsg", "ActiveSessions", "ConnectedUsers", "Tags", "HostedOn"
 }
-else { 
-	$XenAppHeaderNames += "AvgCPU", 	"MemUsg", 	"ActiveSessions", "WriteCacheType", "WriteCacheSize", "Tags","HostedOn"
-	$XenAppHeaderWidths +="4",		"4",		"4",			  "4",			"4",			"4","4"
-
+else {
+  $XenAppHeaderNames += "AvgCPU", "MemUsg", "ActiveSessions", "Tags", "HostedOn"
 }
-
 $XenApptablewidth = 1200
-  
+
+#Header for Table "StuckSessions"  Get-BrokerSession
+$StuckSessionsfirstheaderName = "Stuck-Session"
+$StuckSessionsHeaderNames  = "CatalogName", "DesktopGroupName", "UserName", "SessionState", "AppState", "SessionStateChangeTime", "LogonInProgress", "LogoffInProgress", "ClientAddress", "ConnectionMode", "Protocol"
+$StuckSessionstablewidth = 1200
+
 #==============================================================================================
-#log function
-function LogMe() {
-Param(
-[parameter(Mandatory = $true, ValueFromPipeline = $true)] $logEntry,
-[switch]$display,
-[switch]$error,
-[switch]$warning,
-[switch]$progress
-)
-  
-if ($error) { $logEntry = "[ERROR] $logEntry" ; Write-Host "$logEntry" -Foregroundcolor Red }
-elseif ($warning) { Write-Warning "$logEntry" ; $logEntry = "[WARNING] $logEntry" }
-elseif ($progress) { Write-Host "$logEntry" -Foregroundcolor Green }
-elseif ($display) { Write-Host "$logEntry" }
-  
-#$logEntry = ((Get-Date -uformat "%D %T") + " - " + $logEntry)
-$logEntry | Out-File $logFile -Append
+
+# These functions will complete the basic remote tests to ensure connectivity and firewall ports
+# are not blocking WinRM, WMI and UNC connectivity to speed up the processing and reliability of
+# each test against each machine it processes. Columns have been added to the output so you can
+# see when it fails and which firewall rules may need to be implemented.
+# Run this script from a server or Delivery Controller that has all required firewall rules open
+# to all the VDAs. The tests will be cascaded so we try WinRM before WMI(DCOM).
+# One of the benefits of WinRM is the ability to process tasks in parallel, rather than sequentially,
+# which will allow us to run these tests in parallel in a future release of this script.
+# But we need to allow for scenarios where WimRM either fails, or firewall rules are blocking access.
+# When WimRM isn't available, we try WMI(DCOM). If neither are available, it skips these health
+# checks altogether.
+# For all other functions that use WwinRM, WSMAN has a MaxRetryConnectionTime of 4 minutes. The
+# connection retry timeout is performed at the WinRM layer. There is an undocumented registry key
+# that let's you lower the retry timeout on the remote computers:
+# - Key: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Client
+# - Type: DWORD
+# - Value: max_retry_timeout_ms
+# - Data: <test various values here>
+# You need to restart the WinRM service after setting the key value. If it's MCS or PVS you would
+# set this in the image.
+
+Function Test-Ping {
+  param (
+         [string]$Target = "8.8.8.8",
+         [int]$Count = 3,
+         [int]$Timeout = 2000
+  )
+  for ($i = 1; $i -le $Count; $i++) {
+    $Result = "FAILED"
+    try {
+      # The Send method returns instances of the PingReply class directly. A limitation of this
+      # method will only return the Success or TimedOut result for everything else. So it's not
+      # possible using this method to get other error states such as "Destination Host Unreachable",
+      # etc. Even using C# code, there are limitations of what ICMP sockets can detect reliably
+      # when count is more than 1. Have also tried P/Invoke using IcmpSendEcho (Windows API) with
+      # unique payloads per attempt. This is most likely due to the way further error messages are
+      # suppressed as per the RFC. Only ping.exe and Test-NetConnection cmdlet will ultimately
+      # return what is needed to be able to report on a reliable ICMP non-success response for
+      # more than 1 count due to the way they have been coded to manage this behaviour.
+      $pingSender = New-Object System.Net.NetworkInformation.Ping
+      #$pingSender = [System.Net.NetworkInformation.Ping]::new()
+      $reply = $pingSender.Send($Target, $Timeout)
+      if ($reply.Status -eq 'Success') {
+        $Result = "SUCCESS"
+        break
+      } else {
+        $Result = "TIMEDOUT"
+      }
+      $pingSender = $null
+    } catch {
+      $Result = "FAILED"
+    }
+    If ($i -lt $Count) {
+      Start-Sleep -Milliseconds 1000
+    }
+  }
+  return $Result
 }
-  
-#==============================================================================================
-function Ping([string]$hostname, [int]$timeout = 200) {
-$ping = new-object System.Net.NetworkInformation.Ping #creates a ping object
-try { $result = $ping.send($hostname, $timeout).Status.ToString() }
-catch { $result = "Failure" }
-return $result
+
+Function IsWinRMAccessible {
+  # Get-CimInstance uses WinRM, so we test to see if WinRM is enabled.
+  param ([string]$hostname)
+  $success = $False
+  try {
+    Test-WSMan -Computername $hostname -ErrorAction Stop | out-null
+    $success = $True
+  }
+  Catch {
+    #
+  }
+  return $success
 }
+
+Function IsWMIAccessible {
+  # The [WMI] connection to test WMI DCOM connectivity doesn't have a built-in
+  # way to support a timeout. It will wait for between 20 to 60 seconds depending
+  # on several conditions, such as network connectivity. However, we can work
+  # around this limitation by using a background job to control the timeout.
+  param (
+          [string]$hostname,
+          [int]$timeoutSeconds = 20
+        )
+  $success = $False
+  $job = Start-Job -ScriptBlock {
+    param($hostname)
+    try {
+        $null = [WMI]"\\$hostname\root\cimv2"
+        return "Success"
+    } catch {
+        return "Failed: $_"
+    }
+  } -ArgumentList $hostname
+
+  # Wait for the job with a timeout
+  if (Wait-Job -Job $job -Timeout $timeoutSeconds) {
+    $result = Receive-Job -Job $job
+    #Write-Output "Result from ${hostname}: $result"
+    If ($result -eq "Success") {
+      $success = $True
+    }
+  } else {
+    #Write-Warning "WMI check timed out after $timeoutSeconds seconds for $hostname"
+    Stop-Job $job | Out-Null
+  }
+  Remove-Job $job | Out-Null
+  return $success
+}
+
+Function IsUNCPathAccessible {
+  # This function uses Threads to do the checks, as we can set a timeout.
+  # To make this reliable it needed to be written in C#. There were too
+  # many issues using pure PowerShell code.
+  param (
+         [string]$hostname,
+         [string]$share="C$",
+         [int]$TimeoutMilliseconds = 1000
+        )
+  $Path = "\\$hostname\$share"
+
+  # Only define the type once per session
+  if (-not ("UncShareChecker" -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.IO;
+using System.Threading.Tasks;
+
+public class UncShareCheckResult
+{
+    public bool Success { get; set; }
+    public string Status { get; set; }
+    public string Message { get; set; }
+}
+
+public static class UncShareChecker
+{
+    public static UncShareCheckResult CheckShareExists(string path, int timeoutMs)
+    {
+        var result = new UncShareCheckResult();
+
+        if (!path.EndsWith("\\")) path += "\\";
+
+        Task<UncShareCheckResult> task = Task.Run(() =>
+        {
+            var innerResult = new UncShareCheckResult();
+            try
+            {
+                if (Directory.Exists(path))
+                {
+                    innerResult.Success = true;
+                    innerResult.Status = "Exists";
+                }
+                else
+                {
+                    innerResult.Success = false;
+                    innerResult.Status = "NotFound";
+                }
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                innerResult.Success = false;
+                innerResult.Status = "AccessDenied";
+                innerResult.Message = ex.Message;
+            }
+            catch (Exception ex)
+            {
+                innerResult.Success = false;
+                innerResult.Status = "Error";
+                innerResult.Message = ex.Message;
+            }
+            return innerResult;
+        });
+
+        bool completed = false;
+        try
+        {
+            completed = task.Wait(timeoutMs);
+        }
+        catch (Exception ex)
+        {
+            return new UncShareCheckResult {
+                Success = false,
+                Status = "WaitError",
+                Message = ex.Message
+            };
+        }
+
+        if (!completed)
+        {
+            return new UncShareCheckResult {
+                Success = false,
+                Status = "Timeout"
+            };
+        }
+
+        return task.Result;
+    }
+}
+"@ -Language CSharp
+  }
+
+  $result = [UncShareChecker]::CheckShareExists($Path, $TimeoutMilliseconds)
+
+  return [PSCustomObject]@{
+      Success = $result.Success
+      Status  = $result.Status
+      Message = $result.Message
+    }
+}
+
 #==============================================================================================
-# The function will check the processor counter and check for the CPU usage. Takes an average CPU usage for 5 seconds. It check the current CPU usage for 5 secs.
-Function CheckCpuUsage() 
-{ 
-	param ($hostname)
-	Try { $CpuUsage=(Get-WmiObject -computer $hostname -class win32_processor | Measure-Object -property LoadPercentage -Average | Select-Object -ExpandProperty Average)
+
+Function CheckCpuUsage {
+  # The function checks the processor counter and check for the CPU usage. Takes an average CPU
+  # usage for 5 seconds. It check the current CPU usage for 5 secs.
+  param (
+         [switch]$UseWinRM,
+         [int]$WinRMTimeoutSec=30,
+         [string]$hostname
+        )
+  Try {
+    If ($UseWinRM) {
+      $CpuUsage=(Get-CimInstance -ClassName win32_processor -ComputerName $hostname -OperationTimeoutSec $WinRMTimeoutSec -ErrorAction Stop | Measure-Object -property LoadPercentage -Average | Select-Object -ExpandProperty Average)
+    } Else {
+      $CpuUsage=(Get-WmiObject -computer $hostname -class win32_processor -ErrorAction Stop | Measure-Object -property LoadPercentage -Average | Select-Object -ExpandProperty Average)
+    }
     $CpuUsage = [math]::round($CpuUsage, 1); return $CpuUsage
-
-
-	} Catch { "Error returned while checking the CPU usage. Perfmon Counters may be fault" | LogMe -error; return 101 } 
+  }
+  Catch {
+    "Error returned while checking the CPU usage. Perfmon Counters may be fault" | LogMe -error; return 101
+  }
 }
+
 #============================================================================================== 
-# The function check the memory usage and report the usage value in percentage
-Function CheckMemoryUsage()
-{ 
-	param ($hostname)
-    Try 
-	{   $SystemInfo = (Get-WmiObject -computername $hostname -Class Win32_OperatingSystem -ErrorAction Stop | Select-Object TotalVisibleMemorySize, FreePhysicalMemory)
-    	$TotalRAM = $SystemInfo.TotalVisibleMemorySize/1MB 
-    	$FreeRAM = $SystemInfo.FreePhysicalMemory/1MB 
-    	$UsedRAM = $TotalRAM - $FreeRAM 
-    	$RAMPercentUsed = ($UsedRAM / $TotalRAM) * 100 
-    	$RAMPercentUsed = [math]::round($RAMPercentUsed, 2);
-    	return $RAMPercentUsed
-	} Catch { "Error returned while checking the Memory usage. Perfmon Counters may be fault" | LogMe -error; return 101 } 
+
+Function CheckMemoryUsage { 
+  # The function checks the memory usage and reports the usage value in percentage
+  param (
+         [switch]$UseWinRM,
+         [int]$WinRMTimeoutSec=30,
+         [string]$hostname
+        )
+  Try {
+    If ($UseWinRM) {
+      $SystemInfo = (Get-CimInstance -ClassName Win32_OperatingSystem -ComputerName $hostname -OperationTimeoutSec $WinRMTimeoutSec -ErrorAction Stop | Select-Object TotalVisibleMemorySize, FreePhysicalMemory)
+    } Else {
+      $SystemInfo = (Get-WmiObject -computername $hostname -Class Win32_OperatingSystem -ErrorAction Stop | Select-Object TotalVisibleMemorySize, FreePhysicalMemory)
+    }
+    $TotalRAM = $SystemInfo.TotalVisibleMemorySize/1MB 
+    $FreeRAM = $SystemInfo.FreePhysicalMemory/1MB 
+    $UsedRAM = $TotalRAM - $FreeRAM 
+    $RAMPercentUsed = ($UsedRAM / $TotalRAM) * 100 
+    $RAMPercentUsed = [math]::round($RAMPercentUsed, 2);
+    return $RAMPercentUsed
+  }
+  Catch {
+    "Error returned while checking the Memory usage. Perfmon Counters may be fault" | LogMe -error; return 101
+  }
 }
+
 #==============================================================================================
 
-# The function check the HardDrive usage and report the usage value in percentage and free space
-Function CheckHardDiskUsage() 
-{ 
-	param ($hostname, $deviceID)
-    Try 
-	{   
-    	$HardDisk = $null
-		$HardDisk = Get-WmiObject Win32_LogicalDisk -ComputerName $hostname -Filter "DeviceID='$deviceID'" -ErrorAction Stop | Select-Object Size,FreeSpace
-        if ($null -ne $HardDisk)
-		{
-		$DiskTotalSize = $HardDisk.Size 
+Function CheckHardDiskUsage {
+  # The function checks the HardDrive usage and reports the usage value in percentage and free space.
+  param (
+         [switch]$UseWinRM,
+         [int]$WinRMTimeoutSec=30,
+         [string]$hostname,
+         [string]$deviceID
+        )
+  Try {
+    $HardDisk = $null
+    If ($UseWinRM) {
+      $HardDisk = Get-CimInstance -ClassName Win32_LogicalDisk -ComputerName $hostname -Filter "DeviceID='$deviceID' and DriveType='3'" -OperationTimeoutSec $WinRMTimeoutSec -ErrorAction Stop | Select-Object Size,FreeSpace
+    } Else {
+      $HardDisk = Get-WmiObject Win32_LogicalDisk -ComputerName $hostname -Filter "DeviceID='$deviceID' and DriveType='3'" -ErrorAction Stop | Select-Object Size,FreeSpace
+    }
+    if ($null -ne $HardDisk)
+    {
+      $DiskTotalSize = $HardDisk.Size 
+      $DiskFreeSpace = $HardDisk.FreeSpace 
+      $frSpace=[Math]::Round(($DiskFreeSpace/1073741824),2)
+      $PercentageDS = (($DiskFreeSpace / $DiskTotalSize ) * 100); $PercentageDS = [math]::round($PercentageDS, 2)
+      Add-Member -InputObject $HardDisk -MemberType NoteProperty -Name PercentageDS -Value $PercentageDS
+      Add-Member -InputObject $HardDisk -MemberType NoteProperty -Name frSpace -Value $frSpace
+    } 
+    return $HardDisk
+  } Catch { "Error returned while checking the Hard Disk usage. Perfmon Counters may be fault" | LogMe -error; return $null }
+  return "Hello"
+}
+
+#==============================================================================================
+
+Function Get-UpTime {
+  # This function will get the uptime of the remote machine, returning both the LastBootUpTime in Date/Time
+  # format, and also as a TimeSpan.
+  param (
+         [switch]$UseWinRM,
+         [int]$WinRMTimeoutSec=30,
+         [string]$hostname
+        )
+  Try {
+    If ($UseWinRM) {
+      # LastBootUpTime from Get-CimInstance is already been converted to Date/Time
+      $LBTime = (Get-CimInstance -ClassName Win32_OperatingSystem -ComputerName $hostname -OperationTimeoutSec $WinRMTimeoutSec -ErrorAction Stop).LastBootUpTime
+    } Else {
+      $LBTime = [Management.ManagementDateTimeConverter]::ToDateTime((Get-WmiObject -computername $hostname -Class Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime)
+    }
+    [TimeSpan]$uptime = New-TimeSpan $LBTime $(get-date)
+    $ResultProps = @{ 
+      LBTime = $LBTime
+      TimeSpan = $uptime
+    }
+    return $ResultProps
+  }
+  Catch {
+    #"Error returned while checking the uptime via the LastBootUpTime property" | LogMe -error; return 101
+  }
+  return $null
+}
+
+#==============================================================================================
+
+Function Get-OSVersion { 
+  # This function will get the OS version of the remote machine
+  param (
+         [switch]$UseWinRM,
+         [int]$WinRMTimeoutSec=30,
+         [string]$hostname
+        )
+  $ResultProps = @{ 
+    Caption = "Notfound"
+    Version = "Notfound"
+    BuildNumber = "Notfound"
+    Error = "Unknown"
+  } 
+  Try {
+    If ($UseWinRM) {
+      $OSInfo = (Get-CimInstance -ClassName Win32_OperatingSystem -ComputerName $hostname -OperationTimeoutSec $WinRMTimeoutSec -ErrorAction Stop | Select-Object Caption, Version, BuildNumber)
+    } Else {
+      $OSInfo = (Get-WmiObject -computername $hostname -Class Win32_OperatingSystem -ErrorAction Stop | Select-Object Caption, Version, BuildNumber)
+    }
+    $ResultProps.Caption = $OSInfo.Caption
+    $ResultProps.Version = $OSInfo.Version
+    $ResultProps.BuildNumber = $OSInfo.BuildNumber
+    $ResultProps.Error = "Success"
+  }
+  Catch {
+    $ResultProps.Error = "Error returned while getting the OS version"
+  }
+  return $ResultProps
+}
+
+#==============================================================================================
+
+<#
+  There are 3 ways we can check the Nvidia license status on the session hosts.
+  1) Using the Nvidia WMI Namespace and Classes as per the Get-NvidiaDetails function below
+  2) Check the last update in the "C:\Users\Public\Documents\NvidiaLogging\Log.NVDisplay.Container.exe.log" log file as per the Check-NvidiaLicenseStatus function below
+  3) Use nvidia-smi.exe
+     nvidia-smi.exe -q > %Computername%.nvidia-smi.txt
+     OR
+     nvidia-smi.exe -q -f %Computername%.nvidia-smi.txt
+#>
+
+Function Get-NvidiaDetails {
+  # This function uses the Nvidia WMI Namespace and Classes to get the remote information about the Nvidia profile type and licensing.
+  # NVWMI provider Version 2.25 implements support of licensable feature management in System and Gpu classes.
+  # If the licensingServer property returns "N/A", we assume that it's using a DLS (Delegated License Service) Client Configuration
+  # Token introduced from vGPU release 13.0 or later, which is Windows driver version 471.68 or later, released August 2021.
+  # Written by Jeremy Saunders
+  param (
+         [int]$WinRMTimeoutSec=30,
+         [string]$computername = "$env:computername"
+        )
+  $results = @()
+  $ResultProps = @{ 
+    GPU_Product_Name = $null
+    GPU_Product_Type = $null
+    Licensable_Feature_Type = $null
+    Licensable_Product = $null
+    License_Status = $null
+    License_Server = $null
+    Display_Driver_Ver = $null
+  }
+  $namespace = "root\CIMV2\NV"
+  # Use the CIM to take advantage of the session option to make multiple queries in a single session.
+  # However, you must use the DCOM protocol instead of the default WSMan protocol to support the System class or you will get the following error:
+  # "The WS-Management service cannot process the request. The DMTF class in the repository uses a different major version number from the requested class.
+  # This class can be accessed using a non-DMTF resource URI."
+  Try {
+    $DcomSessionOption = New-CimSessionOption -Protocol Dcom -ErrorAction Stop
+    $CIMSession = New-CimSession -ComputerName $computername -SessionOption $DcomSessionOption -OperationTimeoutSec $WinRMTimeoutSec -ErrorAction Stop
+  }
+  Catch [system.exception] {
+    #$_.Exception.Message
+    $CIMSession = $null
+  }
+  If ($CIMSession -ne $null) {
+    $classname = "Gpu"
+    Try {
+      $gpus = Get-CimInstance -class $classname -namespace $namespace -CimSession $CIMSession -OperationTimeoutSec $WinRMTimeoutSec -ErrorAction Stop
+    }
+    Catch [system.exception] {
+      #$_.Exception.Message
+      $gpus = $null
+    }
+    $classname = "System"
+    Try {
+      $system = Get-CimInstance -class $classname -namespace $namespace -CimSession $CIMSession -OperationTimeoutSec $WinRMTimeoutSec -ErrorAction Stop
+    }
+    Catch [system.exception] {
+      #$_.Exception.Message
+      $system = $null
+    }
+    If ($gpus -ne $null) {
+      ForEach ( $gpu in $gpus ) {
+        $ResultProps.GPU_Product_Name = $gpu.productName
+        $productType = switch ( $gpu.productType )
+        {
+          0 { "unknown" }
+          1 { "GeForce" }
+          2 { "Quadro" }
+          3 { "NVS" }
+          4 { "Tesla" }
+          default { 'Unknown' }
+        }
+        $ResultProps.GPU_Product_Type = $productType
+        $licensableFeatures = $gpu.licensableFeatures
+        ForEach ($licensableFeature in $licensableFeatures) {
+          $ResultProps.Licensable_Feature_Type = $licensableFeature.Split('_')[1]
+        }
+        $licensedProductName = $gpu.licensedProductName
+        ForEach ($ProductName in $licensedProductName) {
+          $ResultProps.Licensable_Product = $ProductName
+        }
+        $licensableStatuses = $gpu.licensableStatus
+        ForEach ($Status in $licensableStatuses) {
+          If ($Status -eq "1") {
+            $ResultProps.License_Status = "Enabled"
+          } Else {
+            $ResultProps.License_Status = "Disabled"
+          }
+        }
+      }
+      If ($system -ne $null) {
+        $DisplayDriverVer = ($system.verDisplayDriver -split '=')[1]
+        $DisplayDriverVer = $DisplayDriverVer.Substring(0,($DisplayDriverVer.Length-1)).Trim()
+        If ($DisplayDriverVer.Length -eq 7) {
+          $DisplayDriverVer = $DisplayDriverVer.Substring(0,3) + "." + $DisplayDriverVer.Substring(3,2)
+        } ElseIf  ($DisplayDriverVer.Length -eq 8) {
+          $DisplayDriverVer = $DisplayDriverVer.Substring(0,4) + "." + $DisplayDriverVer.Substring(4,2)
+        }
+        $ResultProps.Display_Driver_Ver = $DisplayDriverVer
+        If ($system.licensingServer -eq "N/A") {
+          $ResultProps.License_Server = "Using DLS Client Configuration Token"
+        } Else {
+          $ResultProps.License_Server = $system.licensingServer + ":" + $system.licensingPort
+        }
+      } Else {
+        # Failed to get GPU System info
+        $ResultProps.License_Server = "Unable to obtain"
+      }
+    } Else {
+      # Failed to get GPUs
+      $ResultProps.GPU_Product_Name = "N/A"
+      $ResultProps.GPU_Product_Type = "N/A"
+      $ResultProps.Licensable_Feature_Type = "N/A"
+      $ResultProps.Licensable_Product = "N/A"
+      $ResultProps.License_Status = "N/A"
+      $ResultProps.License_Server = "N/A"
+      $ResultProps.Display_Driver_Ver = "N/A"
+    }
+  } Else {
+    $ResultProps.GPU_Product_Name = "N/A"
+    $ResultProps.GPU_Product_Type = "N/A"
+    $ResultProps.Licensable_Feature_Type = "N/A"
+    $ResultProps.Licensable_Product = "N/A"
+    $ResultProps.License_Status = "N/A"
+    $ResultProps.License_Server = "N/A"
+    $ResultProps.Display_Driver_Ver = "N/A"
+  }
+  $results += New-Object PsObject -Property $ResultProps
+  return $results
+}
+
+Function Check-NvidiaLicenseStatus {
+  # This function gets the last update from the "C:\Users\Public\Documents\NvidiaLogging\Log.NVDisplay.Container.exe.log" log file to verify the current license status.
+  # Written by Jeremy Saunders
+  param (
+         [string]$computername = "$env:computername"
+        )
+  $results = @()
+  $ResultProps = @{
+    Licensed = "N/A"
+    Output_For_HTML = "NEUTRAL"
+    Output_To_Log = "nvidiaLicense: N/A"
+  }
+  $ErrorActionPreference = "stop"
+  Try {
+    If (Test-Path "filesystem::\\$computername\c$\Users\Public\Documents\NvidiaLogging") {
+      If (Test-Path "filesystem::\\$computername\c$\Users\Public\Documents\NvidiaLogging\Log.NVDisplay.Container.exe.log") {
+        $Array = Get-Content -Path "\\$computername\c$\Users\Public\Documents\NvidiaLogging\Log.NVDisplay.Container.exe.log"
+        $Length = $Array.count
+        If ($Array[$Length -1] -Like "*License renewed successfully*" -OR $Array[$Length -1] -Like "*License acquired successfully*") {
+          If ($Array[$Length -1] -Like "*License renewed successfully*") {
+            $ResultProps.Output_To_Log = "nvidiaLicense: License renewed successfully"
+            $ResultProps.Licensed = "Renewed"
+            $ResultProps.Output_For_HTML = "SUCCESS"
+          }
+          If ($Array[$Length -1] -Like "*License acquired successfully*") {
+            $ResultProps.Output_To_Log = "nvidiaLicense: License acquired successfully"
+            $ResultProps.Licensed = "Acquired"
+            $ResultProps.Output_For_HTML = "SUCCESS"
+          }
+          If ($Array[$Length -1] -Like "*Failed server communication*") {
+            $ResultProps.Output_To_Log = "nvidiaLicense: Failed server communication"
+            $ResultProps.Licensed = "Failed"
+            $ResultProps.Output_For_HTML = "ERROR"
+          }
+        } Else {
+          $ResultProps.Output_To_Log = "nvidiaLicense: License not found"
+          $ResultProps.Licensed = "Not Found"
+          $ResultProps.Output_For_HTML = "ERROR"
+        }
+      } Else {
+        $ResultProps.Output_To_Log = "Nvidia: The Log.NVDisplay.Container.exe.log does not exist"
+        $ResultProps.Licensed = "Not Found"
+        $ResultProps.Output_For_HTML = "ERROR"
+      }
+    } Else {
+      If (Test-Path "filesystem::\\$computername\c$\Users\Public\Documents") {
+        $ResultProps.Output_To_Log = "nvidiaLicense: NvidiaLogging is not present"
+      }
+    }
+  }
+  Catch [system.exception] {
+    #$_.Exception.Message
+    $ResultProps.Output_To_Log = "nvidiaLicense: Unable to connect via UNC path"
+  }
+  $ErrorActionPreference = "Continue"
+  $results += New-Object PsObject -Property $ResultProps
+  return $results
+}
+
+#==============================================================================================
+
+Function Get-RDSLicensingDetails {
+  # This functions checks the RDS Licensing Details:
+  # It gets the days remaining for the RDS licensing grace period so you can address any concerns.
+  # A grace period of 0 days is good. We report on anything less than 10 as a warning and 5 as an error, as it
+  # may take time to drain sessions for a reboot.
+  # Note that this function will still run against Windows 10/11 multi-session hosts, but the output is not relevant.
+  # If TerminalServerMode is set to 0, it's in RemoteAdmin mode and does not have a GetGracePeriodDays method or path
+  # to query. So we first test for TerminalServerMode before continuing.
+  # We also get the LicensingName, LicensingType and LicenseServerList values, which allows us to check for consistency
+  # across the environment.
+  # LicenseName Meaning:
+  # - Not Configured = No licensing mode is set (common on fresh systems or when licensing is unconfigured)
+  # - Per Device = Traditional RDS mode - one RDS CAL per device
+  # - Per User = Traditional RDS mode - one RDS CAL per user
+  # - Remote Desktop for Admin = Admin mode (no RDS CALs required, limited to 2 concurrent sessions)
+  # - AAD Per User = Azure Virtual Desktop - licensed via Azure AD and Microsoft 365 per-user license
+  # - AVD License = Alternative string to AAD Per User sometimes seen on AVD hosts. The functionally is equivalent.
+  # - Unknown or blank = Licensing misconfigured, corrupted, or not applicable
+  # LicenseType Meaning:
+  # - 1 = Not configured
+  # - 2 = Per Device
+  # - 4 = Per User
+  # - 5 = Remote Desktop for Administration (Admin mode)
+  # - 6 = Invalid or unknown licensing mode. You may also see this on Windows 10/11 Enterprise multi-session hosts on
+  #       Azure, which do not use traditional RDS CALs. This is expected and harmless.
+  # Original idea for the grace period taken from Manuel Winkel's (AKA Deyda) Citrix Morning Report script:
+  # - https://github.com/Deyda/Citrix/tree/master/Morning%20Report
+  # Written by Jeremy Saunders.
+  param (
+         [switch]$UseWinRM,
+         [int]$WinRMTimeoutSec=30,
+         [string]$computername = "$env:computername",
+         [string]$errordaystocheck = "5",
+         [string]$warningdaystocheck = "10"
+        )
+  $results = @()
+  $ResultProps = @{
+    TerminalServerMode = "N/A"
+    LicensingName = "N/A"
+    LicensingType = "N/A"
+    LicenseServerList = "N/A"
+    GracePeriod = "N/A"
+    Status = "N/A"
+    Output_For_HTML = "NEUTRAL"
+    Output_To_Log = $null
+  }
+  Try {
+    $GracePeriod = $null
+    $LicenseServerList = $null
+    If ($UseWinRM) {
+      $tsSettings = Get-CimInstance -Namespace "root\cimv2\terminalservices" -ClassName "Win32_TerminalServiceSetting" -ComputerName $computername -OperationTimeoutSec $WinRMTimeoutSec -ErrorAction Stop
+      If ($tsSettings.TerminalServerMode -eq 1) {
+        $GracePeriod = (Invoke-CimMethod -InputObject $tsSettings -MethodName "GetGracePeriodDays" -ErrorAction Stop).DaysLeft
+        $LicenseServerList = (Invoke-CimMethod -InputObject $tsSettings -MethodName "GetSpecifiedLicenseServerList" -ErrorAction Stop).SpecifiedLSList
+      } Else {
+        $ResultProps.TerminalServerMode = "RemoteAdmin"
+      }
+    } Else {
+      $tsSettings = Get-WmiObject -Namespace "root\cimv2\terminalservices" -Class "Win32_TerminalServiceSetting" -ComputerName $computername -ErrorAction Stop
+      If ($tsSettings.TerminalServerMode -eq 1) {
+        $GracePeriod = (Invoke-WmiMethod -Path $tsSettings.__PATH -Name GetGracePeriodDays -ErrorAction Stop).DaysLeft
+        $LicenseServerList = (Invoke-WmiMethod -Path $tsSettings.__PATH -Name GetSpecifiedLicenseServerList -ErrorAction Stop).SpecifiedLSList
+      } Else {
+        $ResultProps.TerminalServerMode = "RemoteAdmin"
+      }
+    }
+    $ResultProps.LicensingName = $tsSettings.LicensingName
+    $ResultProps.LicensingType = $tsSettings.LicensingType
+    If ($GracePeriod -ne $null) {
+      $ResultProps.TerminalServerMode = "AppServer"
+      $ResultProps.GracePeriod = "$GracePeriod"
+      If ($GracePeriod -ige "$warningdaystocheck" -OR $GracePeriod -ieq "0") {
+        $ResultProps.Status = "Good"
+        $ResultProps.Output_For_HTML = "SUCCESS"
+        $ResultProps.Output_To_Log = "RDSGracePeriod: Good [ $GracePeriod days ]"
+      } ElseIf ($GracePeriod -ilt "$warningdaystocheck" -AND $GracePeriod -ige "$errordaystocheck") {
+        $ResultProps.Status = "Warning"
+        $ResultProps.Output_For_HTML = "WARNING"
+        $ResultProps.Output_To_Log = "RDSGracePeriod: Warning [ $GracePeriod days ]"
+      } Else{
+        $ResultProps.Status = "Bad"
+        $ResultProps.Output_For_HTML = "ERROR"
+        $ResultProps.Output_To_Log = "RDSGracePeriod: Critical [ $GracePeriod days ]"
+      }
+    } Else {
+      $ResultProps.GracePeriod = "Unknown"
+      $ResultProps.Status = "Unknown"
+      $ResultProps.Output_For_HTML = "NEUTRAL"
+      $ResultProps.Output_To_Log = "RDSGracePeriod: Unknown"
+    }
+    If ($LicenseServerList -ne $null) {
+      $LicenseServerList = $LicenseServerList -join ", "
+      $ResultProps.LicenseServerList = "$LicenseServerList"
+    } Else {
+      $ResultProps.LicenseServerList = "Unknown"
+    }
+  }
+  Catch [system.exception] {
+    #$_.Exception.Message
+    $ResultProps.TerminalServerMode = "Unknown"
+    $ResultProps.LicensingName = "Unknown"
+    $ResultProps.LicensingType = "Unknown"
+    $ResultProps.LicenseServerList = "Unknown"
+    $ResultProps.GracePeriod = "Unknown"
+    $ResultProps.Status = "Unknown"
+    $ResultProps.Output_For_HTML = "NEUTRAL"
+    $ResultProps.Output_To_Log = "RDSGracePeriod: Unknown."
+  }
+  $results += New-Object PsObject -Property $ResultProps
+  return $results
+}
+
+#==============================================================================================
+
+Function Get-PersonalityInfo {
+  # This function will test the Personality.ini or MCSPersonality.ini to determine what sort of
+  # session host it is. It will return the DiskMode and WriteCacheType for PVS.
+  # It is possible that from VDA 2311 the Personality.ini may be missing altogether for standalone
+  # VDA deployments. This function allows for that.
+  # DiskMode for PVS, MCS and Standalone can be as follows:
+  # - S (Standard)
+  # - P (Private)
+  # - ReadWrite
+  # - ReadOnly
+  # - Unmanaged
+  # - Standard
+  # - Private
+  # - Shared
+  # - ReadWriteAppLayering
+  # - ReadOnlyAppLayering
+  # - PrivateAppLayering
+  # - SharedAppLayering
+  # - UNC-Path
+  # Written by Jeremy Saunders
+  param (
+         [string]$computername = "$env:computername"
+        )
+  $results = @()
+  $ResultProps = @{
+    DiskMode = ""
+    IsPVS = $False
+    PVSCacheOnDeviceHardDisk = $False
+    PVSCacheType = "N/A"
+    Output_For_HTML1 = "NEUTRAL"
+    Output_To_Log1 = "PVSCacheType: N/A"
+    PVSDiskName = ""
+    IsMCS = $False
+    IsStandAlone = $False
+  }
+  $Path = "filesystem::\\$computername\c$\Personality.ini"
+  If (-not(Test-Path $Path)) {
+    $Path = "filesystem::\\$computername\c$\MCSPersonality.ini"
+    If (-not(Test-Path $Path)) {
+      $ResultProps.IsStandAlone = $True
+      $ResultProps.DiskMode = "N/A"
+    } Else {
+      $Personalityini = Get-Content "$Path"
+      $ResultProps.IsMCS = $True
+      $DiskMode = ($Personalityini | Select-String "DiskMode" | ForEach-Object {$_.Line}).split('=')[1]
+      $ResultProps.DiskMode = $DiskMode
+    }
+  } Else {
+    $Personalityini = Get-Content "$Path"
+    If ($Personalityini | Where-Object { $_.Contains('WriteCacheType=')}) {
+      $ResultProps.IsPVS = $True
+      $WriteCacheType = ($Personalityini | Select-String "WriteCacheType" | ForEach-Object {$_.Line}).split('=')[1]
+      $ResultProps.PVSCacheType = $WriteCacheType
+      switch ($WriteCacheType)
+      {
+        "9" {
+             $ResultProps.PVSCacheOnDeviceHardDisk = $True
+             $ResultProps.Output_To_Log1 = "PVSCacheType: 9 - WC is set to Cache to Device Ram with overflow to HD"
+             $ResultProps.PVSCacheType = "9 - WC to Ram with overflow to HD"
+             $ResultProps.Output_For_HTML1 = "SUCCESS"
+             break
+            }
+        "0" {
+             $ResultProps.PVSCacheOnDeviceHardDisk = $False
+             $ResultProps.Output_To_Log1 = "PVSCacheType: 0 - WC is not set because vDisk is in PrivateMode (R/W)"
+             $ResultProps.PVSCacheType = "0 - vDisk is in PrivateMode (R/W)"
+             $ResultProps.Output_For_HTML1 = "Error"
+             break
+            }
+        "1" {
+             $ResultProps.PVSCacheOnDeviceHardDisk = $False
+             $ResultProps.Output_To_Log1 = "PVSCacheType: 1 - WC is set to Cache to PVS Server HD"
+             $ResultProps.PVSCacheType = "1 - WC is set to Cache to PVS Server HD"
+             $ResultProps.Output_For_HTML1 = "Error"
+             break
+            }
+        "3" {
+             $ResultProps.PVSCacheOnDeviceHardDisk = $False
+             $ResultProps.Output_To_Log1 = "3 - PVSCacheType: WC is set to Cache to Device Ram"
+             $ResultProps.PVSCacheType = "3 - WC is set to Cache to Device Ram"
+             $ResultProps.Output_For_HTML1 = "WARNING"
+             break
+            }
+        "4" {
+             $ResultProps.PVSCacheOnDeviceHardDisk = $True
+             $ResultProps.Output_To_Log1 = "PVSCacheType: 4 - WC is set to Cache to Device Hard Disk"
+             $ResultProps.PVSCacheType = "4 - WC is set to Cache to Device Hard Disk"
+             $ResultProps.Output_For_HTML1 = "WARNING"
+             break
+            }
+        "7" {
+             $ResultProps.PVSCacheOnDeviceHardDisk = $False
+             $ResultProps.Output_To_Log1 = "PVSCacheType: 7 - WC is set to Cache to PVS Server HD Persistent"
+             $ResultProps.PVSCacheType = "7 - WC is set to Cache to PVS Server HD Persistent"
+             $ResultProps.Output_For_HTML1 = "Error"
+             break
+            }
+        "8" {
+             $ResultProps.PVSCacheOnDeviceHardDisk = $True
+             $ResultProps.Output_To_Log1 = "PVSCacheType: 8 - WC is set to Cache to Device Hard Disk Persistent"
+             $ResultProps.PVSCacheType = "8 - WC is set to Cache to Device Hard Disk Persistent"
+             $ResultProps.Output_For_HTML1 = "Error"
+             break
+            }
+        Default {
+             $ResultProps.PVSCacheOnDeviceHardDisk = $False
+             $ResultProps.Output_To_Log1 = "PVSCacheType: Unknowm"
+             $ResultProps.PVSCacheType = "$WriteCacheType - Unknown WC type"
+             $ResultProps.Output_For_HTML1 = "Error"
+             $cacheOnDeviceHardDisk = $False
+           }
+      }
+      $DiskMode = ($Personalityini | Select-String "DiskMode" | ForEach-Object {$_.Line}).split('=')[1]
+      $ResultProps.DiskMode = $DiskMode
+      $DiskName = ($Personalityini | Select-String "DiskName" | ForEach-Object {$_.Line}).split('=')[1]
+      $ResultProps.PVSDiskName = $DiskName
+    } Else {
+      $ResultProps.IsStandAlone = $True
+      $ResultProps.DiskMode = "N/A"
+    }
+  }
+  If ($ResultProps.DiskMode -eq "S") {$ResultProps.DiskMode = "Standard"}
+  If ($ResultProps.DiskMode -eq "P") {$ResultProps.DiskMode = "Private"}
+  return $ResultProps
+}
+
+Function Get-WriteCacheDriveInfo {
+  # This function will test...
+  # For PVS:
+  # - The size of the vdiskdif.vhdx write-cache file and available free space on the write-cache drive.
+  # - The write cache drive is typically labeled "WCDisk", "Cache", "WriteCache", or "Write Cache".
+  # For MCSIO:
+  # - The size of the mcsdif.vhdx write-cache file and available free space on the write-cache drive.
+  # - The write cache drive is labeled "MCSWCDisk".
+  # Written by Jeremy Saunders
+  param (
+         [switch]$UseWinRM,
+         [int]$WinRMTimeoutSec=30,
+         [string]$computername = "$env:computername",
+         [switch]$IsPVS,
+         [switch]$IsMCS,
+         [string]$wcdrive = "D"
+        )
+  $results = @()
+  $wcvolumename = @("MCSWCDisk","WCDisk","Cache","WriteCache","Write Cache")
+  If (($IsPVS -AND $IsMCS) -OR ($IsPVS -eq $False -AND $IsMCS -eq $False)) {
+    return
+  }
+  If ($IsPVS -OR $IsMCS) {
+    If ($IsPVS -AND $IsMCS -eq $False) {
+      $wcfile = "vdiskdif.vhdx"
+      $ResultProps = @{
+        WCdrivefreespace = "N/A"
+        Output_For_HTML2 = "NEUTRAL"
+        Output_To_Log2 = "WCdrivefreespace: Drive ${wcdrive} does not exist"
+        vhdxSize_inMB = "N/A"
+        Output_For_HTML3 = "NEUTRAL"
+        Output_To_Log3 = "vdiskdifSize: N/A"
+      }
+    }
+    If ($IsMCS -AND $IsPVS -eq $False) {
+      $wcfile = "mcsdif.vhdx"
+      $ResultProps = @{
+        WCdrivefreespace = "N/A"
+        Output_For_HTML2 = "NEUTRAL"
+        Output_To_Log2 = "WCdrivefreespace: Drive ${wcdrive} does not exist"
+        vhdxSize_inMB = "N/A"
+        Output_For_HTML3 = "NEUTRAL"
+        Output_To_Log3 = "mcsdifSize: N/A"
+      }
+    }
+    $CanConnectToWriteCacheDrive = $False
+    $HardDisk = $null
+    Try {
+      If ($UseWinRM) {
+        $HardDisk = Get-CimInstance -ClassName Win32_LogicalDisk -ComputerName $computername -Filter "DeviceID='${wcdrive}:' and DriveType='3'" -OperationTimeoutSec $WinRMTimeoutSec -ErrorAction Stop | Where-Object {$wcvolumename -contains $_.VolumeName} | Select-Object Size,FreeSpace
+      } Else {
+        $HardDisk = Get-WmiObject Win32_LogicalDisk -ComputerName $computername -Filter "DeviceID='${wcdrive}:' and DriveType='3'" -ErrorAction Stop | Where-Object {$wcvolumename -contains $_.VolumeName} | Select-Object Size,FreeSpace
+      }
+      If ($null -ne $HardDisk) {
+        $CanConnectToWriteCacheDrive = $True
+        $DiskTotalSize = $HardDisk.Size 
         $DiskFreeSpace = $HardDisk.FreeSpace 
-        $frSpace=[Math]::Round(($DiskFreeSpace/1073741824),2)
-		$PercentageDS = (($DiskFreeSpace / $DiskTotalSize ) * 100); $PercentageDS = [math]::round($PercentageDS, 2)
-		
-		Add-Member -InputObject $HardDisk -MemberType NoteProperty -Name PercentageDS -Value $PercentageDS
-		Add-Member -InputObject $HardDisk -MemberType NoteProperty -Name frSpace -Value $frSpace
-		} 
-		
-    	return $HardDisk
-	} Catch { "Error returned while checking the Hard Disk usage. Perfmon Counters may be fault" | LogMe -error; return $null } 
+        $CacheDiskGB=[Math]::Round(($DiskFreeSpace/1073741824),2)
+        $PercentageDS = (($DiskFreeSpace / $DiskTotalSize ) * 100)
+        $PercentageDS = "{0:N2}" -f $PercentageDS 
+        If ([int]$PercentageDS -ge 15) {
+          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free is normal [ $PercentageDS % ]"
+          $ResultProps.WCdrivefreespace = "$PercentageDS %"
+          $ResultProps.Output_For_HTML2 = "SUCCESS"
+        } ElseIf (([int]$PercentageDS -lt 15) -and ([int]$PercentageDS -ge 10)) {
+          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free is Low [ $PercentageDS % ]"
+          $ResultProps.WCdrivefreespace = "$PercentageDS %"
+          $ResultProps.Output_For_HTML2 = "WARNING"
+        } ElseIf ([int]$PercentageDS -lt 10) {
+          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free is Critical [ $PercentageDS % ]"
+          $ResultProps.WCdrivefreespace = "$PercentageDS %"
+          $ResultProps.Output_For_HTML2 = "ERROR"
+        } ElseIf ([int]$PercentageDS -eq 0) {
+          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free test failed"
+          $ResultProps.WCdrivefreespace = "$PercentageDS %"
+          $ResultProps.Output_For_HTML2 = "ERROR"
+        } Else {
+          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free is Critical [ $PercentageDS % ]"
+          $ResultProps.WCdrivefreespace = "$PercentageDS %"
+          $ResultProps.Output_For_HTML2 = "ERROR"
+        }
+      } Else {
+        $ResultProps.Output_To_Log2 = "WCdrivefreespace: Failed to connect"
+        $ResultProps.Output_For_HTML2 = "ERROR"
+      }
+    }
+    Catch [system.exception] {
+      #$_.Exception.Message
+    }
+    If ($CanConnectToWriteCacheDrive) {
+      $ErrorActionPreference = "stop"
+      Try {
+        If (Test-Path "filesystem::\\$computername\$wcdrive`$\$wcfile") {
+          $ResultProps.vhdxSize_inMB = (Get-ChildItem "\\$computername\$wcdrive`$\$wcfile").Length/1024/1024
+          $ResultProps.Output_To_Log3 = "vhdxSize: The `"$wcfile`" size is $($ResultProps.vhdxSize_inMB) MB"
+        } Else {
+          $ResultProps.Output_To_Log3 = "vhdxSize: The `"$wcfile`" file cannot be reached"
+        }
+      }
+      Catch [system.exception] {
+        #$_.Exception.Message
+      }
+      $ErrorActionPreference = "Continue"
+    }
+    $results += New-Object PsObject -Property $ResultProps
+    return $results
+  }   
 }
 
-
 #==============================================================================================
+
 Function writeHtmlHeader
 {
 param($title, $fileName)
@@ -270,7 +1389,6 @@ $head = @"
 <meta http-equiv='Content-Type' content='text/html; charset=iso-8859-1'>
 <title>$title</title>
 <STYLE TYPE="text/css">
-<!--
 td {
 font-family: Tahoma;
 font-size: 11px;
@@ -283,6 +1401,7 @@ padding-right: 0px;
 padding-bottom: 0px;
 padding-left: 0px;
 overflow: hidden;
+width: fit-content;
 }
 body {
 margin-left: 5px;
@@ -290,10 +1409,10 @@ margin-top: 5px;
 margin-right: 0px;
 margin-bottom: 10px;
 table {
+width: 100%
 table-layout:fixed;
 border: thin solid #000000;
 }
--->
 </style>
 </head>
 <body>
@@ -310,9 +1429,10 @@ $head | Out-File $fileName
 }
   
 # ==============================================================================================
+
 Function writeTableHeader
 {
-param($fileName, $firstheaderName, $headerNames, $headerWidths, $tablewidth)
+param($fileName, $firstheaderName, $headerNames, $tablewidth)
 $tableHeader = @"
   
 <table width='$tablewidth'><tbody>
@@ -323,8 +1443,7 @@ $tableHeader = @"
 $i = 0
 while ($i -lt $headerNames.count) {
 $headerName = $headerNames[$i]
-$headerWidth = $headerWidths[$i]
-$tableHeader += "<td width='" + $headerWidth + "%' align='center'><strong>$headerName</strong></td>"
+$tableHeader += "<td align='center'><strong>$headerName</strong></td>"
 $i++
 }
   
@@ -334,6 +1453,7 @@ $tableHeader | Out-File $fileName -append
 }
   
 # ==============================================================================================
+
 Function writeTableFooter
 {
 param($fileName)
@@ -341,11 +1461,12 @@ param($fileName)
 }
   
 #==============================================================================================
+
 Function writeData
 {
 param($data, $fileName, $headerNames)
 
-$tableEntry  =""  
+$tableEntry  =""
 $data.Keys | Sort-Object | ForEach-Object {
 $tableEntry += "<tr>"
 $computerName = $_
@@ -364,6 +1485,11 @@ catch {
 $bgcolor = "#CCCCCC"; $fontColor = "#003399"
 $testResult = ""
 }
+# Replace a regular hyphen with a non-breaking hyphen to reduce text breaking to the next line.
+$nonBreakingHyphen = [char]0x2011
+If (![string]::IsNullOrEmpty($testResult)) {
+$testResult = ($testResult -replace '-', $nonBreakingHyphen)
+}
 $tableEntry += ("<td bgcolor='" + $bgcolor + "' align=center><font color='" + $fontColor + "'>$testResult</font></td>")
 }
 $tableEntry += "</tr>"
@@ -372,10 +1498,12 @@ $tableEntry | Out-File $fileName -append
 }
   
 # ==============================================================================================
+
 Function writeHtmlFooter
 {
-param($fileName)
-@"
+param([string]$fileName,[switch]$cloud)
+If ($cloud -eq $False) {
+$thefooter = @"
 </table>
 <table width='1200'>
 <tr bgcolor='#CCCCCC'>
@@ -383,21 +1511,43 @@ param($fileName)
 <font face='courier' color='#000000' size='2'>
 
 <strong>Uptime Threshold: </strong> $maxUpTimeDays days <br>
+<strong>Maximum Disconnect Time Threshold: </strong> $MaxDisconnectTimeInHours hours <br>
 <strong>Database: </strong> $dbinfo <br>
 <strong>LicenseServerName: </strong> $lsname <strong>LicenseServerPort: </strong> $lsport <br>
 <strong>ConnectionLeasingEnabled: </strong> $CLeasing <br>
 <strong>LocalHostCacheEnabled: </strong> $LHC <br>
-<strong>HypervisorConnectionstate: </strong> $HVCS <br>
 
 </font>
 </td>
 </table>
 </body>
 </html>
-"@ | Out-File $FileName -append
+"@
+} Else {
+$thefooter = @"
+</table>
+<table width='1200'>
+<tr bgcolor='#CCCCCC'>
+<td colspan='7' height='25' align='left'>
+<font face='courier' color='#000000' size='2'>
+
+<strong>Uptime Threshold: </strong> $maxUpTimeDays days <br>
+<strong>Maximum Disconnect Time Threshold: </strong> $MaxDisconnectTimeInHours hours <br>
+<strong>ConnectionLeasingEnabled: </strong> $CLeasing <br>
+<strong>LocalHostCacheEnabled: </strong> $LHC <br>
+
+</font>
+</td>
+</table>
+</body>
+</html>
+"@
+}
+$thefooter | Out-File $FileName -append
 }
 
 # ==============================================================================================
+
 Function ToHumanReadable()
 {
   param($timespan)
@@ -424,469 +1574,410 @@ Function ToHumanReadable()
   return $sb.ToString()
 }
 
-
-# if enabled for Citrix Cloud set the credential profile: 
-# Help from https://www.citrix.com/blogs/2016/07/01/introducing-remote-powershell-sdk-v2-for-citrix-cloud/ and 
-# from https://hallspalmer.wordpress.com/2019/02/19/manage-citrix-cloud-using-powershell/ 
-if ( $CitrixCloudCheck -eq "1" ) {
-Set-XDCredentials -CustomerId $CustomerID -SecureClientFile $SecureClientFile -ProfileType CloudApi -StoreAs default
-}
-
-# ==============================================================================================
-<#
-	.SYNOPSIS
-		Get information about user that set maintenance mode.
-	
-	.DESCRIPTION
-		Over the Citrix XenDeesktop or XenApp log database, you can finde the user that
-		set the maintenance mode of an worker.
-		This is version 1.0.
-	
-	.PARAMETER AdminAddress
-		Specifies the address of the Delivery Controller to which the PowerShell module will connect. This can be provided as a host name or an IP address.
-	
-	.PARAMETER Credential
-		Specifies a user account that has permission to perform this action. The default is the current user.
-	
-	.EXAMPLE
-		Get-CitrixMaintenanceInfo
-		Get the informations on an delivery controller with nedded credentials.
-	
-	.EXAMPLE
-		Get-CitrixMaintenanceInfo -AdminAddress server.domain.tld -Credential (Get-Credential)
-		Use sever.domain.tld to get the log informations and use credentials.
-
-	.LINK
-		http://www.beckmann.ch/blog/2016/11/01/get-user-who-set-maintenance-mode-for-a-server-or-client/
-#>
-function Get-CitrixMaintenanceInfo {
-	[CmdletBinding()]
-	[OutputType([System.Management.Automation.PSCustomObject])]
-	param
-	(
-		[Parameter(Mandatory = $false,
-				   ValueFromPipeline = $true,
-				   Position = 0)]
-		[System.String[]]$AdminAddress = 'localhost',
-		[Parameter(Mandatory = $false,
-				   ValueFromPipeline = $true,
-				   Position = 1)]
-		[System.Management.Automation.PSCredential]$Credential
-	) # Param
-	
-	Try {
-		$PSSessionParam = @{ }
-		If ($null -ne $Credential) { $PSSessionParam['Credential'] = $Credential } #Splatting
-		If ($null -ne $AdminAddress) { $PSSessionParam['ComputerName'] = $AdminAddress } #Splatting
-		
-		# Create Session
-		$Session = New-PSSession -ErrorAction Stop @PSSessionParam
-		
-		# Create script block for invoke command
-		$ScriptBlock = {
-			if ($null -eq (Get-PSSnapin "Get-PSSnapin Citrix.ConfigurationLogging.Admin.*" -ErrorAction silentlycontinue)) {
-				try { Add-PSSnapin Citrix.ConfigurationLogging.Admin.* -ErrorAction Stop } catch { write-error "Error Get-PSSnapin Citrix.ConfigurationLogging.Admin.* Powershell snapin"; Return }
-			} #If
-			
-			$Date = Get-Date
-			$StartDate = $Date.AddDays(-7) # Hard coded value for how many days back
-			$EndDate = $Date
-			
-			# Command to get the informations from log
-			$LogEntrys = Get-LogLowLevelOperation -MaxRecordCount 1000000 -Filter { StartTime -ge $StartDate -and EndTime -le $EndDate } | Where-Object { $_.Details.PropertyName -eq 'MAINTENANCEMODE' } | Sort-Object EndTime -Descending
-			
-			# Build an object with the data for the output
-			[array]$arrMaintenance = @()
-			ForEach ($LogEntry in $LogEntrys) {
-				$TempObj = New-Object -TypeName psobject -Property @{
-					User = $LogEntry.User
-					TargetName = $LogEntry.Details.TargetName
-					NewValue = $LogEntry.Details.NewValue
-					PreviousValue = $LogEntry.Details.PreviousValue
-					StartTime = $LogEntry.Details.StartTime
-					EndTime = $LogEntry.Details.EndTime
-				} #TempObj
-				$arrMaintenance += $TempObj
-			} #ForEach				
-			$arrMaintenance
-		} # ScriptBlock
-		
-		# Run the script block with invoke-command, return the values and close the session
-		$MaintLogs = Invoke-Command -Session $Session -ScriptBlock $ScriptBlock -ErrorAction Stop
-		Write-Output $MaintLogs
-		Remove-PSSession -Session $Session -ErrorAction SilentlyContinue
-		
-	} Catch {
-		Write-Warning "Error occurs: $_"
-	} # Try/Catch
-} # Get-CitrixMaintenanceInfo
-
-#==============================================================================================
-
-$wmiOSBlock = {param($computer)
-  try { $wmi=Get-WmiObject -Class Win32_OperatingSystem -ComputerName $computer -ErrorAction Stop }
-  catch { $wmi = $null }
-  return $wmi
-}
-
 #==============================================================================================
 # == MAIN SCRIPT ==
 #==============================================================================================
-Remove-Item $logfile -force -EA SilentlyContinue
-Remove-Item $resultsHTM -force -EA SilentlyContinue
 
-"#### Begin with Citrix XenDestop / XenApp HealthCheck ######################################################################" | LogMe -display -progress
-  
+"#### Begin with Citrix XenDestop / XenApp HealthCheck #########################################" | LogMe -display -progress
+
 " " | LogMe -display -progress
 
-# get some farm infos, which will be presented in footer 
-$dbinfo = Get-BrokerDBConnection -AdminAddress $AdminAddress
-$brokersiteinfos = Get-BrokerSite
+# Log the loaded Citrix PS Snapins
+"Getting all the active and registered Citrix PowerShell snap-ins" | LogMe -display -progress
+(Get-PSSnapin "Citrix.*" -EA silentlycontinue).Name | ForEach-Object {"$($_)" | LogMe -display -progress}
+
+" " | LogMe -display -progress
+
+# get some Site info, which will be presented in footer
+"Getting some Site information" | LogMe -display -progress
+If ($CitrixCloudCheck -ne 1) {
+  $dbinfo = Get-BrokerDBConnection -AdminAddress $AdminAddress
+  $brokersiteinfos = Get-BrokerSite -AdminAddress $AdminAddress
+} Else {
+  $dbinfo = $null
+  $brokersiteinfos = Get-BrokerSite
+}
+$sitename = $brokersiteinfos.Name
 $lsname = $brokersiteinfos.LicenseServerName
 $lsport = $brokersiteinfos.LicenseServerPort
 $CLeasing = $brokersiteinfos.ConnectionLeasingEnabled
-$LHC =$brokersiteinfos.LocalHostCacheEnabled
+$LHC = $brokersiteinfos.LocalHostCacheEnabled
 
-$BrkrHvsCon = Get-Brokerhypervisorconnection
-$HVCS =$BrkrHvsCon.State
+"Getting the Site maintenance information" | LogMe -display -progress
+# Get the maintenance information from the Site using the Get-LogLowLevelOperation cmdlet
+# Original code written by Stefan Beckmann: http://www.beckmann.ch/blog/2016/11/01/get-user-who-set-maintenance-mode-for-a-server-or-client/
+# Enhanced by Jeremy Saunders (jeremy@jhouseconsulting.com) so we can also get information for who placed Delivery Groups and Hypervisor Connections
+# into maintenance mode. Refer to the Where-Object filter for the Get-LogLowLevelOperation cmdlet. Added PropertyName and TargetType to the output.
+$EndDate = Get-Date
+$StartDate = $EndDate.AddDays(-$MaintenanceModeActionsFromPastinDays)
+If ($CitrixCloudCheck -ne 1) {
+  $LogEntrys = Get-LogLowLevelOperation -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -Filter { StartTime -ge $StartDate -and EndTime -le $EndDate } -ErrorAction Stop | Where-Object { $_.Details.PropertyName -eq 'MAINTENANCEMODE' -OR $_.Details.PropertyName -eq 'INMAINTENANCEMODE' -OR $_.Details.PropertyName -eq 'MaintenanceMode'} | Sort-Object EndTime -Descending
+} Else {
+  $LogEntrys = Get-LogLowLevelOperation -MaxRecordCount $maxmachines -Filter { StartTime -ge $StartDate -and EndTime -le $EndDate } -ErrorAction Stop | Where-Object { $_.Details.PropertyName -eq 'MAINTENANCEMODE' -OR $_.Details.PropertyName -eq 'INMAINTENANCEMODE' -OR $_.Details.PropertyName -eq 'MaintenanceMode'} | Sort-Object EndTime -Descending
+}
+# Build an object with the data for the output
+[array]$Maintenance = @()
+ForEach ($LogEntry in $LogEntrys) {
+  $TempObj = New-Object -TypeName psobject -Property @{
+    User = $LogEntry.User
+    PropertyName = $LogEntry.Details.PropertyName
+    TargetType = $LogEntry.Details.TargetType
+    TargetName = $LogEntry.Details.TargetName
+    NewValue = $LogEntry.Details.NewValue
+    PreviousValue = $LogEntry.Details.PreviousValue
+    StartTime = $LogEntry.Details.StartTime
+    EndTime = $LogEntry.Details.EndTime
+  } #TempObj
+  $Maintenance += $TempObj
+} #ForEach
 
-# Log the loaded Citrix PS Snapins
-(Get-PSSnapin "Citrix.*" -EA silentlycontinue).Name | ForEach-Object {"PSSnapIn: " + $_ | LogMe -display -progress}
-  
+" " | LogMe -display -progress
+
 #== Controller Check ============================================================================================
 "Check Controllers #############################################################################" | LogMe -display -progress
-  
+
 " " | LogMe -display -progress
   
 $ControllerResults = @{}
-$Controllers = Get-BrokerController -AdminAddress $AdminAddress
+If ($CitrixCloudCheck -ne 1) { 
+  $Controllers = Get-BrokerController -AdminAddress $AdminAddress
 
-# Get first DDC version (should be all the same unless an upgrade is in progress)
-$ControllerVersion = $Controllers[0].ControllerVersion
-"Version: $controllerversion " | LogMe -display -progress
+  # Get first DDC version (should be all the same unless an upgrade is in progress)
+  $ControllerVersion = $Controllers[0].ControllerVersion
+  "Version: $controllerversion " | LogMe -display -progress
   
-if ($ControllerVersion -lt 7 ) {
-  "XenDesktop/XenApp Version below 7.x ($controllerversion) - only DesktopCheck will be performed" | LogMe -display -progress
-  #$ShowXenAppTable = 0 #doesent work with XML variables
-  Set-Variable -Name ShowXenAppTable -Value 0
-} else { 
   "XenDesktop/XenApp Version above 7.x ($controllerversion) - XenApp and DesktopCheck will be performed" | LogMe -display -progress
-}
 
-foreach ($Controller in $Controllers) {
-$tests = @{}
+  foreach ($Controller in $Controllers) {
+    $tests = @{}
   
-#Name of $Controller
-$ControllerDNS = $Controller | ForEach-Object{ $_.DNSName }
-"Controller: $ControllerDNS" | LogMe -display -progress
+    #Name of $Controller
+    $ControllerDNS = $Controller | ForEach-Object{ $_.DNSName }
+    "Controller: $ControllerDNS" | LogMe -display -progress
   
-#Ping $Controller
-$result = Ping $ControllerDNS 100
-if ($result -ne "SUCCESS") { $tests.Ping = "Error", $result }
-else { $tests.Ping = "SUCCESS", $result 
+    #Test-Ping $Controller
+    $result = Test-Ping -Target:$ControllerDNS -Timeout:100 -Count:3
+    if ($result -ne "SUCCESS") { $tests.Ping = "Error", $result }
+    else { $tests.Ping = "SUCCESS", $result }
 
-#Now when Ping is ok also check this:
+    $IsWinRMAccessible = IsWinRMAccessible -hostname:$ControllerDNS
+
+    #State of this controller
+    $ControllerState = $Controller | ForEach-Object{ $_.State }
+    "State: $ControllerState" | LogMe -display -progress
+    if ($ControllerState -ne "Active") { $tests.State = "ERROR", $ControllerState }
+    else { $tests.State = "SUCCESS", $ControllerState }
+ 
+    #DesktopsRegistered on this controller
+    $ControllerDesktopsRegistered = $Controller | ForEach-Object{ $_.DesktopsRegistered }
+    "Registered: $ControllerDesktopsRegistered" | LogMe -display -progress
+    $tests.DesktopsRegistered = "NEUTRAL", $ControllerDesktopsRegistered
   
-#State of this controller
-$ControllerState = $Controller | ForEach-Object{ $_.State }
-"State: $ControllerState" | LogMe -display -progress
-if ($ControllerState -ne "Active") { $tests.State = "ERROR", $ControllerState }
-else { $tests.State = "SUCCESS", $ControllerState }
+    #ActiveSiteServices on this controller
+    $ActiveSiteServices = $Controller | ForEach-Object{ $_.ActiveSiteServices }
+    "ActiveSiteServices $ActiveSiteServices" | LogMe -display -progress
+    $tests.ActiveSiteServices = "NEUTRAL", $ActiveSiteServices
 
+    #==============================================================================================
+    #               CHECK CPU AND MEMORY USAGE
+    #==============================================================================================
 
-  
-#DesktopsRegistered on this controller
-$ControllerDesktopsRegistered = $Controller | ForEach-Object{ $_.DesktopsRegistered }
-"Registered: $ControllerDesktopsRegistered" | LogMe -display -progress
-$tests.DesktopsRegistered = "NEUTRAL", $ControllerDesktopsRegistered
-  
-#ActiveSiteServices on this controller
-$ActiveSiteServices = $Controller | ForEach-Object{ $_.ActiveSiteServices }
-"ActiveSiteServices $ActiveSiteServices" | LogMe -display -progress
-$tests.ActiveSiteServices = "NEUTRAL", $ActiveSiteServices
+    # Check the AvgCPU value for 5 seconds
+    $AvgCPUval = CheckCpuUsage -hostname:$ControllerDNS -UseWinRM:$IsWinRMAccessible
+    if( [int] $AvgCPUval -lt 75) { "CPU usage is normal [ $AvgCPUval % ]" | LogMe -display; $tests.AvgCPU = "SUCCESS", "$AvgCPUval %" }
+    elseif([int] $AvgCPUval -lt 85) { "CPU usage is medium [ $AvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$AvgCPUval %" }   	
+    elseif([int] $AvgCPUval -lt 95) { "CPU usage is high [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }
+    elseif([int] $AvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err" }
+    else { "CPU usage is Critical [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }   
+    $AvgCPUval = 0
 
+    # Check the Physical Memory usage       
+    $UsedMemory = CheckMemoryUsage -hostname:$ControllerDNS -UseWinRM:$IsWinRMAccessible
+    if( $UsedMemory -lt 75) { "Memory usage is normal [ $UsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$UsedMemory %" }
+    elseif( [int] $UsedMemory -lt 85) { "Memory usage is medium [ $UsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$UsedMemory %" }   	
+    elseif( [int] $UsedMemory -lt 95) { "Memory usage is high [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }
+    elseif( [int] $UsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
+    else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }   
+    $UsedMemory = 0  
 
-#==============================================================================================
-#               CHECK CPU AND MEMORY USAGE 
-#==============================================================================================
-
-        # Check the AvgCPU value for 5 seconds
-        $AvgCPUval = CheckCpuUsage ($ControllerDNS)
-		#$VDtests.LoadBalancingAlgorithm = "SUCCESS", "LB is set to BEST EFFORT"} 
-			
-        if( [int] $AvgCPUval -lt 75) { "CPU usage is normal [ $AvgCPUval % ]" | LogMe -display; $tests.AvgCPU = "SUCCESS", "$AvgCPUval %" }
-		elseif([int] $AvgCPUval -lt 85) { "CPU usage is medium [ $AvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$AvgCPUval %" }   	
-		elseif([int] $AvgCPUval -lt 95) { "CPU usage is high [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }
-		elseif([int] $AvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err" }
-        else { "CPU usage is Critical [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }   
-		$AvgCPUval = 0
-
-        # Check the Physical Memory usage       
-        $UsedMemory = CheckMemoryUsage ($ControllerDNS)
-        if( $UsedMemory -lt 75) { "Memory usage is normal [ $UsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$UsedMemory %" }
-		elseif( [int] $UsedMemory -lt 85) { "Memory usage is medium [ $UsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$UsedMemory %" }   	
-		elseif( [int] $UsedMemory -lt 95) { "Memory usage is high [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }
-		elseif( [int] $UsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
-        else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }   
-		$UsedMemory = 0  
-
-        foreach ($disk in $diskLettersControllers)
-        {
-            # Check Disk Usage 
-		    $HardDisk = CheckHardDiskUsage -hostname $ControllerDNS -deviceID "$($disk):"
-		    if ($null -ne $HardDisk) {	
-			    $XAPercentageDS = $HardDisk.PercentageDS
-			    $frSpace = $HardDisk.frSpace
-			
-	            If ( [int] $XAPercentageDS -gt 15) { "Disk Free is normal [ $XAPercentageDS % ]" | LogMe -display; $tests."$($disk)Freespace" = "SUCCESS", "$frSpace GB" } 
-			    ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "Err" }
-			    ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" } 
-			    ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests."$($disk)Freespace" = "WARNING", "$frSpace GB" }     
-	            Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" }  
-        
-			    $XAPercentageDS = 0
-			    $frSpace = 0
-			    $HardDisk = $null
-		    }
-        }
-		
-    # Check uptime (Query over WMI)
-    $tests.WMI = "ERROR","Error"
-    try { $wmi=Get-WmiObject -class Win32_OperatingSystem -computer $ControllerDNS }
-    catch { $wmi = $null }
-
-    # Perform WMI related checks
-    if ($null -ne $wmi) {
-        $tests.WMI = "SUCCESS", "Success"
-        $LBTime=$wmi.ConvertToDateTime($wmi.Lastbootuptime)
-        [TimeSpan]$uptime=New-TimeSpan $LBTime $(get-date)
-
-        if ($uptime.days -lt $minUpTimeDaysDDC){
-            "reboot warning, last reboot: {0:D}" -f $LBTime | LogMe -display -warning
-            $tests.Uptime = "WARNING", (ToHumanReadable($uptime))
-        }
-        else { $tests.Uptime = "SUCCESS", (ToHumanReadable($uptime)) }
+    foreach ($disk in $diskLettersControllers)
+    {
+      # Check Disk Usage 
+      "Checking free space on $($disk):" | LogMe -display
+      $HardDisk = CheckHardDiskUsage -hostname:$ControllerDNS -deviceID:"$($disk):" -UseWinRM:$IsWinRMAccessible
+      if ($null -ne $HardDisk) {	
+        $XAPercentageDS = $HardDisk.PercentageDS
+        $frSpace = $HardDisk.frSpace
+        If ( [int] $XAPercentageDS -gt 15) { "Disk Free is normal [ $XAPercentageDS % ]" | LogMe -display; $tests."$($disk)Freespace" = "SUCCESS", "$frSpace GB" } 
+        ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "Err" }
+        ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" } 
+        ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests."$($disk)Freespace" = "WARNING", "$frSpace GB" }     
+        Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" }  
+        $XAPercentageDS = 0
+        $frSpace = 0
+        $HardDisk = $null
+      }
     }
-    else { "WMI connection failed - check WMI for corruption" | LogMe -display -error }
-}
 
-" --- " | LogMe -display -progress
-#Fill $tests into array
-
-
-
-$ControllerResults.$ControllerDNS = $tests
-
-}
-
-  
-#== Catalog Check ============================================================================================
-"Check Catalog #################################################################################" | LogMe -display -progress
-" " | LogMe -display -progress
-  
-$CatalogResults = @{}
-$Catalogs = Get-BrokerCatalog -AdminAddress $AdminAddress
-  
-foreach ($Catalog in $Catalogs) {
-  $tests = @{}
-  
-  #Name of MachineCatalog
-  $CatalogName = $Catalog | ForEach-Object{ $_.Name }
-  "Catalog: $CatalogName" | LogMe -display -progress
-
-  if ($ExcludedCatalogs -contains $CatalogName) {
-    "Excluded Catalog, skipping" | LogMe -display -progress
-  } else {
-    #CatalogAssignedCount
-    $CatalogAssignedCount = $Catalog | ForEach-Object{ $_.AssignedCount }
-    "Assigned: $CatalogAssignedCount" | LogMe -display -progress
-    $tests.AssignedToUser = "NEUTRAL", $CatalogAssignedCount
-  
-    #CatalogUnassignedCount
-    $CatalogUnAssignedCount = $Catalog | ForEach-Object{ $_.UnassignedCount }
-    "Unassigned: $CatalogUnAssignedCount" | LogMe -display -progress
-    $tests.NotToUserAssigned = "NEUTRAL", $CatalogUnAssignedCount
-  
-    # Assigned to DeliveryGroup
-    $CatalogUsedCountCount = $Catalog | ForEach-Object{ $_.UsedCount }
-    "Used: $CatalogUsedCountCount" | LogMe -display -progress
-    $tests.AssignedToDG = "NEUTRAL", $CatalogUsedCountCount
-
-    #MinimumFunctionalLevel
-	$MinimumFunctionalLevel = $Catalog | ForEach-Object{ $_.MinimumFunctionalLevel }
-	"MinimumFunctionalLevel: $MinimumFunctionalLevel" | LogMe -display -progress
-    $tests.MinimumFunctionalLevel = "NEUTRAL", $MinimumFunctionalLevel
-  
-     #ProvisioningType
-     $CatalogProvisioningType = $Catalog | ForEach-Object{ $_.ProvisioningType }
-     "ProvisioningType: $CatalogProvisioningType" | LogMe -display -progress
-     $tests.ProvisioningType = "NEUTRAL", $CatalogProvisioningType
-  
-     #AllocationType
-     $CatalogAllocationType = $Catalog | ForEach-Object{ $_.AllocationType }
-     "AllocationType: $CatalogAllocationType" | LogMe -display -progress
-     $tests.AllocationType = "NEUTRAL", $CatalogAllocationType
-
-
-     #UsedMcsSnapshot 
-     $UsedMcsSnapshot = ""
-     $MCSInfo.MasterImageVM = ""
-
-     $CatalogProvisioningSchemeId = $Catalog | ForEach-Object{ $_.ProvisioningSchemeId }
-
-     "ProvisioningSchemeId: $CatalogProvisioningSchemeId " | LogMe -display -progress
-     $MCSInfo = (Get-ProvScheme -ProvisioningSchemeUid $CatalogProvisioningSchemeId)
-
-     $UsedMcsSnapshot = $MCSInfo.MasterImageVM
-
-
-     #"MasterImageVM: $MCSInfo.MasterImageVM"
-     $UsedMcsSnapshot = $UsedMcsSnapshot.trimstart("XDHyp:\HostingUnits\") = $MCSInfo.MasterImageVM
-     $UsedMcsSnapshot = $UsedMcsSnapshot.trimend(".template")
-     "UsedMcsSnapshot: = $UsedMcsSnapshot"
-
-
-     $tests.UsedMcsSnapshot  = "NEUTRAL", $UsedMcsSnapshot 
-
-
-  
-    "", ""
-    $CatalogResults.$CatalogName = $tests
-  }  
-  " --- " | LogMe -display -progress
-}
-  
-#== DeliveryGroups Check ============================================================================================
-"Check Assigments #############################################################################" | LogMe -display -progress
-  
-" " | LogMe -display -progress
-  
-$AssigmentsResults = @{}
-$Assigments = Get-BrokerDesktopGroup -AdminAddress $AdminAddress
-  
-foreach ($Assigment in $Assigments) {
-  $tests = @{}
-  
-  #Name of DeliveryGroup
-  $DeliveryGroup = $Assigment | ForEach-Object{ $_.Name }
-  "DeliveryGroup: $DeliveryGroup" | LogMe -display -progress
-  
-  if ($ExcludedCatalogs -contains $DeliveryGroup) {
-    "Excluded Delivery Group, skipping" | LogMe -display -progress
-  } else {
-  
-    #PublishedName
-    $AssigmentDesktopPublishedName = $Assigment | ForEach-Object{ $_.PublishedName }
-    "PublishedName: $AssigmentDesktopPublishedName" | LogMe -display -progress
-    $tests.PublishedName = "NEUTRAL", $AssigmentDesktopPublishedName
-  
-    #DesktopsTotal
-    $TotalDesktops = $Assigment | ForEach-Object{ $_.TotalDesktops }
-    "DesktopsAvailable: $TotalDesktops" | LogMe -display -progress
-    $tests.TotalMachines = "NEUTRAL", $TotalDesktops
-  
-    #DesktopsAvailable
-    $AssigmentDesktopsAvailable = $Assigment | ForEach-Object{ $_.DesktopsAvailable }
-    "DesktopsAvailable: $AssigmentDesktopsAvailable" | LogMe -display -progress
-    $tests.DesktopsAvailable = "NEUTRAL", $AssigmentDesktopsAvailable
-  
-    #DesktopKind
-    $AssigmentDesktopsKind = $Assigment | ForEach-Object{ $_.DesktopKind }
-    "DesktopKind: $AssigmentDesktopsKind" | LogMe -display -progress
-    $tests.DesktopKind = "NEUTRAL", $AssigmentDesktopsKind
-	
-	#SessionSupport
-	$SessionSupport = $Assigment | ForEach-Object{ $_.SessionSupport }
-	"SessionSupport: $SessionSupport" | LogMe -display -progress
-    $tests.SessionSupport = "NEUTRAL", $SessionSupport
-	
-	#ShutdownAfterUse
-	$ShutdownDesktopsAfterUse = $Assigment | ForEach-Object{ $_.ShutdownDesktopsAfterUse }
-	"ShutdownDesktopsAfterUse: $ShutdownDesktopsAfterUse" | LogMe -display -progress
-    
-	if ($SessionSupport -eq "MultiSession" -and $ShutdownDesktopsAfterUse -eq "$true" ) { 
-	$tests.ShutdownAfterUse = "ERROR", $ShutdownDesktopsAfterUse
-	}
-	else { 
-	 $tests.ShutdownAfterUse = "NEUTRAL", $ShutdownDesktopsAfterUse
-	}
-	
-
-    #MinimumFunctionalLevel
-	$MinimumFunctionalLevel = $Assigment | ForEach-Object{ $_.MinimumFunctionalLevel }
-	"MinimumFunctionalLevel: $MinimumFunctionalLevel" | LogMe -display -progress
-    $tests.MinimumFunctionalLevel = "NEUTRAL", $MinimumFunctionalLevel
-	
-	if ($SessionSupport -eq "MultiSession" ) { 
-	
-	$tests.DesktopsFree = "NEUTRAL", "N/A"
-	$tests.DesktopsInUse = "NEUTRAL", "N/A"
-		
-	}
-    else { 
-			#DesktopsInUse
-			$AssigmentDesktopsInUse = $Assigment | ForEach-Object{ $_.DesktopsInUse }
-			"DesktopsInUse: $AssigmentDesktopsInUse" | LogMe -display -progress
-			$tests.DesktopsInUse = "NEUTRAL", $AssigmentDesktopsInUse
-	
-			#DesktopFree
-			$AssigmentDesktopsFree = $AssigmentDesktopsAvailable - $AssigmentDesktopsInUse
-			"DesktopsFree: $AssigmentDesktopsFree" | LogMe -display -progress
-  
-			if ($AssigmentDesktopsKind -eq "shared") {
-			if ($AssigmentDesktopsFree -gt 0 ) {
-				"DesktopsFree < 1 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
-				$tests.DesktopsFree = "SUCCESS", $AssigmentDesktopsFree
-			} elseif ($AssigmentDesktopsFree -lt 0 ) {
-				"DesktopsFree < 1 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
-				$tests.DesktopsFree = "SUCCESS", "N/A"
-			} else {
-				$tests.DesktopsFree = "WARNING", $AssigmentDesktopsFree
-				"DesktopsFree > 0 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
-			}
-			} else {
-			$tests.DesktopsFree = "NEUTRAL", "N/A"
-			}
-	
-	
-	}
-		
-  
-    #inMaintenanceMode
-    $AssigmentDesktopsinMaintenanceMode = $Assigment | ForEach-Object{ $_.inMaintenanceMode }
-    "inMaintenanceMode: $AssigmentDesktopsinMaintenanceMode" | LogMe -display -progress
-    if ($AssigmentDesktopsinMaintenanceMode) { $tests.MaintenanceMode = "WARNING", "ON" }
-    else { $tests.MaintenanceMode = "SUCCESS", "OFF" }
-  
-    #DesktopsUnregistered
-    $AssigmentDesktopsUnregistered = $Assigment | ForEach-Object{ $_.DesktopsUnregistered }
-    "DesktopsUnregistered: $AssigmentDesktopsUnregistered" | LogMe -display -progress    
-    if ($AssigmentDesktopsUnregistered -gt 0 ) {
-      "DesktopsUnregistered > 0 ! ($AssigmentDesktopsUnregistered)" | LogMe -display -progress
-      $tests.DesktopsUnregistered = "WARNING", $AssigmentDesktopsUnregistered
+    # Check uptime
+    $hostUptime = Get-UpTime -hostname:$ControllerDNS -UseWinRM:$IsWinRMAccessible
+    If ($null -ne $hostUptime) {
+      if ($hostUptime.TimeSpan.days -lt $minUpTimeDaysDDC) {
+        "reboot warning, last reboot: {0:D}" -f $hostUptime.LBTime | LogMe -display -warning
+        $tests.Uptime = "WARNING", (ToHumanReadable($hostUptime.TimeSpan))
+      } else {
+        "Uptime: $(ToHumanReadable($hostUptime.TimeSpan))" | LogMe -display -progress
+        $tests.Uptime = "SUCCESS", (ToHumanReadable($hostUptime.TimeSpan))
+      }
     } else {
-      $tests.DesktopsUnregistered = "SUCCESS", $AssigmentDesktopsUnregistered
-      "DesktopsUnregistered <= 0 ! ($AssigmentDesktopsUnregistered)" | LogMe -display -progress
+      "WinRM or WMI connection failed" | LogMe -display -error
     }
-  
-    
-      
-    #Fill $tests into array
-    $AssigmentsResults.$DeliveryGroup = $tests
-  }
-  " --- " | LogMe -display -progress
-}
-  
-# ======= License Check ========
-if($ShowCTXLicense -eq 1 ){
 
+    " --- " | LogMe -display -progress
+    #Fill $tests into array
+    $ControllerResults.$ControllerDNS = $tests
+
+  }#Close off foreach $Controller
+}#Close off $CitrixCloudCheck
+
+#== Cloud Connector Check ===========================================================================================
+if ($CitrixCloudCheck -ne "1" -AND $ShowCloudConnectorTable -eq 1 ) {
+  "Check Cloud Connector Servers #################################################################" | LogMe -display -progress
+
+  " " | LogMe -display -progress
+
+  $CCResults = @{}
+
+  foreach ($CloudConnectorServer in $CloudConnectorServers) {
+    $tests = @{}
+
+    #Name of $CloudConnectorServer
+    $CloudConnectorServerDNS = $CloudConnectorServer
+    "Cloud Connector Server: $CloudConnectorServerDNS" | LogMe -display -progress
+  
+    #Ping $CloudConnectorServer
+    $result = Test-Ping -Target:$CloudConnectorServerDNS -Timeout:100 -Count:3
+    if ($result -ne "SUCCESS") { $tests.Ping = "Error", $result }
+    else { $tests.Ping = "SUCCESS", $result }
+
+    $IsWinRMAccessible = IsWinRMAccessible -hostname:$CloudConnectorServerDNS
+
+    # Check services
+    # The Get-Service command with -ComputerName parameter made use of DCOM and such functionality is
+    # removed from PowerShell 7. So we use the Invoke-Command, which uses WinRM to run a ScriptBlock
+    # instead.
+    If ($IsWinRMAccessible) {
+      Try {
+        $CCActiveSiteServices = Invoke-Command -ComputerName $CloudConnectorServerDNS -ErrorAction Stop -ScriptBlock{Get-Service |?{ ($_.Name -ilike "Citrix*") -and ($_.StartType -eq "Automatic") -and ($_.Status -ne "Running")}}
+        # Check if there are any stopped services
+        if ($CCActiveSiteServices) {
+          # If there are stopped services, print the list of stopped services
+          Write-Host "The following services are not running:$(($CCActiveSiteServices).Name)"
+          $NotRunning_Service = $CCActiveSiteServices | ForEach-Object { $_.Name }
+          $tests.CitrixCCServices = "Warning","$NotRunning_Service"
+        } else {
+          # If no services are stopped, print success message
+          Write-Host "All services are running successfully."
+          $tests.CitrixServices = "SUCCESS","OK"
+        }
+      }
+      Catch {
+        #"Error returned while checking the services" | LogMe -error; return 101
+      }
+    } Else {
+      # Cannot connect via WinRM
+    }
+
+    #==============================================================================================
+    #               CHECK CPU AND MEMORY USAGE
+    #==============================================================================================
+
+    # Check the AvgCPU value for 5 seconds
+    $AvgCPUval = CheckCpuUsage -hostname:$CloudConnectorServerDNS -UseWinRM:$IsWinRMAccessible
+    if( [int] $AvgCPUval -lt 75) { "CPU usage is normal [ $AvgCPUval % ]" | LogMe -display; $tests.AvgCPU = "SUCCESS", "$AvgCPUval %" }
+    elseif([int] $AvgCPUval -lt 85) { "CPU usage is medium [ $AvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$AvgCPUval %" }   	
+    elseif([int] $AvgCPUval -lt 95) { "CPU usage is high [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }
+    elseif([int] $AvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err" }
+    else { "CPU usage is Critical [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }   
+    $AvgCPUval = 0
+
+    # Check the Physical Memory usage       
+    $UsedMemory = CheckMemoryUsage -hostname:$CloudConnectorServerDNS -UseWinRM:$IsWinRMAccessible
+    if( $UsedMemory -lt 75) { "Memory usage is normal [ $UsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$UsedMemory %" }
+    elseif( [int] $UsedMemory -lt 85) { "Memory usage is medium [ $UsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$UsedMemory %" }   	
+    elseif( [int] $UsedMemory -lt 95) { "Memory usage is high [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }
+    elseif( [int] $UsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
+    else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }   
+    $UsedMemory = 0  
+
+    foreach ($disk in $diskLettersControllers)
+    {
+      # Check Disk Usage 
+      "Checking free space on $($disk):" | LogMe -display
+      $HardDisk = CheckHardDiskUsage -hostname:$CloudConnectorServerDNS -deviceID:"$($disk):" -UseWinRM:$IsWinRMAccessible
+      if ($null -ne $HardDisk) {	
+        $XAPercentageDS = $HardDisk.PercentageDS
+        $frSpace = $HardDisk.frSpace
+        If ( [int] $XAPercentageDS -gt 15) { "Disk Free is normal [ $XAPercentageDS % ]" | LogMe -display; $tests."$($disk)Freespace" = "SUCCESS", "$frSpace GB" } 
+        ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "Err" }
+        ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" } 
+        ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests."$($disk)Freespace" = "WARNING", "$frSpace GB" }     
+        Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" }  
+        $XAPercentageDS = 0
+        $frSpace = 0
+        $HardDisk = $null
+      }
+    }
+
+    # Check uptime
+    $hostUptime = Get-UpTime -hostname:$CloudConnectorServerDNS -UseWinRM:$IsWinRMAccessible
+    If ($null -ne $hostUptime) {
+      if ($hostUptime.TimeSpan.days -lt $minUpTimeDaysDDC) {
+        "reboot warning, last reboot: {0:D}" -f $hostUptime.LBTime | LogMe -display -warning
+        $tests.Uptime = "WARNING", (ToHumanReadable($hostUptime.TimeSpan))
+      } else {
+        "Uptime: $(ToHumanReadable($hostUptime.TimeSpan))" | LogMe -display -progress
+        $tests.Uptime = "SUCCESS", (ToHumanReadable($hostUptime.TimeSpan))
+      }
+    } else {
+      "WinRM or WMI connection failed" | LogMe -display -error
+    }
+
+    " --- " | LogMe -display -progress
+    #Fill $tests into array
+    $CCResults.$CloudConnectorServerDNS = $tests
+
+  }#Close off foreach $CloudConnectorServer
+}#Close off if $ShowCloudConnectorTable
+
+#== Stortefront Check ===========================================================================================
+If ($ShowStorefrontTable -eq 1) {
+  "Check Storefront Servers ######################################################################" | LogMe -display -progress
+
+  " " | LogMe -display -progress
+
+  $SFResults = @{}
+
+  foreach ($StoreFrontServer in $StoreFrontServers) {
+    $tests = @{}
+
+    #Name of $StoreFrontServer
+    $StoreFrontServerDNS = $StoreFrontServer
+    "Storefront Server: $StoreFrontServerDNS" | LogMe -display -progress
+  
+    #Ping $StoreFrontServer
+    $result = Test-Ping -Target:$StoreFrontServerDNS -Timeout:100 -Count:3
+    if ($result -ne "SUCCESS") { $tests.Ping = "Error", $result }
+    else { $tests.Ping = "SUCCESS", $result }
+
+    $IsWinRMAccessible = IsWinRMAccessible -hostname:$StoreFrontServerDNS
+
+    # Check services
+    # The Get-Service command with -ComputerName parameter made use of DCOM and such functionality is
+    # removed from PowerShell 7. So we use the Invoke-Command, which uses WinRM to run a ScriptBlock
+    # instead.
+    If ($IsWinRMAccessible) {
+      Try {
+        $SFActiveSiteServices = Invoke-Command -ComputerName $StoreFrontServerDNS -ErrorAction Stop -ScriptBlock{Get-Service |?{ (($_.Name -ilike "Citrix*") -or ($_.Name -like "W3SVC*")) -and ($_.StartType -eq "Automatic") -and ($_.Status -ne "Running")}}
+        # Check if there are any stopped services
+        if ($SFActiveSiteServices) {
+          # If there are stopped services, print the list of stopped services
+          Write-Host "The following services are not running:$(($SFActiveSiteServices).Name)"
+          $NotRunning_Service = $SFActiveSiteServices | ForEach-Object { $_.Name }
+          $tests.CitrixSFServices = "Warning","$NotRunning_Service"
+        } else {
+          # If no services are stopped, print success message
+          Write-Host "All services are running successfully."
+          $tests.CitrixServices = "SUCCESS","OK"
+        }
+      }
+      Catch {
+        #"Error returned while checking the services" | LogMe -error; return 101
+      }
+    } Else {
+      # Cannot connect via WinRM
+    }
+
+    #==============================================================================================
+    #               CHECK CPU AND MEMORY USAGE
+    #==============================================================================================
+
+    # Check the AvgCPU value for 5 seconds
+    $AvgCPUval = CheckCpuUsage -hostname:$StoreFrontServerDNS -UseWinRM:$IsWinRMAccessible
+    if( [int] $AvgCPUval -lt 75) { "CPU usage is normal [ $AvgCPUval % ]" | LogMe -display; $tests.AvgCPU = "SUCCESS", "$AvgCPUval %" }
+    elseif([int] $AvgCPUval -lt 85) { "CPU usage is medium [ $AvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$AvgCPUval %" }   	
+    elseif([int] $AvgCPUval -lt 95) { "CPU usage is high [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }
+    elseif([int] $AvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err" }
+    else { "CPU usage is Critical [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }   
+    $AvgCPUval = 0
+
+    # Check the Physical Memory usage       
+    $UsedMemory = CheckMemoryUsage -hostname:$StoreFrontServerDNS -UseWinRM:$IsWinRMAccessible
+    if( $UsedMemory -lt 75) { "Memory usage is normal [ $UsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$UsedMemory %" }
+    elseif( [int] $UsedMemory -lt 85) { "Memory usage is medium [ $UsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$UsedMemory %" }   	
+    elseif( [int] $UsedMemory -lt 95) { "Memory usage is high [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }
+    elseif( [int] $UsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
+    else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }   
+    $UsedMemory = 0  
+
+    foreach ($disk in $diskLettersControllers)
+    {
+      # Check Disk Usage 
+      "Checking free space on $($disk):" | LogMe -display
+      $HardDisk = CheckHardDiskUsage -hostname:$StoreFrontServerDNS -deviceID:"$($disk):" -UseWinRM:$IsWinRMAccessible
+      if ($null -ne $HardDisk) {	
+        $XAPercentageDS = $HardDisk.PercentageDS
+        $frSpace = $HardDisk.frSpace
+        If ( [int] $XAPercentageDS -gt 15) { "Disk Free is normal [ $XAPercentageDS % ]" | LogMe -display; $tests."$($disk)Freespace" = "SUCCESS", "$frSpace GB" } 
+        ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "Err" }
+        ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" } 
+        ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests."$($disk)Freespace" = "WARNING", "$frSpace GB" }     
+        Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" }  
+        $XAPercentageDS = 0
+        $frSpace = 0
+        $HardDisk = $null
+      }
+    }
+
+    # Check uptime
+    $hostUptime = Get-UpTime -hostname:$StoreFrontServerDNS -UseWinRM:$IsWinRMAccessible
+    If ($null -ne $hostUptime) {
+      if ($hostUptime.TimeSpan.days -lt $minUpTimeDaysDDC) {
+        "reboot warning, last reboot: {0:D}" -f $hostUptime.LBTime | LogMe -display -warning
+        $tests.Uptime = "WARNING", (ToHumanReadable($hostUptime.TimeSpan))
+      } else {
+        "Uptime: $(ToHumanReadable($hostUptime.TimeSpan))" | LogMe -display -progress
+        $tests.Uptime = "SUCCESS", (ToHumanReadable($hostUptime.TimeSpan))
+      }
+    } else {
+      "WinRM or WMI connection failed" | LogMe -display -error
+    }
+
+    " --- " | LogMe -display -progress
+    #Fill $tests into array
+    $SFResults.$StoreFrontServerDNS = $tests
+
+  }#Close off foreach $StoreFrontServer
+}#Close off if $ShowStorefrontTable
+
+#== Citrix Licensing Check =========================================================================================
+
+If ($CitrixCloudCheck -ne 1) {
+  "Check Citrix Licensing ######################################################################" | LogMe -display -progress
+  # ======= License Check ========
+  if($ShowCTXLicense -eq 1 ){
+
+    $UseWinRM = $True
     $myCollection = @()
     try 
 	{
-        $LicWMIQuery = get-wmiobject -namespace "ROOT\CitrixLicensing" -computer $lsname -query "select * from Citrix_GT_License_Pool" -ErrorAction Stop | ? {$_.PLD -in $CTXLicenseMode}
-        
+        If ($UseWinRM) {
+          $LicQuery = Get-CimInstance -namespace "ROOT\CitrixLicensing" -ComputerName $lsname -query "select * from Citrix_GT_License_Pool" -ErrorAction Stop | ? {$_.PLD -in $CTXLicenseMode}
+        } Else {
+          $LicQuery = Get-WmiObject -namespace "ROOT\CitrixLicensing" -ComputerName $lsname -query "select * from Citrix_GT_License_Pool" -ErrorAction Stop | ? {$_.PLD -in $CTXLicenseMode}
+        }
 	
-        foreach ($group in $($LicWMIQuery | group pld))
+        foreach ($group in $($LicQuery | group pld))
         {
             $lics = $group | Select-Object -ExpandProperty group
             $i = 1
@@ -964,742 +2055,1995 @@ if($ShowCTXLicense -eq 1 ){
             $CTXLicResults.($line.LicenceName) =  $tests
         }
 
+  }
+  else {"CTX License Check skipped because ShowCTXLicense = 0 " | LogMe -display -progress }
+  " --- " | LogMe -display -progress
 }
-else {"CTX License Check skipped because ShowCTXLicense = 0 " | LogMe -display -progress }
-  
 
-# ======= Desktop Check ========
-"Check virtual Desktops ####################################################################################" | LogMe -display -progress
+
+#== Catalog Check ============================================================================================
+"Check Catalog #################################################################################" | LogMe -display -progress
 " " | LogMe -display -progress
-  
-if($ShowDesktopTable -eq 1 ) {
-  
-$allResults = @{}
-  
-$machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress| Where-Object {$_.SessionSupport -eq "SingleSession" -and @(Compare-Object $_.tags $ExcludedTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and $_.catalogname -notin $ExcludedCatalogs}
-  
-# SessionSupport only availiable in XD 7.x - for this reason only distinguish in Version above 7 if Desktop or XenApp
-if($controllerversion -lt 7 ) { $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -and @(Compare-Object $_.tags $ExcludedTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and $_.catalogname -notin $ExcludedCatalogs}
-else { $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress| Where-Object {$_.SessionSupport -eq "SingleSession" -and @(Compare-Object $_.tags $ExcludedTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and $_.catalogname -notin $ExcludedCatalogs} }
 
-$Maintenance = Get-CitrixMaintenanceInfo -AdminAddress $AdminAddress
-
-foreach($machine in $machines) {
-$tests = @{}
-  
-$ErrorVDI = 0
-  
-# Column Name of Desktop
-$machineDNS = $machine | ForEach-Object{ $_.DNSName }
-"Machine: $machineDNS" | LogMe -display -progress
-  
-# Column CatalogName
-$CatalogName = $machine | ForEach-Object{ $_.CatalogName }
-"Catalog: $CatalogName" | LogMe -display -progress
-$tests.CatalogName = "NEUTRAL", $CatalogName
-
-# Column DeliveryGroup
-$DeliveryGroup = $machine | ForEach-Object{ $_.DesktopGroupName }
-"DeliveryGroup: $DeliveryGroup" | LogMe -display -progress
-$tests.DeliveryGroup = "NEUTRAL", $DeliveryGroup
-
-# Column Powerstate
-$Powered = $machine | ForEach-Object{ $_.PowerState }
-"PowerState: $Powered" | LogMe -display -progress
-$tests.PowerState = "NEUTRAL", $Powered
-
-if ($Powered -eq "Off" -OR $Powered -eq "Unknown") {
-$tests.PowerState = "NEUTRAL", $Powered
+$ActualExcludedCatalogs = @()
+$ActualIncludedCatalogs = @()
+$CatalogResults = @{}
+If ($CitrixCloudCheck -ne 1) { 
+  $Catalogs = Get-BrokerCatalog -AdminAddress $AdminAddress
+} Else {
+  $Catalogs = Get-BrokerCatalog
 }
 
-if ($Powered -eq "On") {
-$tests.PowerState = "SUCCESS", $Powered
-}
+foreach ($Catalog in $Catalogs) {
+  $tests = @{}
 
-if ($Powered -eq "On" -OR $Powered -eq "Unknown" -OR $Powered -eq "Unmanaged") {
+  #Name of MachineCatalog
+  $FullCatalogNameIncAdminFolder = $Catalog | ForEach-Object{ $_.Name }
+  "Catalog: $FullCatalogNameIncAdminFolder" | LogMe -display -progress
 
-
-
-# Column Ping Desktop
-$result = Ping $machineDNS 100
-if ($result -eq "SUCCESS") {
-  $tests.Ping = "SUCCESS", $result
-  
-  #==============================================================================================
-  # Column Uptime (Query over WMI - only if Ping successfull)
-  $tests.WMI = "ERROR","Error"
-  $job = Start-Job -ScriptBlock $wmiOSBlock -ArgumentList $machineDNS
-  $wmi = Wait-job $job -Timeout 15 | Receive-Job
-
-  # Perform WMI related checks
-  if ($null -ne $wmi) {
-    $tests.WMI = "SUCCESS", "Success"
-    $LBTime=[Management.ManagementDateTimeConverter]::ToDateTime($wmi.Lastbootuptime)
-    [TimeSpan]$uptime=New-TimeSpan $LBTime $(get-date)
-  
-    if ($uptime.days -gt $maxUpTimeDays) {
-      "reboot warning, last reboot: {0:D}" -f $LBTime | LogMe -display -warning
-      $tests.Uptime = "WARNING", $uptime.days
-      $ErrorVDI = $ErrorVDI + 1
-    } else { 
-      $tests.Uptime = "SUCCESS", $uptime.days 
+  # The CatalogName property is not always available across versions and configurations.
+  Try {
+    $CatalogName = $Catalog | ForEach-Object{ $_.CatalogName}
+  } Catch {
+    If ($FullCatalogNameIncAdminFolder.indexof('\\') -ne 0) {
+      $CatalogName = ($FullCatalogNameIncAdminFolder -Split '\\')[-1]
+    } Else {
+      $CatalogName = $FullCatalogNameIncAdminFolder
     }
-  } else { 
-    "WMI connection failed - check WMI for corruption" | LogMe -display -error
-    stop-job $job
   }
 
-  #-----------------
-# Column WriteCacheSize (only if Ping is successful)
-################ PVS SECTION ###############
-if (test-path \\$machineDNS\c$\Personality.ini) {
-# Test if PVS cache is of type "device's hard drive"
-$PvsWriteCacheUNC = Join-Path "\\$machineDNS" ($PvsWriteCacheDrive+"$"+"\.vdiskcache")
-$CacheDiskOnHD = Test-Path $PvsWriteCacheUNC
+  $Found = $False
+  If ($ExcludedCatalogs.Count -gt 0) {
+    If (!([String]::IsNullOrEmpty($ExcludedCatalogs[0]))) {
+      ForEach ($ExcludedCatalog in $ExcludedCatalogs) {
+        If ($FullCatalogNameIncAdminFolder -Like $ExcludedCatalog -OR $CatalogName -Like $ExcludedCatalog) {
+          $Found = $True
+          break
+        }
+      }
+      If ($ExcludedCatalogs -contains $FullCatalogNameIncAdminFolder -OR $ExcludedCatalogs -contains $CatalogName) {
+        $Found = $True
+      }
+    }
+  }
 
-if ($CacheDiskOnHD -eq $True) {
-  $CacheDiskExists = $True
-  $CachePVSType = "Device HD"
-} else {
-  # Test if PVS cache is of type "device RAM with overflow to hard drive"
-  $PvsWriteCacheUNC = Join-Path "\\$machineDNS" ($PvsWriteCacheDrive+"$"+"\vdiskdif.vhdx")
-  $CacheDiskRAMwithOverflow = Test-Path $PvsWriteCacheUNC
-  if ($CacheDiskRAMwithOverflow -eq $True) {
-    $CacheDiskExists = $True
-    $CachePVSType = "Device RAM with overflow to disk"
+  if ($Found) {
+    $ActualExcludedCatalogs += $Catalog.Name
+    "Excluded Catalog, skipping" | LogMe -display -progress
   } else {
-    $CacheDiskExists = $False
-    $CachePVSType = ""
-  }
-}
+     $ActualIncludedCatalogs += $Catalog.Name
 
-if ($CacheDiskExists -eq $True) {
-$CacheDisk = [long] ((get-childitem $PvsWriteCacheUNC -force).length)
-$CacheDiskGB = "{0:n2}GB" -f($CacheDisk / 1GB)
-"PVS Cache file size: {0:n2}GB" -f($CacheDisk / 1GB) | LogMe
-#"PVS Cache max size: {0:n2}GB" -f($PvsWriteMaxSizeInGB / 1GB) | LogMe -display
-$tests.WriteCacheType = "NEUTRAL", $CachePVSType
-if ($CacheDisk -lt ($PvsWriteMaxSizeInGB * 0.5)) {
-"WriteCache file size is low" | LogMe
-$tests.WriteCacheSize = "SUCCESS", $CacheDiskGB
-}
-elseif ($CacheDisk -lt ($PvsWriteMaxSizeInGB * 0.8)) {
-"WriteCache file size moderate" | LogMe -display -warning
-$tests.WriteCacheSize = "WARNING", $CacheDiskGB
-}
-else {
-"WriteCache file size is high" | LogMe -display -error
-$tests.WriteCacheSize = "ERROR", $CacheDiskGB
-}
-}
-$Cachedisk = 0
-}
-else { $tests.WriteCacheSize = "SUCCESS", "N/A" }
-############## END PVS SECTION #############
-
-# Column OSBuild 
-$MachineOSVersion = "N/A"
-$MachineOSVersion = (Get-ItemProperty -Path "\\$machineDNS\C$\WINDOWS\System32\hal.dll" -ErrorAction SilentlyContinue).VersionInfo.FileVersion.Split()[0]
-$tests.OSBuild = "NEUTRAL", $MachineOSVersion
-
-
-#---------------------
+    #CatalogAssignedCount
+    $CatalogAssignedCount = $Catalog | ForEach-Object{ $_.AssignedCount }
+    "Assigned: $CatalogAssignedCount" | LogMe -display -progress
+    $tests.AssignedToUser = "NEUTRAL", $CatalogAssignedCount
   
+    #CatalogUnassignedCount
+    $CatalogUnAssignedCount = $Catalog | ForEach-Object{ $_.UnassignedCount }
+    "Unassigned: $CatalogUnAssignedCount" | LogMe -display -progress
+    $tests.NotToUserAssigned = "NEUTRAL", $CatalogUnAssignedCount
+  
+    # Assigned to DeliveryGroup
+    $CatalogUsedCountCount = $Catalog | ForEach-Object{ $_.UsedCount }
+    "Used: $CatalogUsedCountCount" | LogMe -display -progress
+    $tests.AssignedToDG = "NEUTRAL", $CatalogUsedCountCount
+
+    #MinimumFunctionalLevel
+	$MinimumFunctionalLevel = $Catalog | ForEach-Object{ $_.MinimumFunctionalLevel }
+	"MinimumFunctionalLevel: $MinimumFunctionalLevel" | LogMe -display -progress
+    $tests.MinimumFunctionalLevel = "NEUTRAL", $MinimumFunctionalLevel
+  
+     #ProvisioningType
+     $CatalogProvisioningType = $Catalog | ForEach-Object{ $_.ProvisioningType }
+     "ProvisioningType: $CatalogProvisioningType" | LogMe -display -progress
+     $tests.ProvisioningType = "NEUTRAL", $CatalogProvisioningType
+  
+     #AllocationType
+     $CatalogAllocationType = $Catalog | ForEach-Object{ $_.AllocationType }
+     "AllocationType: $CatalogAllocationType" | LogMe -display -progress
+     $tests.AllocationType = "NEUTRAL", $CatalogAllocationType
+
+     $CatalogProvisioningSchemeId = $Catalog | ForEach-Object{ $_.ProvisioningSchemeId }
+
+     #UsedMcsSnapshot 
+     $UsedMcsSnapshot = ""
+     $MCSInfo = $null
+     $MasterImageVMDate = ""
+     $UseFullDiskClone = ""
+     $UseWriteBackCache = ""
+     $WriteBackCacheMemSize = ""
+
+     "ProvisioningSchemeId: $CatalogProvisioningSchemeId " | LogMe -display -progress
+     Try {
+       If ($CitrixCloudCheck -ne 1) {
+         $MCSInfo = (Get-ProvScheme -AdminAddress $AdminAddress -ProvisioningSchemeUid $CatalogProvisioningSchemeId)
+       } Else {
+         $MCSInfo = (Get-ProvScheme -ProvisioningSchemeUid $CatalogProvisioningSchemeId)
+       }
+       "ProvisioningScheme Info:" | LogMe -display -progress
+       "- MachineProfile: $($MCSInfo.MachineProfile)" | LogMe -display -progress
+       "- MasterImageVM: $($MCSInfo.MasterImageVM)" | LogMe -display -progress
+       "- MasterImageVMDate: $($MCSInfo.MasterImageVMDate)" | LogMe -display -progress
+       "- UseFullDiskCloneProvisioning: $($MCSInfo.UseFullDiskCloneProvisioning)" | LogMe -display -progress
+       "- UseWriteBackCache: $($MCSInfo.UseWriteBackCache)" | LogMe -display -progress
+       "- WriteBackCacheDiskSize: $($MCSInfo.WriteBackCacheDiskSize)" | LogMe -display -progress
+       "- WriteBackCacheMemorySize:$( $MCSInfo.WriteBackCacheMemorySize)" | LogMe -display -progress
+       "- WriteBackCacheDiskIndex: $($MCSInfo.WriteBackCacheDiskIndex)" | LogMe -display -progress
+       # "- WriteBackCacheDiskLetter: $($MCSInfo.WriteBackCacheDiskLetter)" | LogMe -display -progress
+       # Note that the Get-ProvScheme cmdlet does not yet have a parameter for "WriteBackCacheDiskLetter", even though this
+       # was added for the New-ProvScheme cmdlet mid 2024. This should not be needed as the drive letter of MCSIO WBC disk
+       # is determined by Windows OS and is typically either D or E drive (the next free drive letter after C). The Base
+       # Image Script Framework (BIS-F) should be used to help make this consistent as part of your imaging standards.
+       "- WindowsActivationType: $($MCSInfo.WindowsActivationType)" | LogMe -display -progress
+
+       $UsedMcsSnapshot = $MCSInfo.MasterImageVM
+       #"MasterImageVM: $MCSInfo.MasterImageVM"
+       $UsedMcsSnapshot = $UsedMcsSnapshot.trimstart("XDHyp:\HostingUnits\")
+       $UsedMcsSnapshot = $UsedMcsSnapshot.trimend(".template")
+       $MasterImageVMDate = $MCSInfo.MasterImageVMDate
+       $UseFullDiskClone = $MCSInfo.UseFullDiskCloneProvisioning
+       $UseWriteBackCache = $MCSInfo.UseWriteBackCache
+       $WriteBackCacheMemorySize = $MCSInfo.WriteBackCacheMemorySize
+     }
+     Catch [system.exception] {
+       #$_.Exception.Message
+     }
+     "UsedMcsSnapshot: = $UsedMcsSnapshot"
+     $tests.UsedMcsSnapshot  = "NEUTRAL", $UsedMcsSnapshot
+     If (!([String]::IsNullOrEmpty($MasterImageVMDate))) {
+       $dateToCheck = [datetime]::Parse($MasterImageVMDate)
+       $thresholdDate = (Get-Date).AddDays(-90)
+       if ($dateToCheck -lt $thresholdDate) {
+         $tests.MasterImageVMDate = "WARNING", $MasterImageVMDate
+       } else {
+         $tests.MasterImageVMDate = "NEUTRAL", $MasterImageVMDate
+       }
+     }
+     $tests.UseFullDiskClone = "NEUTRAL", $UseFullDiskClone
+     $tests.UseWriteBackCache = "NEUTRAL", $UseWriteBackCache
+     $tests.WriteBackCacheMemSize = "NEUTRAL", $WriteBackCacheMemSize
+
+    "", ""
+    $CatalogResults.$FullCatalogNameIncAdminFolder = $tests
+  }  
+  " --- " | LogMe -display -progress
+}
+
+#== DeliveryGroups Check ============================================================================================
+"Check Assigments #############################################################################" | LogMe -display -progress
+  
+" " | LogMe -display -progress
+
+$ActualExcludedDeliveryGroups = @()
+$ActualIncludedDeliveryGroups = @()
+$AssigmentsResults = @{}
+If ($CitrixCloudCheck -ne 1) {
+  $Assigments = Get-BrokerDesktopGroup -AdminAddress $AdminAddress
+} Else {
+  $Assigments = Get-BrokerDesktopGroup
+}
+  
+foreach ($Assigment in $Assigments) {
+  $tests = @{}
+
+  #Name of DeliveryGroup
+  $FullDeliveryGroupNameIncAdminFolder = $Assigment | ForEach-Object{ $_.Name }
+  "DeliveryGroup: $FullDeliveryGroupNameIncAdminFolder" | LogMe -display -progress
+
+  $PublishedName = $Assigment | ForEach-Object{ $_.PublishedName }
+  # The DesktopGroupName property is not always available across versions and configurations.
+  Try {
+    $DesktopGroupName = $Assigment | ForEach-Object{ $_.DesktopGroupName }
   }
-else {
-$tests.Ping = "Neutral", $result
-$ErrorVDI = $ErrorVDI + 0 # Ping is no definitve indicator for a problem
-}
-#END of Ping-Section
+  Catch {
+    If ($FullDeliveryGroupNameIncAdminFolder.indexof('\\') -ne 0) {
+      $DesktopGroupName = ($FullDeliveryGroupNameIncAdminFolder -Split '\\')[-1]
+    } Else {
+      $DesktopGroupName = $FullDeliveryGroupNameIncAdminFolder
+    }
+  }
 
-# Column RegistrationState
-$RegistrationState = $machine | ForEach-Object{ $_.RegistrationState }
-"State: $RegistrationState" | LogMe -display -progress
-if ($RegistrationState -ne "Registered") {
-$tests.RegState = "ERROR", $RegistrationState
-$ErrorVDI = $ErrorVDI + 1
-}
-else { $tests.RegState = "SUCCESS", $RegistrationState }
+  $Found = $False
+  If ($ExcludedDeliveryGroups.Count -gt 0) {
+    If (!([String]::IsNullOrEmpty($ExcludedDeliveryGroups[0]))) {
+      ForEach ($ExcludedDeliveryGroup in $ExcludedDeliveryGroups) {
+        If ($FullDeliveryGroupNameIncAdminFolder -Like $ExcludedDeliveryGroup -OR $PublishedName -Like $ExcludedDeliveryGroup -OR $DesktopGroupName -Like $ExcludedDeliveryGroup) {
+          $Found = $True
+          break
+        }
+      }
+      if ($ExcludedDeliveryGroups -contains $FullDeliveryGroupNameIncAdminFolder -OR $ExcludedDeliveryGroups -contains $PublishedName -OR $ExcludedDeliveryGroups -contains $DesktopGroupName) {
+        $Found = $True
+      }
+    }
+  }
+  if ($Found) {
+    $ActualExcludedDeliveryGroups += $Assigment.Name
+    "Excluded Delivery Group, skipping" | LogMe -display -progress
+  } else {
+    $ActualIncludedDeliveryGroups += $Assigment.Name
 
-} 
+    #PublishedName
+    $AssigmentDesktopPublishedName = $PublishedName
+    "PublishedName: $AssigmentDesktopPublishedName" | LogMe -display -progress
+    $tests.PublishedName = "NEUTRAL", $AssigmentDesktopPublishedName
+  
+    #DesktopsTotal
+    $TotalDesktops = $Assigment | ForEach-Object{ $_.TotalDesktops }
+    "DesktopsAvailable: $TotalDesktops" | LogMe -display -progress
+    $tests.TotalMachines = "NEUTRAL", $TotalDesktops
+  
+    #DesktopsAvailable
+    $AssigmentDesktopsAvailable = $Assigment | ForEach-Object{ $_.DesktopsAvailable }
+    "DesktopsAvailable: $AssigmentDesktopsAvailable" | LogMe -display -progress
+    $tests.DesktopsAvailable = "NEUTRAL", $AssigmentDesktopsAvailable
+  
+    #DesktopKind
+    $AssigmentDesktopsKind = $Assigment | ForEach-Object{ $_.DesktopKind }
+    "DesktopKind: $AssigmentDesktopsKind" | LogMe -display -progress
+    $tests.DesktopKind = "NEUTRAL", $AssigmentDesktopsKind
+	
+    #SessionSupport
+    $SessionSupport = $Assigment | ForEach-Object{ $_.SessionSupport }
+    "SessionSupport: $SessionSupport" | LogMe -display -progress
+    $tests.SessionSupport = "NEUTRAL", $SessionSupport
+	
+    #ShutdownAfterUse
+    $ShutdownDesktopsAfterUse = $Assigment | ForEach-Object{ $_.ShutdownDesktopsAfterUse }
+    "ShutdownDesktopsAfterUse: $ShutdownDesktopsAfterUse" | LogMe -display -progress
+    
+    if ($SessionSupport -eq "MultiSession" -and $ShutdownDesktopsAfterUse -eq "$true" ) { 
+    $tests.ShutdownAfterUse = "ERROR", $ShutdownDesktopsAfterUse
+    }
+    else { 
+    $tests.ShutdownAfterUse = "NEUTRAL", $ShutdownDesktopsAfterUse
+    }
+
+    #MinimumFunctionalLevel
+    $MinimumFunctionalLevel = $Assigment | ForEach-Object{ $_.MinimumFunctionalLevel }
+    "MinimumFunctionalLevel: $MinimumFunctionalLevel" | LogMe -display -progress
+    $tests.MinimumFunctionalLevel = "NEUTRAL", $MinimumFunctionalLevel
+	
+    if ($SessionSupport -eq "MultiSession" ) { 
+      $tests.DesktopsFree = "NEUTRAL", "N/A"
+      $tests.DesktopsInUse = "NEUTRAL", "N/A"
+    }
+    else { 
+      #DesktopsInUse
+      $AssigmentDesktopsInUse = $Assigment | ForEach-Object{ $_.DesktopsInUse }
+      "DesktopsInUse: $AssigmentDesktopsInUse" | LogMe -display -progress
+      $tests.DesktopsInUse = "NEUTRAL", $AssigmentDesktopsInUse
+	
+      #DesktopFree
+      $AssigmentDesktopsFree = $AssigmentDesktopsAvailable - $AssigmentDesktopsInUse
+      "DesktopsFree: $AssigmentDesktopsFree" | LogMe -display -progress
+  
+			if ($AssigmentDesktopsKind -eq "shared") {
+			if ($AssigmentDesktopsFree -gt 0 ) {
+				"DesktopsFree < 1 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
+				$tests.DesktopsFree = "SUCCESS", $AssigmentDesktopsFree
+			} elseif ($AssigmentDesktopsFree -lt 0 ) {
+				"DesktopsFree < 1 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
+				$tests.DesktopsFree = "SUCCESS", "N/A"
+			} else {
+				$tests.DesktopsFree = "WARNING", $AssigmentDesktopsFree
+				"DesktopsFree > 0 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
+			}
+			} else {
+			$tests.DesktopsFree = "NEUTRAL", "N/A"
+			}
+	
+	
+	}
+
+    #inMaintenanceMode
+    $AssigmentDesktopsinMaintenanceMode = $Assigment | ForEach-Object{ $_.inMaintenanceMode }
+    "inMaintenanceMode: $AssigmentDesktopsinMaintenanceMode" | LogMe -display -progress
+    if ($AssigmentDesktopsinMaintenanceMode) {
+      $objMaintenance = $null
+      Try {
+        $objMaintenance = $Maintenance | Where-Object { $_.TargetName.ToUpper() -eq $Assigment.Name.ToUpper() } | Select-Object -First 1
+      }
+      Catch {
+        # Avoid the error "The property 'TargetName' cannot be found on this object."
+      }
+      If ($null -ne $objMaintenance){$AssigmentDesktopsinMaintenanceModeOn = ("ON, " + $objMaintenance.User)} Else {$AssigmentDesktopsinMaintenanceModeOn = "ON"}
+      # The Get-LogLowLevelOperation cmdlet will tell us who placed a Delivery Group into maintanance mode. However, the Get-BrokerDesktopGroup
+      # cmdlet will provide the MaintenanceReason, where the underlying reason, if manually entered, is stored in the MetadataMap property as
+      # part of a Dictionary object.
+      $MetadataMapDictionary = $Assigment | ForEach-Object{ $_.MetadataMap }
+      foreach ($key in $MetadataMapDictionary.Keys) {
+        if ($key -eq "MaintenanceModeMessage") {
+          $AssigmentDesktopsinMaintenanceModeOn = $AssigmentDesktopsinMaintenanceModeOn + ", " + $MetadataMapDictionary[$key]
+        }
+      }
+      "MaintenanceModeInfo: $AssigmentDesktopsinMaintenanceModeOn" | LogMe -display -progress
+      $tests.MaintenanceMode = "WARNING", $AssigmentDesktopsinMaintenanceModeOn
+    }
+    else { $tests.MaintenanceMode = "SUCCESS", "OFF" }
+
+    #DesktopsUnregistered
+    $AssigmentDesktopsUnregistered = $Assigment | ForEach-Object{ $_.DesktopsUnregistered }
+    "DesktopsUnregistered: $AssigmentDesktopsUnregistered" | LogMe -display -progress    
+    if ($AssigmentDesktopsUnregistered -gt 0 ) {
+      "DesktopsUnregistered > 0 ! ($AssigmentDesktopsUnregistered)" | LogMe -display -progress
+      $tests.DesktopsUnregistered = "WARNING", $AssigmentDesktopsUnregistered
+    } else {
+      $tests.DesktopsUnregistered = "SUCCESS", $AssigmentDesktopsUnregistered
+      "DesktopsUnregistered <= 0 ! ($AssigmentDesktopsUnregistered)" | LogMe -display -progress
+    }
+      
+    #Fill $tests into array
+    $AssigmentsResults.$FullDeliveryGroupNameIncAdminFolder = $tests
+  }
+  " --- " | LogMe -display -progress
+}
+
+#== Get Broker Tags ================================================================================================
+"Get Boker Tags ##############################################################################" | LogMe -display -progress
+
+# The Broker Tags are collected to create the $ActualExcludedBrokerTags and $ActualIncludedBrokerTags arrays used for filtering
+
+$ActualExcludedBrokerTags = @()
+$ActualIncludedBrokerTags = @()
+$BrkrTagsResults = @{}
+$BrkrTags = $null
+If ($CitrixCloudCheck -ne 1) {
+  $BrkrTags = Get-BrokerTag -MaxRecordCount $maxmachines -AdminAddress $AdminAddress
+} Else {
+  $BrkrTags = Get-BrokerTag -MaxRecordCount $maxmachines
+}
+
+If ($null -ne $BrkrTags) {
+
+  foreach ($BrkrTag in $BrkrTags) {
+    $tests = @{}
+
+    #Name of Tag
+    $Tag = $BrkrTag | ForEach-Object{ $_.Name }
+    "Tag: $Tag" | LogMe -display -progress
+
+    $Found = $False
+    If ($ExcludedTags.Count -gt 0) {
+      If (!([String]::IsNullOrEmpty($ExcludedTags[0]))) {
+        ForEach ($ExcludedTag in $ExcludedTags) {
+          If ($Tag -Like $ExcludedTag) {
+            $Found = $True
+            break
+          }
+        }
+        if ($ExcludedTags -contains $Tag) {
+          $Found = $True
+        }
+      }
+    }
+    if ($Found) {
+      $ActualExcludedBrokerTags += $BrkrTag.Name
+      "Excluded Tag, skipping" | LogMe -display -progress
+    } else {
+
+      $ActualIncludedBrokerTags += $BrkrTag.Name
+
+      $Description = $BrkrTag.Description
+      "Description: $($BrkrTag.Description)" | LogMe -display -progress
+
+      #Fill $tests into array
+      $BrkrTagsResults.$Tag = $tests
+    }
+
+   " --- " | LogMe -display -progress
+  }
+} Else {
+  " --- " | LogMe -display -progress
+}
+
+#== Broker Connection Failure Results ===============================================================================
+"Check Broker Connection Failures #############################################################" | LogMe -display -progress
+
+$BrokerConnectionLogResults = @{}
+
+# Get the total FAILED Connections from the last x hours
+$BrokerConnectionFailuresForLastxHours = [DateTime]::Now - [TimeSpan]::FromHours($BrokerConnectionFailuresinHours)
+
+$BrkrConFailures = $null
+If ($CitrixCloudCheck -ne 1) {
+  $BrkrConFailures = Get-BrokerConnectionLog -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -Filter {BrokeringTime -gt $BrokerConnectionFailuresForLastxHours -and ConnectionFailureReason -ne 'None' -and ConnectionFailureReason -ne $null}
+} Else {
+  $BrkrConFailures = Get-BrokerConnectionLog -MaxRecordCount $maxmachines -Filter {BrokeringTime -gt $BrokerConnectionFailuresForLastxHours -and ConnectionFailureReason -ne 'None' -and ConnectionFailureReason -ne $null}
+}
+
+If ($null -ne $BrkrConFailures) {
+
+  foreach ($BrkrConFailure in $BrkrConFailures) {
+    $tests = @{}
+
+    #Name of HypervisorConnection
+    $MachineDNSName = $BrkrConFailure.MachineDNSName
+    "MachineDNSName: $($BrkrConFailure.MachineDNSName)" | LogMe -display -progress
+
+    $validMachine = $null
+    If ($CitrixCloudCheck -ne 1) {
+      $validMachine = Get-BrokerMachine -DNSName $MachineDNSName -AdminAddress $AdminAddress | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+    } Else {
+      $validMachine = Get-BrokerMachine -DNSName $MachineDNSName | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+    }
+    If ($null -eq $validMachine) {
+      "Excluded, skipping this machine as it's in either the ExludedCatalogs, ExcludedDeliveryGroups and ExcludedTags" | LogMe -display -progress
+    } Else {
+
+      $BrokeringTime = $BrkrConFailure.BrokeringTime
+      "BrokeringTime: $($BrkrConFailure.BrokeringTime)" | LogMe -display -progress
+      $tests.BrokeringTime = "NEUTRAL", $BrokeringTime
+
+      $ConnectionFailureReason = $BrkrConFailure.ConnectionFailureReason
+      "ConnectionFailureReason: $($BrkrConFailure.ConnectionFailureReason)" | LogMe -display -progress
+      $tests.ConnectionFailureReason = "WARNING", $ConnectionFailureReason
+
+      $BrokeringUserName = $BrkrConFailure.BrokeringUserName
+      "BrokeringUserName: $($BrkrConFailure.BrokeringUserName)" | LogMe -display -progress
+      $tests.BrokeringUserName = "NEUTRAL", $BrokeringUserName
+
+      $BrokeringUserUPN = $BrkrConFailure.BrokeringUserUPN
+      "BrokeringUserUPN: $($BrkrConFailure.BrokeringUserUPN)" | LogMe -display -progress
+      $tests.BrokeringUserUPN = "NEUTRAL", $BrokeringUserUPN
+
+      #Fill $tests into array
+      $BrokerConnectionLogResults.$MachineDNSName = $tests
+    }
+   " --- " | LogMe -display -progress
+  }
+} Else {
+  " --- " | LogMe -display -progress
+}
+
+#== Hypervisor Connection Check =====================================================================================
+"Check Hypervisor Connections #################################################################" | LogMe -display -progress
+
+$HypervisorConnectionResults = @{}
+
+$BrkrHvsCons = $null
+If ($CitrixCloudCheck -ne 1) {
+  $BrkrHvsCons = Get-Brokerhypervisorconnection -AdminAddress $AdminAddress
+} Else {
+  $BrkrHvsCons = Get-Brokerhypervisorconnection | Select Name, State, IsReady, MachineCount, FaultState, FaultReason, TimeFaultStateEntered, FaultStateDuration, MetadataMap
+}
+
+If ($null -ne $BrkrHvsCons) {
+  foreach ($BrkrHvsCon in $BrkrHvsCons) {
+    $tests = @{}
+
+    #Name of HypervisorConnection
+    $HypervisorConnectionName = $BrkrHvsCon.Name
+    "HypervisorConnection: $HypervisorConnectionName" | LogMe -display -progress
+    $tests.HypervisorConnection = "NEUTRAL", $HypervisorConnectionName
+
+    #State
+    $BrkrHvsConState = $BrkrHvsCon.State
+    "State: $($BrkrHvsConState)" | LogMe -display -progress
+    If ($BrkrHvsConState -eq "On") {
+      $tests.State = "NEUTRAL", $BrkrHvsCon.State
+    } ElseIf ($BrkrHvsConState -eq "InMaintenanceMode") {
+      $objMaintenance = $null
+      Try {
+        $objMaintenance = $Maintenance | Where-Object { $_.TargetName.ToUpper() -eq $BrkrHvsCon.Name.ToUpper() } | Select-Object -First 1
+      }
+      Catch {
+        # Avoid the error "The property 'TargetName' cannot be found on this object."
+      }
+      If ($null -ne $objMaintenance){$BrkrHvsConState = ("InMaintenanceMode, " + $objMaintenance.User)} Else {$BrkrHvsConState = "InMaintenanceMode"}
+      # The Get-LogLowLevelOperation cmdlet will tell us who placed a Delivery Group into maintanance mode. However, the Get-Brokerhypervisorconnection
+      # cmdlet will provide the MaintenanceReason, where the underlying reason, if manually entered, is stored in the MetadataMap property as part of a
+      # Dictionary object.
+      $MetadataMapDictionary = $BrkrHvsCon | ForEach-Object{ $_.MetadataMap }
+      foreach ($key in $MetadataMapDictionary.Keys) {
+        if ($key -eq "MaintenanceModeMessage") {
+          $BrkrHvsConState = $BrkrHvsConState + ", " + $MetadataMapDictionary[$key]
+        }
+      }
+      "MaintenanceModeInfo: $BrkrHvsConState" | LogMe -display -progress
+      $tests.State = "WARNING", $BrkrHvsConState
+    } Else {
+      $tests.State = "ERROR", $BrkrHvsCon.State
+    }
+
+    "IsReady: $($BrkrHvsCon.IsReady)" | LogMe -display -progress
+    If ($BrkrHvsCon.IsReady) {
+      $tests.IsReady = "NEUTRAL", $BrkrHvsCon.IsReady
+    } Else {
+      $tests.IsReady = "ERROR", $BrkrHvsCon.IsReady
+    }
+
+    "MachineCount: $($BrkrHvsCon.MachineCount)" | LogMe -display -progress
+    $tests.MachineCount = "NEUTRAL", $BrkrHvsCon.MachineCount
+
+    Try {
+      "FaultState: $($BrkrHvsCon.FaultState)" | LogMe -display -progress
+      If ($BrkrHvsCon.FaultState -eq "None") {
+        $tests.FaultState = "NEUTRAL", $BrkrHvsCon.FaultState
+      } Else {
+        $tests.FaultState = "ERROR", $BrkrHvsCon.FaultState
+      }
+    }
+    Catch {
+      # Not all Broker Connections will have these properties
+      "FaultState: Property does not exist on this object" | LogMe -display -progress
+    }
+    Try {
+      "FaultReason: $($BrkrHvsCon.FaultReason)" | LogMe -display -progress
+      $tests.FaultReason = "NEUTRAL", $BrkrHvsCon.FaultReason
+    }
+    Catch {
+      # Not all Broker Connections will have these properties
+      "FaultReason: Property does not exist on this object" | LogMe -display -progress
+    }
+    Try {
+      "TimeFaultStateEntered: $($BrkrHvsCon.TimeFaultStateEntered)" | LogMe -display -progress
+      $tests.TimeFaultStateEntered = "NEUTRAL", $BrkrHvsCon.TimeFaultStateEntered
+    }
+    Catch {
+      # Not all Broker Connections will have these properties
+      "TimeFaultStateEntered: Property does not exist on this object" | LogMe -display -progress
+    }
+    Try {
+      "FaultStateDuration: $($BrkrHvsCon.FaultStateDuration)" | LogMe -display -progress
+      $tests.FaultStateDuration = "NEUTRAL", $BrkrHvsCon.FaultStateDuration
+    }
+    Catch {
+      # Not all Broker Connections will have these properties
+      "FaultStateDuration: Property does not exist on this object" | LogMe -display -progress
+    }
+
+    #Fill $tests into array
+    $HypervisorConnectionResults.$HypervisorConnectionName = $tests
+
+   " --- " | LogMe -display -progress
+  }
+} Else {
+  " --- " | LogMe -display -progress
+}
+
+#==============================================================================================
+# Start of VDI (single-session) Check
+#==============================================================================================
+
+"Check VDI (single-session) Desktops #########################################################" | LogMe -display -progress
+
+" " | LogMe -display -progress
+
+if($ShowDesktopTable -eq 1 ) {
+
+  If (($ActualExcludedCatalogs | Measure-Object).Count -gt 0) {
+    "Excluding machines from the following Catalogs from these tests..." | LogMe -display -progress
+    ForEach ($ActualExcludedCatalog in $ActualExcludedCatalogs) {
+      "- $ActualExcludedCatalog" | LogMe -display -progress
+    }
+    " " | LogMe -display -progress
+  }
+  If (($ActualExcludedDeliveryGroups | Measure-Object).Count -gt 0) {
+    "Excluding machines from the following Delivery Groups from these tests..." | LogMe -display -progress
+    ForEach ($ActualExcludedDeliveryGroup in $ActualExcludedDeliveryGroups) {
+      "- $ActualExcludedDeliveryGroup" | LogMe -display -progress
+    }
+    " " | LogMe -display -progress
+  }
+  If (($ActualExcludedBrokerTags | Measure-Object).Count -gt 0) {
+    "Excluding machines with the following Tags from these tests..." | LogMe -display -progress
+    ForEach ($ActualExcludedBrokerTag in $ActualExcludedBrokerTags) {
+      "- $ActualExcludedBrokerTag" | LogMe -display -progress
+    }
+    " " | LogMe -display -progress
+  }
+
+  $allResults = @{}
+  $ErrorVDI = 0
+
+  If ($CitrixCloudCheck -ne 1) {
+    $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -Filter "SessionSupport -eq 'SingleSession'" | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  } Else {
+    $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -Filter "SessionSupport -eq 'SingleSession'" | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  }
+
+  If (($machines | Measure-Object).Count -eq 0) {
+    "There are no machines to process" | LogMe -display -progress
+    " " | LogMe -display -progress
+  }
+
+  foreach($machine in $machines) {
+    $tests = @{}
+    $ErrorVDI = 0
+  
+    # Column Name of VDI
+    $machineDNS = $machine | ForEach-Object{ $_.DNSName }
+    "Machine: $machineDNS" | LogMe -display -progress
+
+    # Column CatalogName
+    $CatalogName = $machine | ForEach-Object{ $_.CatalogName }
+    "Catalog: $CatalogName" | LogMe -display -progress
+    $tests.CatalogName = "NEUTRAL", $CatalogName
+
+    # Column DeliveryGroup
+    $DeliveryGroup = $machine | ForEach-Object{ $_.DesktopGroupName }
+    "DeliveryGroup: $DeliveryGroup" | LogMe -display -progress
+    $tests.DeliveryGroup = "NEUTRAL", $DeliveryGroup
+
+    # Column Powerstate
+    $Powered = $machine | ForEach-Object{ $_.PowerState }
+    "PowerState: $Powered" | LogMe -display -progress
+    $tests.PowerState = "NEUTRAL", $Powered
+    if ($Powered -eq "Off" -OR $Powered -eq "Unknown") {
+      $tests.PowerState = "NEUTRAL", $Powered
+    }
+    if ($Powered -eq "On") {
+      $tests.PowerState = "SUCCESS", $Powered
+    }
+
+    # Column displaymode when a User has a Session
+    $sessionUser = $machine | ForEach-Object{ $_.SessionUserName }
+
+    if ($Powered -eq "On" -OR $Powered -eq "Unknown" -OR $Powered -eq "Unmanaged") {
+
+      $IsPingable = Test-Ping -Target:$machineDNS -Timeout:200 -Count:3
+      # Column Ping
+      If ($IsPingable -eq "SUCCESS") {
+        $tests.Ping = "SUCCESS", $IsPingable
+      } Else {
+        $tests.Ping = "NORMAL", $IsPingable
+      }
+      "Is Pingable: $IsPingable" | LogMe -display -progress
+
+      $IsWinRMAccessible = IsWinRMAccessible -hostname:$machineDNS
+      # Column WinRM
+      If ($IsWinRMAccessible) {
+        $tests.WinRM = "SUCCESS", $IsWinRMAccessible
+      } Else {
+        $tests.WinRM = "WARNING", $IsWinRMAccessible
+      }
+      "Can connect via WinRM: $IsWinRMAccessible" | LogMe -display -progress
+
+      $IsWMIAccessible = IsWMIAccessible -hostname:$machineDNS -timeoutSeconds:20
+      # Column WMI
+      If ($IsWMIAccessible) {
+        $tests.WMI= "SUCCESS", $IsWMIAccessible
+      } Else {
+        $tests.WMI = "WARNING", $IsWMIAccessible
+      }
+      "Can connect via WMI: $IsWMIAccessible" | LogMe -display -progress
+
+      $IsUNCPathAccessible = (IsUNCPathAccessible -hostname:$machineDNS).Success
+      # Column UNC
+      If ($IsUNCPathAccessible) {
+        $tests.UNC= "SUCCESS", $IsUNCPathAccessible
+      } Else {
+        $tests.UNC = "WARNING", $IsUNCPathAccessible
+      }
+      "Can connect via UNC: $IsUNCPathAccessible" | LogMe -display -progress
+
+      if ($IsWinRMAccessible -OR $IsWMIAccessible -AND $machineDNS -NotLike "AAD-*") {
+
+        If ($IsWinRMAccessible) {
+          $UseWinRM = $True
+        } Else {
+          $UseWinRM = $False
+        }
+
+        #==============================================================================================
+        #  Column Uptime
+        #==============================================================================================
+        $hostUptime = Get-UpTime -hostname:$machineDNS -UseWinRM:$UseWinRM
+        If ($null -ne $hostUptime) {
+          if ($hostUptime.TimeSpan.days -gt ($maxUpTimeDays * 3)) {
+            "reboot warning, last reboot: {0:D}" -f $hostUptime.LBTime | LogMe -display -error
+            $tests.Uptime = "ERROR", $hostUptime.TimeSpan.days
+            $ErrorVDI = $ErrorVDI + 1
+          } elseif ($hostUptime.TimeSpan.days -gt $maxUpTimeDays) {
+            "reboot warning, last reboot: {0:D}" -f $hostUptime.LBTime | LogMe -display -warning
+            $tests.Uptime = "WARNING", $hostUptime.TimeSpan.days
+            $ErrorVDI = $ErrorVDI + 1
+          } else { 
+            "Uptime: $($hostUptime.TimeSpan.days)"  | LogMe -display -progress
+            $tests.Uptime = "SUCCESS", $hostUptime.TimeSpan.days
+          }
+        } else {
+          "Unable to get host uptime" | LogMe -display -error
+        }
+
+        # Column OSBuild 
+        $WinEntMultisession = $False
+        $return = Get-OSVersion -hostname:$machineDNS -UseWinRM:$UseWinRM
+        If ($return.Error -eq "Success") {
+          $tests.OSBuild = "NEUTRAL", $return.Version
+          "OS Caption: $($return.Caption)" | LogMe -display -progress
+          If ($return.Caption -like "*Enterprise*" -AND $return.Caption -like "*multi-session*") {
+            $WinEntMultisession = $True
+          }
+          "OS Version: $($return.Version)" | LogMe -display -progress
+        } Else {
+          $tests.OSBuild = "ERROR", $return.Version
+          "OS Test: $($return.Error)" | LogMe -display -error
+        }
+
+        ################ Start PVS SECTION ###############
+
+        If ($IsUNCPathAccessible) {
+          $PersonalityInfo = Get-PersonalityInfo -computername:$machineDNS
+          $wcdrive = "D"
+          If ($PersonalityInfo.IsPVS -OR $PersonalityInfo.IsMCS) {
+            If ($PersonalityInfo.IsPVS ) { $wcdrive = $PvsWriteCacheDrive }
+            If ($PersonalityInfo.IsMCS ) { $wcdrive = $MCSIOWriteCacheDrive }
+            $WriteCacheDriveInfo = Get-WriteCacheDriveInfo -computername:$machineDNS -IsPVS:$PersonalityInfo.IsPVS -IsMCS:$PersonalityInfo.IsMCS -wcdrive:$wcdrive -UseWinRM:$UseWinRM
+
+            If ($PersonalityInfo.IsPVS) {
+              $tests.IsPVS = "SUCCESS", $PersonalityInfo.IsPVS
+              $PersonalityInfo.Output_To_Log1 | LogMe -display -progress
+              $tests.WriteCacheType = $PersonalityInfo.Output_For_HTML1, $PersonalityInfo.PVSCacheType
+              $tests.PVSvDiskName = "NORMAL", $PersonalityInfo.PVSDiskName
+              "Image Type: PVS"  | LogMe -display -progress
+              "PVS vDisk Name: $($PersonalityInfo.PVSDiskName)"  | LogMe -display -progress
+            }
+            If ($PersonalityInfo.IsMCS) {
+              $tests.IsMCS = "SUCCESS", $PersonalityInfo.IsMCS
+              "Image Type: MCS"  | LogMe -display -progress
+            }
+            If ($PersonalityInfo.IsPVS -OR $PersonalityInfo.IsMCS) {
+              $tests.DiskMode = "NEUTRAL", $PersonalityInfo.DiskMode
+              "DiskMode: $($PersonalityInfo.DiskMode)"  | LogMe -display -progress
+            } Else {
+              "This is a standalone VDA"  | LogMe -display -progress
+            }
+
+            $tests.WCdrivefreespace = $WriteCacheDriveInfo.Output_For_HTML2, $WriteCacheDriveInfo.WCdrivefreespace
+            if (($WriteCacheDriveInfo.Output_To_Log2 -like "*normal*") -OR ($WriteCacheDriveInfo.Output_To_Log2 -like "*does not exist")) {
+              $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -progress
+            }
+            elseif ($WriteCacheDriveInfo.Output_To_Log2 -like "*low*") {
+              $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -warning
+            }
+            else {
+              $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -error
+            }
+
+            If ($WriteCacheDriveInfo.vhdxSize_inMB -ne "N/A") {
+              $CacheDiskMB = [long]($WriteCacheDriveInfo.vhdxSize_inMB)
+              $CacheDiskGB = ($CacheDiskMB / 1024)
+              "Write Cache file size: {0:n3} MB" -f($CacheDiskMB) | LogMe -display
+              "Write Cache file size: {0:n3} GB" -f($CacheDiskMB / 1024) | LogMe -display
+              "Write Cache max size: {0:n2} GB" -f($WriteCacheMaxSizeInGB) | LogMe -display
+              if ($CacheDiskGB -lt ($WriteCacheMaxSizeInGB * 0.5)) {
+                # If the cache file is less than 50% the max size, flag as all good
+                "WriteCache file size is low" | LogMe
+                 $tests.vhdxSize_inGB = "SUCCESS", "{0:n3} GB" -f($CacheDiskGB)
+              }
+              elseif ($CacheDiskGB -lt ($WriteCacheMaxSizeInGB * 0.8)) {
+                # If the cache file is less than 80% the max size, flag as a warning
+                "WriteCache file size moderate" | LogMe -display -warning
+                $tests.vhdxSize_inGB = "WARNING", "{0:n3} GB" -f($CacheDiskGB)
+              }
+              else {
+                # Flag as an error when 80% or greater
+                "WriteCache file size is high" | LogMe -display -error
+                $tests.vhdxSize_inGB = "ERROR", "{0:n3} GB" -f($CacheDiskGB)
+              }
+            } Else {
+              $tests.vhdxSize_inGB = $WriteCacheDriveInfo.Output_For_HTML3, $WriteCacheDriveInfo.vhdxSize_inMB
+            }
+            if (($WriteCacheDriveInfo.Output_To_Log3 -like "*size is*") -OR ($WriteCacheDriveInfo.Output_To_Log3 -like "*N/A")) {
+              $WriteCacheDriveInfo.Output_To_Log3 | LogMe -display -progress
+            }
+            else {
+              $WriteCacheDriveInfo.Output_To_Log3 | LogMe -display -error
+            }
+
+            If ($PersonalityInfo.IsMCS -AND $WriteCacheDriveInfo.Output_To_Log2 -Like "*Failed to connect") {
+              "It is assumed this is not using MCSIO" | LogMe -display -progress
+              # If this is an Azure VM, Machine Creation Services (MCS) supports using Azure Ephemeral OS disk for
+              # non-persistent VMs. Ephemeral disks should be fast IO because it uses temp storage on the local host.
+              # MCSIO is not compatible with Azure Ephemeral Disks, and is therefore not an available configuration.
+            }
+          }
+        } Else {
+          # Cannot access UNC path so cannot test for the Personality.ini or MCSPersonality.ini
+        }
+
+        ################ End PVS SECTION ###############
+
+        ################ Start Nvidia License Check SECTION ###############
+
+        $NvidiaLicensedDriver = $False
+        If ($IsWMIAccessible) {
+          $return = Get-NvidiaDetails -computername:$machineDNS
+
+          If ($return.Display_Driver_Ver -ne "N/A" -AND $return.Licensable_Product -ne "N/A") {
+            $tests.NvidiaDriverVer = "NEUTRAL", $return.Display_Driver_Ver
+            $NvidiaLicensedDriver = $True
+          }
+        } Else {
+          # WMI is not accessible
+        }
+        If ($NvidiaLicensedDriver) {
+          If ($IsUNCPathAccessible) {
+            $return = Check-NvidiaLicenseStatus -computername:$machineDNS
+            $tests.nvidiaLicense = $return.Output_For_HTML, $return.Licensed
+            if (($return.Output_To_Log -like "*successfully") -OR ($return.Output_To_Log -like "*does not exist") -OR ($return.Output_To_Log -like "*N/A")) {
+              $return.Output_To_Log | LogMe -display -progress
+            } else {
+              $return.Output_To_Log | LogMe -display -error
+            }
+          } Else {
+            # UNC Path is not accessible
+          }
+        } Else {
+          # This host does not contain an Nvidia licensable product
+        }
+
+        ################ End Nvidia License Check SECTION ###############
+
+        $displaymode = "N/A"
+        if ( $ShowGraphicsMode -eq "1" ) {
+
+          if ($sessionUser -notlike "" )
+          {
+            $displaymode = "unknown"
+            $displaymodeTable = @{}
+
+            #H264
+            $displaymodeTable.H264Active = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr IsActive=*
+
+            # H.264 Pure
+            #Component_Encoder=DeepCompressionV2Encoder	
+            $displaymodeTable.Component_Encoder_DeepCompressionEncoder = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=DeepCompressionEncoder
+            if ($displaymodeTable.Component_Encoder_DeepCompressionEncoder -eq "Component_Encoder=DeepCompressionEncoder")
+            {
+              $Displaymode = "Pure H.264"
+            }
+	
+            # Thinwire H.264 + Lossless (true native H264)
+            #Component_Encoder=DeepCompressionV2Encoder
+            $displaymodeTable.Component_Encoder_DeepCompressionV2Encoder = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=DeepCompressionV2Encoder
+            if ($displaymodeTable.Component_Encoder_DeepCompressionV2Encoder -eq "Component_Encoder=DeepCompressionV2Encoder")
+            {
+              $Displaymode = "H.264 + Lossless"
+            }
+	
+            #H.264 Compatibility Mode (ThinWire +)
+            #Component_Encoder=CompatibilityEncoder
+            $displaymodeTable.Component_Encoder_CompatibilityEncoder = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=CompatibilityEncoder
+            if ($displaymodeTable.Component_Encoder_CompatibilityEncoder -eq "Component_Encoder=CompatibilityEncoder")
+            {
+              $Displaymode = "H.264 Compatibility Mode (ThinWire +)"
+            }
+		
+            # Selective H.264 Is configured
+            $displaymodeTable.Component_Encoder_Deprecated = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=Deprecated
+            #Component_Encoder=Deprecated
+	
+            #fall back to H.264 Compatibility Mode (ThinWire +)
+            # Auf Receiver selective nicht geht:
+            $displaymodeTable.Component_VideoCodecUse_None = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_VideoCodecUse=None
+            if ($displaymodeTable.Component_VideoCodecUse_None -eq "Component_VideoCodecUse=None")
+            {
+              $Displaymode = "Compatibility Mode (ThinWire +), selective H264 maybe not supported by Receiver)"
+            }
+
+            #Is used
+            $displaymodeTable.Component_VideoCodecUse_Active = wmic /node:`'$machineDNS`' /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr 'Component_VideoCodecUse=For actively changing regions'			
+            if ($displaymodeTable.Component_VideoCodecUse_Active -eq "Component_VideoCodecUse=For actively changing regions")
+            {
+              $Displaymode = "Selective H264"
+            }
+
+            #Legacy Graphics
+            $displaymodeTable.LegacyGraphicsIsActive = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_graphics get /value | findstr IsActive=*
+            $displaymodeTable.Policy_LegacyGraphicsMode = wmic  /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_graphics get /value | findstr Policy_LegacyGraphicsMode=TRUE
+            if ($displaymodeTable.LegacyGraphicsIsActive -eq "IsActive=Active")
+            {
+              $Displaymode = "Legacy Graphics"
+            }	
+
+            #DCR
+            $displaymodeTable.DcrIsActive = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_d3d get /value | findstr IsActive=*
+            $displaymodeTable.DcrAERO = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_d3d get /value | findstr Policy_AeroRedirection=*
+            if ($displaymodeTable.DcrAERO -eq "Policy_AeroRedirection=TRUE")
+            {
+              $Displaymode = "DCR"
+            }
+          }
+          $tests.displaymode = "NEUTRAL", $displaymode
+
+        } # Close off $ShowGraphicsMode
+
+        ## EDT MTU (set by default.ica or MTUDiscovery)
+        If ($UseWinRM) {
+          # Execute the "C:\Program Files (x86)\Citrix\HDX\bin\CtxSession.exe" in the remote session
+          Try {
+            $EDTMTU = Invoke-Command -ComputerName $machineDNS -ErrorAction Stop -ScriptBlock {(ctxsession -v | findstr "EDT MTU:" | select -Last 1).split(":")[1].trimstart()}
+            $tests.EDT_MTU = "NEUTRAL", $EDTMTU
+            "EDT MTU Size is set to $EDTMTU" | LogMe -display -progress
+          }
+          Catch {
+            # ctxsession returns null for RDP sessions
+            $tests.EDT_MTU = "ERROR", "Failed"
+            "EDT MTU Size failed to return data" | LogMe -display -progress
+          }
+        } Else {
+          $tests.EDT_MTU = "ERROR", "Unknown"
+          "EDT MTU Size cannot be checked" | LogMe -display -progress
+        }
+
+      }#If can connect via WinRM or WMI
+      else {
+        $ErrorVDI = $ErrorVDI + 0 # No WinRM or WMI connectivity
+      } # Closing else cannot connect via WinRM or WMI
+
+    } # Close off $Powered -eq "On", "Unknown", or "Unmanaged"
+
+    # Column RegistrationState
+    $RegistrationState = $machine | ForEach-Object{ $_.RegistrationState }
+    "State: $RegistrationState" | LogMe -display -progress
+    if ($RegistrationState -ne "Registered") {
+      $tests.RegState = "ERROR", $RegistrationState
+      $ErrorVDI = $ErrorVDI + 1
+    }
+    else { $tests.RegState = "SUCCESS", $RegistrationState }
  
-# Column MaintenanceMode
-$MaintenanceMode = $machine | ForEach-Object{ $_.InMaintenanceMode }
-"MaintenanceMode: $MaintenanceMode" | LogMe -display -progress
-if ($MaintenanceMode) {
-	$objMaintenance = $Maintenance | Where-Object { $_.TargetName.ToUpper() -eq $machine.MachineName.ToUpper() } | Select-Object -First 1
-	If ($null -ne $objMaintenance){$MaintenanceModeOn = ("ON, " + $objMaintenance.User)} Else {$MaintenanceModeOn = "ON"}
-	"MaintenanceModeInfo: $MaintenanceModeOn" | LogMe -display -progress
-	$tests.MaintMode = "WARNING", $MaintenanceModeOn
-	$ErrorVDI = $ErrorVDI + 1
-}
-else { $tests.MaintMode = "SUCCESS", "OFF" }
+    # Column MaintenanceMode
+    $MaintenanceMode = $machine | ForEach-Object{ $_.InMaintenanceMode }
+    "MaintenanceMode: $MaintenanceMode" | LogMe -display -progress
+    if ($MaintenanceMode) {
+      $objMaintenance = $null
+      Try {
+        $objMaintenance = $Maintenance | Where-Object { $_.TargetName.ToUpper() -eq $machine.MachineName.ToUpper() } | Select-Object -First 1
+      }
+      Catch {
+        # Avoid the error "The property 'TargetName' cannot be found on this object."
+      }
+      If ($null -ne $objMaintenance){$MaintenanceModeOn = ("ON, " + $objMaintenance.User)} Else {$MaintenanceModeOn = "ON"}
+      # The Get-LogLowLevelOperation cmdlet will tell us who placed a machine into maintanance mode. However, the Get-BrokerMachine cmdlet
+      # will provide the MaintenanceReason, where the underlying reason, if manually entered, is stored in the MetadataMap property as part
+      # of a Dictionary object.
+      $MetadataMapDictionary = $machine | ForEach-Object{ $_.MetadataMap }
+      foreach ($key in $MetadataMapDictionary.Keys) {
+        if ($key -eq "MaintenanceModeMessage") {
+          $MaintenanceModeOn = $MaintenanceModeOn + ", " + $MetadataMapDictionary[$key]
+        }
+      }
+      "MaintenanceModeInfo: $MaintenanceModeOn" | LogMe -display -progress
+      $tests.MaintMode = "WARNING", $MaintenanceModeOn
+      $ErrorVDI = $ErrorVDI + 1
+    }
+    else { $tests.MaintMode = "SUCCESS", "OFF" }
   
-# Column HostedOn 
-$HostedOn = $machine | ForEach-Object{ $_.HostingServerName }
-"HostedOn: $HostedOn" | LogMe -display -progress
-$tests.HostedOn = "NEUTRAL", $HostedOn
+    # Column HostedOn 
+    $HostedOn = $machine | ForEach-Object{ $_.HostingServerName }
+    "HostedOn: $HostedOn" | LogMe -display -progress
+    $tests.HostedOn = "NEUTRAL", $HostedOn
 
-# Column VDAVersion AgentVersion
-$VDAVersion = $machine | ForEach-Object{ $_.AgentVersion }
-"VDAVersion: $VDAVersion" | LogMe -display -progress
-$tests.VDAVersion = "NEUTRAL", $VDAVersion
+    # Column VDAVersion AgentVersion
+    $VDAVersion = $machine | ForEach-Object{ $_.AgentVersion }
+    "VDAVersion: $VDAVersion" | LogMe -display -progress
+    $tests.VDAVersion = "NEUTRAL", $VDAVersion
 
-# Column AssociatedUserNames
-$AssociatedUserNames = $machine | ForEach-Object{ $_.AssociatedUserNames }
-"Assigned to $AssociatedUserNames" | LogMe -display -progress
-$tests.AssociatedUserNames = "NEUTRAL", $AssociatedUserNames
+    # Column AssociatedUserNames
+    $AssociatedUserNames = $machine | ForEach-Object{ $_.AssociatedUserNames }
+    "Assigned to $AssociatedUserNames" | LogMe -display -progress
+    $tests.AssociatedUserNames = "NEUTRAL", $AssociatedUserNames
 
-# Column Tags 
-$Tags = $machine | ForEach-Object{ $_.Tags }
-"Tags: $Tags" | LogMe -display -progress
-$tests.Tags = "NEUTRAL", $Tags
+    # Column Tags 
+    $Tags = $machine | ForEach-Object{ $_.Tags }
+    "Tags: $Tags" | LogMe -display -progress
+    $tests.Tags = "NEUTRAL", $Tags
 
-# Column MCSVDIImageOutOfDate
-$MCSVDIImageOutOfDate = $machine | ForEach-Object{ $_.ImageOutOfDate }
-"ImageOutOfDate: $MCSVDIImageOutOfDate" | LogMe -display -progress
-if ($MCSVDIImageOutOfDate -eq $true) { $tests.MCSImageOutOfDate = "ERROR", $MCSVDIImageOutOfDate }
-elseif ($MCSVDIImageOutOfDate -eq $false) { $tests.MCSImageOutOfDate = "SUCCESS", $MCSVDIImageOutOfDate  }
-else { $tests.MCSVDIImageOutOfDate = "NEUTRAL", $MCSVDIImageOutOfDate }
+    $ProvisioningType = ""
+    # The Machine Catalogs should exist in the $Catalogs variable, so test this first before collecting them again using the Get-BrokerCatalog cmdlet.
+    $GetCatalogs = $True
+    If (($Catalogs | Measure-Object).Count -gt 0) {
+      $ProvisioningType = ($Catalogs | Where-Object {$_.Name -eq $CatalogName} | Select-Object -ExpandProperty ProvisioningType)
+      $GetCatalogs = $False
+    }
+    If ($GetCatalogs) {
+      If ($CitrixCloudCheck -ne 1) { 
+        $ProvisioningType = (Get-BrokerCatalog -AdminAddress $AdminAddress -Name $CatalogName | Select-Object -ExpandProperty ProvisioningType)
+      } Else {
+        $ProvisioningType = (Get-BrokerCatalog -Name $CatalogName | Select-Object -ExpandProperty ProvisioningType)
+      }
+    }
+    If ($ProvisioningType -eq "MCS") {
+      # Column MCSImageOutOfDate
+      $MCSImageOutOfDate = $machine | ForEach-Object{ $_.ImageOutOfDate }
+      "ImageOutOfDate: $MCSImageOutOfDate" | LogMe -display -progress
+      if ($MCSImageOutOfDate -eq $true) { $tests.MCSImageOutOfDate = "ERROR", $MCSImageOutOfDate }
+      elseif ($MCSImageOutOfDate -eq $false) { $tests.MCSImageOutOfDate = "SUCCESS", $MCSImageOutOfDate  }
+      else { $tests.MCSImageOutOfDate = "NEUTRAL", $MCSImageOutOfDate }
+    }
 
+    # Column LastConnect
+    $yellow =((Get-Date).AddMonths(-1).ToString('yyyy-MM-dd HH:mm:s'))
+    $red =((Get-Date).AddMonths(-3).ToString('yyyy-MM-dd HH:mm:s'))
 
-## Column LastConnect
-$yellow =((Get-Date).AddMonths(-1).ToString('yyyy-MM-dd HH:mm:s'))
-$red =((Get-Date).AddMonths(-3).ToString('yyyy-MM-dd HH:mm:s'))
+    $machineLastConnect = $machine | ForEach-Object{ $_.LastConnectionTime }
 
-$machineLastConnect = $machine | ForEach-Object{ $_.LastConnectionTime }
+    if ([string]::IsNullOrWhiteSpace($machineLastConnect))
+    {
+      $tests.LastConnect = "NEUTRAL", "NO DATA"
+    }
+    elseif ($machineLastConnect -lt $red)
+    {
+      "LastConnect: $machineLastConnect" | LogMe -display -ERROR
+      $tests.LastConnect = "ERROR", $machineLastConnect
+    } 	
+    elseif ($machineLastConnect -lt $yellow)
+    {
+      "LastConnect: $machineLastConnect" | LogMe -display -WARNING
+      $tests.LastConnect = "WARNING", $machineLastConnect
+    }
+    else 
+    {
+      $tests.LastConnect = "SUCCESS", $machineLastConnect
+      "LastConnect: $machineLastConnect" | LogMe -display -progress
+    }
+    ## End Column LastConnect
 
-if ([string]::IsNullOrWhiteSpace($machineLastConnect))
-	{
-		$tests.LastConnect = "NEUTRAL", "NO DATA"
-	}
-elseif ($machineLastConnect -lt $red)
-	{
-		"LastConnect: $machineLastConnect" | LogMe -display -ERROR
-		$tests.LastConnect = "ERROR", $machineLastConnect
-	} 	
-elseif ($machineLastConnect -lt $yellow)
-	{
-		"LastConnect: $machineLastConnect" | LogMe -display -WARNING
-		$tests.LastConnect = "WARNING", $machineLastConnect
-	}
-else 
-	{
-		$tests.LastConnect = "SUCCESS", $machineLastConnect
-		"LastConnect: $machineLastConnect" | LogMe -display -progress
-	}
-## End Column LastConnect
+    # Fill $tests into array if error occured OR $ShowOnlyErrorVDI = 0
+    # Check if error exists on this vdi
+    if ($ShowOnlyErrorVDI -eq 0 ) { $allResults.$machineDNS = $tests }
+    else {
+      if ($ErrorVDI -gt 0) { $allResults.$machineDNS = $tests }
+      else { "$machineDNS is ok, no output into HTML-File" | LogMe -display -progress }
+    }
 
-## EDT MTU (set by default.ica or MTUDiscovery)
-$EDTMTU = Invoke-Command -ComputerName $machineDNS -ScriptBlock {(ctxsession -v | findstr "EDT MTU:" | select -Last 1).split(":")[1].trimstart()}
-$tests.EDT_MTU = "NEUTRAL", $EDTMTU
-"EDT MTU Size is set to $EDTMTU" | LogMe -display -progress
+    " --- " | LogMe -display -progress
 
+  } # Close off foreach $machine
 
+} # Close off $ShowDesktopTable
 
-# Column displaymode when a User has a Session
-$sessionUser = $machine | ForEach-Object{ $_.SessionUserName }
-
-$displaymode = "N/A"
-if ( $ShowGraphicsMode -eq "1" ) {
-
-if ($sessionUser -notlike "" )
-{
-
-$displaymode = "unknown"
-$displaymodeTable = @{}
-
-
-#H264
-$displaymodeTable.H264Active = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr IsActive=*
-
-    # H.264 Pure
-    #Component_Encoder=DeepCompressionV2Encoder	
-	$displaymodeTable.Component_Encoder_DeepCompressionEncoder = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=DeepCompressionEncoder
-	if ($displaymodeTable.Component_Encoder_DeepCompressionEncoder -eq "Component_Encoder=DeepCompressionEncoder")
-	{
-	$Displaymode = "Pure H.264"
-	}
-	
-	# Thinwire H.264 + Lossless (true native H264)
-    #Component_Encoder=DeepCompressionV2Encoder
-	$displaymodeTable.Component_Encoder_DeepCompressionV2Encoder = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=DeepCompressionV2Encoder
-	if ($displaymodeTable.Component_Encoder_DeepCompressionV2Encoder -eq "Component_Encoder=DeepCompressionV2Encoder")
-	{
-	$Displaymode = "H.264 + Lossless"
-	}
-	
-	#H.264 Compatibility Mode (ThinWire +)
-    #Component_Encoder=CompatibilityEncoder
-	$displaymodeTable.Component_Encoder_CompatibilityEncoder = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=CompatibilityEncoder
-	if ($displaymodeTable.Component_Encoder_CompatibilityEncoder -eq "Component_Encoder=CompatibilityEncoder")
-	{
-	$Displaymode = "H.264 Compatibility Mode (ThinWire +)"
-	}
-		
-	# Selective H.264 Is configured
-	$displaymodeTable.Component_Encoder_Deprecated = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=Deprecated
-	#Component_Encoder=Deprecated
-	
-		#fall back to H.264 Compatibility Mode (ThinWire +)
-		# Auf Receiver selective nicht geht:
-		$displaymodeTable.Component_VideoCodecUse_None = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_VideoCodecUse=None
-		
-		if ($displaymodeTable.Component_VideoCodecUse_None -eq "Component_VideoCodecUse=None")
-		{
-		$Displaymode = "Compatibility Mode (ThinWire +), selective H264 maybe not supported by Receiver)"
-		}
-			
-		#Is used
-		$displaymodeTable.Component_VideoCodecUse_Active = wmic /node:`'$machineDNS`' /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr 'Component_VideoCodecUse=For actively changing regions'			
-		if ($displaymodeTable.Component_VideoCodecUse_Active -eq "Component_VideoCodecUse=For actively changing regions")
-		{
-		$Displaymode = "Selective H264"
-		}
-
-#Legacy Graphics
-$displaymodeTable.LegacyGraphicsIsActive = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_graphics get /value | findstr IsActive=*
-$displaymodeTable.Policy_LegacyGraphicsMode = wmic  /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_graphics get /value | findstr Policy_LegacyGraphicsMode=TRUE
-if ($displaymodeTable.LegacyGraphicsIsActive -eq "IsActive=Active")
-	{
-	$Displaymode = "Legacy Graphics"
-	}	
-
-#DCR
-$displaymodeTable.DcrIsActive = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_d3d get /value | findstr IsActive=*
-$displaymodeTable.DcrAERO = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_d3d get /value | findstr Policy_AeroRedirection=*
-if ($displaymodeTable.DcrAERO -eq "Policy_AeroRedirection=TRUE")
-	{
-	$Displaymode = "DCR"
-	}
-}
-$tests.displaymode = "NEUTRAL", $displaymode
-
-
-
-
-}
-#-------------------------------------------------------------------------------------------------------------
-
-  
-  
-" --- " | LogMe -display -progress
-  
-# Fill $tests into array if error occured OR $ShowOnlyErrorVDI = 0
-# Check to see if the server is in an excluded folder path
-if ($ExcludedCatalogs -contains $CatalogName) {
-"$machineDNS in excluded folder - skipping" | LogMe -display -progress
-}
-else {
-# Check if error exists on this vdi
-if ($ShowOnlyErrorVDI -eq 0 ) { $allResults.$machineDNS = $tests }
-else {
-if ($ErrorVDI -gt 0) { $allResults.$machineDNS = $tests }
-else { "$machineDNS is ok, no output into HTML-File" | LogMe -display -progress }
-}
-}
-}
-}
 else { "Desktop Check skipped because ShowDesktopTable = 0 " | LogMe -display -progress }
-  
-# ======= XenApp Check ========
-"Check XenApp Servers ####################################################################################" | LogMe -display -progress
+
+"####################### Check END  ##########################################################" | LogMe -display -progress
+
+#==============================================================================================
+# End of VDI (single-session) Check
+#==============================================================================================
+
+#==============================================================================================
+# Start of XenApp/RDSH (multi-session) Check
+#==============================================================================================
+
+"Check XenApp/RDSH (multi-session) Servers ###################################################" | LogMe -display -progress
+
 " " | LogMe -display -progress
   
 # Check XenApp only if $ShowXenAppTable is 1
-#Skip2
+
 if($ShowXenAppTable -eq 1 ) {
-$allXenAppResults = @{}
-$tests = @{}
-$Catalogs = Get-BrokerCatalog -AdminAddress $AdminAddress
-foreach ($Catalog in $Catalogs) {
-  
-  
-  #Name of MachineCatalog
-  $CatalogName = $Catalog | ForEach-Object{ $_.Name }
 
-   if ($ExcludedCatalogs -like "*$CatalogName*" ) 
-  { 
-  "$CatalogName is excluded folder hence skipping" | LogMe -display -progress
+  If (($ActualExcludedCatalogs | Measure-Object).Count -gt 0) {
+    "Excluding machines from the following Catalogs from these tests..." | LogMe -display -progress
+    ForEach ($ActualExcludedCatalog in $ActualExcludedCatalogs) {
+      "- $ActualExcludedCatalog" | LogMe -display -progress
     }
-else 
-{
-"$CatalogName is available and processing" | LogMe -display -progress
+    " " | LogMe -display -progress
+  }
+  If (($ActualExcludedDeliveryGroups | Measure-Object).Count -gt 0) {
+    "Excluding machines from the following Delivery Groups from these tests..." | LogMe -display -progress
+    ForEach ($ActualExcludedDeliveryGroup in $ActualExcludedDeliveryGroups) {
+      "- $ActualExcludedDeliveryGroup" | LogMe -display -progress
+    }
+    " " | LogMe -display -progress
+  }
+  If (($ActualExcludedBrokerTags | Measure-Object).Count -gt 0) {
+    "Excluding machines with the following Tags from these tests..." | LogMe -display -progress
+    ForEach ($ActualExcludedBrokerTag in $ActualExcludedBrokerTags) {
+      "- $ActualExcludedBrokerTag" | LogMe -display -progress
+    }
+    " " | LogMe -display -progress
+  }
 
+  $allXenAppResults = @{}
+  $ErrorXA = 0
 
-  
-#$XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress | Where-Object {$_.SessionSupport -eq "MultiSession" -and @(compare $_.tags $ExcludedTags -IncludeEqual | ? {$_.sideindicator -eq '=='}).count -eq 0}
-$XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -MachineName "*" -CatalogName $CatalogName -AdminAddress $AdminAddress | Where-Object {$_.SessionSupport -eq "MultiSession" -and @(Compare-Object $_.tags $ExcludedTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and $_.catalogname -notin $ExcludedCatalogs}
-$Maintenance = Get-CitrixMaintenanceInfo -AdminAddress $AdminAddress
-  
-foreach ($XAmachine in $XAmachines) {
-$tests = @{}
-  
-# Column Name of Machine
-$machineDNS = $XAmachine | ForEach-Object{ $_.DNSName }
-"Machine: $machineDNS" | LogMe -display -progress
-  
-# Column CatalogNameName
-$CatalogName = $XAmachine | ForEach-Object{ $_.CatalogName }
-"Catalog: $CatalogName" | LogMe -display -progress
-$tests.CatalogName = "NEUTRAL", $CatalogName
+  If ($CitrixCloudCheck -ne 1) {
+    $XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -Filter "SessionSupport -eq 'MultiSession'"  | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  } Else {
+    $XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -Filter "SessionSupport -eq 'MultiSession'"  | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  }
 
-  
-# Ping Machine
-$result = Ping $machineDNS 100
-if ($result -eq "SUCCESS") {
-$tests.Ping = "SUCCESS", $result
-  
-#==============================================================================================
-# Column Uptime (Query over WMI - only if Ping successfull)
-$tests.WMI = "ERROR","Error"
+  If (($XAmachines | Measure-Object).Count -eq 0) {
+    "There are no machines to process" | LogMe -display -progress
+    " " | LogMe -display -progress
+  }
 
-$job = Start-Job -ScriptBlock $wmiOSBlock -ArgumentList $machineDNS
+  foreach ($XAmachine in $XAmachines) {
+    $tests = @{}
+    $ErrorXA = 0
 
-$wmi = Wait-job $job -Timeout 15 | Receive-Job
+    # Column Name of Machine
+    $machineDNS = $XAmachine | ForEach-Object{ $_.DNSName }
+    "Machine: $machineDNS" | LogMe -display -progress
 
-# Perform WMI related checks
-    if ($null -ne $wmi) {
-	    
-        $tests.WMI = "SUCCESS", "Success"
-	    
-        $LBTime=[Management.ManagementDateTimeConverter]::ToDateTime($wmi.Lastbootuptime)
-	    
-        [TimeSpan]$uptime=New-TimeSpan $LBTime $(get-date)
+    # Column CatalogNameName
+    $CatalogName = $XAmachine | ForEach-Object{ $_.CatalogName }
+    "Catalog: $CatalogName" | LogMe -display -progress
+    $tests.CatalogName = "NEUTRAL", $CatalogName
 
-	    if ($uptime.days -gt $maxUpTimeDays) {
-		    "reboot warning, last reboot: {0:D}" -f $LBTime | LogMe -display -warning
-		    
-            $tests.Uptime = "WARNING", $uptime.days
-	    }#If Uptime
-        else {
-		    
-            $tests.Uptime = "SUCCESS", $uptime.days
-	    }#Else Uptime
+    # Column DeliveryGroup
+    $DeliveryGroup = $XAmachine | ForEach-Object{ $_.DesktopGroupName }
+    "DeliveryGroup: $DeliveryGroup" | LogMe -display -progress
+    $tests.DeliveryGroup = "NEUTRAL", $DeliveryGroup
 
-#==============================================================================================
-#               CHECK CPU AND MEMORY USAGE 
-#==============================================================================================
+    # Column Powerstate
+    $Powered = $XAmachine | ForEach-Object{ $_.PowerState }
+    "PowerState: $Powered" | LogMe -display -progress
+    $tests.PowerState = "NEUTRAL", $Powered
+    if ($Powered -eq "Off" -OR $Powered -eq "Unknown") {
+      $tests.PowerState = "NEUTRAL", $Powered
+    }
+    if ($Powered -eq "On") {
+      $tests.PowerState = "SUCCESS", $Powered
+    }
 
-        # Check the AvgCPU value for 5 seconds
-        $XAAvgCPUval = CheckCpuUsage ($machineDNS)
-		#$VDtests.LoadBalancingAlgorithm = "SUCCESS", "LB is set to BEST EFFORT"} 
-			
-        if( [int] $XAAvgCPUval -lt 75) { "CPU usage is normal [ $XAAvgCPUval % ]" | LogMe -display; $tests.AvgCPU = "SUCCESS", "$XAAvgCPUval %" }
-		elseif([int] $XAAvgCPUval -lt 85) { "CPU usage is medium [ $XAAvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$XAAvgCPUval %" }   	
-		elseif([int] $XAAvgCPUval -lt 95) { "CPU usage is high [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %" }
-		elseif([int] $XAAvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err" }
-        else { "CPU usage is Critical [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %" }   
-		$XAAvgCPUval = 0
+    if ($Powered -eq "On" -OR $Powered -eq "Unknown" -OR $Powered -eq "Unmanaged") {
 
-        # Check the Physical Memory usage       
-        [int] $XAUsedMemory = CheckMemoryUsage ($machineDNS)
-        if( [int] $XAUsedMemory -lt 75) { "Memory usage is normal [ $XAUsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$XAUsedMemory %" }
-		elseif( [int] $XAUsedMemory -lt 85) { "Memory usage is medium [ $XAUsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$XAUsedMemory %" }   	
-		elseif( [int] $XAUsedMemory -lt 95) { "Memory usage is high [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" }
-		elseif( [int] $XAUsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
-        else { "Memory usage is Critical [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" }   
-		$XAUsedMemory = 0  
+      $IsPingable = Test-Ping -Target:$machineDNS -Timeout:100 -Count:3
+      # Column Ping
+      If ($IsPingable -eq "SUCCESS") {
+        $tests.Ping = "SUCCESS", $IsPingable
+      } Else {
+        $tests.Ping = "NORMAL", $IsPingable
+      }
+      "Is Pingable: $IsPingable" | LogMe -display -progress
 
-        foreach ($disk in $diskLettersWorkers)
-        {
-            # Check Disk Usage 
-            $HardDisk = CheckHardDiskUsage -hostname $machineDNS -deviceID "$($disk):"
-		    if ($null -ne $HardDisk) {	
-			    $XAPercentageDS = $HardDisk.PercentageDS
-			    $frSpace = $HardDisk.frSpace
+      $IsWinRMAccessible = IsWinRMAccessible -hostname:$machineDNS
+      # Column WinRM
+      If ($IsWinRMAccessible) {
+        $tests.WinRM = "SUCCESS", $IsWinRMAccessible
+      } Else {
+        $tests.WinRM = "WARNING", $IsWinRMAccessible
+      }
+      "Can connect via WinRM: $IsWinRMAccessible" | LogMe -display -progress
 
-			    If ( [int] $XAPercentageDS -gt 15) { "Disk Free is normal [ $XAPercentageDS % ]" | LogMe -display; $tests."$($disk)Freespace" = "SUCCESS", "$frSpace GB" } 
-			    ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests.CFreespace = "ERROR", "Err" }
-			    ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" } 
-			    ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests."$($disk)Freespace" = "WARNING", "$frSpace GB" }     
-			    Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" }
-			
-			    $XAPercentageDS = 0
-			    $frSpace = 0
-			    $HardDisk = $null
-		    }
-		
+      $IsWMIAccessible = IsWMIAccessible -hostname:$machineDNS -timeoutSeconds:20
+      # Column WMI
+      If ($IsWMIAccessible) {
+        $tests.WMI= "SUCCESS", $IsWMIAccessible
+      } Else {
+        $tests.WMI = "WARNING", $IsWMIAccessible
+      }
+      "Can connect via WMI: $IsWMIAccessible" | LogMe -display -progress
+
+      $IsUNCPathAccessible = (IsUNCPathAccessible -hostname:$machineDNS).Success
+      # Column UNC
+      If ($IsUNCPathAccessible) {
+        $tests.UNC= "SUCCESS", $IsUNCPathAccessible
+      } Else {
+        $tests.UNC = "WARNING", $IsUNCPathAccessible
+      }
+      "Can connect via UNC: $IsUNCPathAccessible" | LogMe -display -progress
+
+      if ($IsWinRMAccessible -OR $IsWMIAccessible) {
+
+        $UseWinRM = $False
+        If ($IsWinRMAccessible) {
+          $UseWinRM = $True
         }
 
-  
-" --- " | LogMe -display -progress
+        #==============================================================================================
+        #  Column Uptime
+        #==============================================================================================
+        $hostUptime = Get-UpTime -hostname:$machineDNS -UseWinRM:$UseWinRM
+        If ($null -ne $hostUptime) {
+          if ($hostUptime.TimeSpan.days -gt ($maxUpTimeDays * 3)) {
+            "reboot warning, last reboot: {0:D}" -f $hostUptime.LBTime | LogMe -display -error
+            $tests.Uptime = "ERROR", $hostUptime.TimeSpan.days
+            $ErrorXA = $ErrorXA + 1
+          } elseif ($hostUptime.TimeSpan.days -gt $maxUpTimeDays) {
+            "reboot warning, last reboot: {0:D}" -f $hostUptime.LBTime | LogMe -display -warning
+            $tests.Uptime = "WARNING", $hostUptime.TimeSpan.days
+            $ErrorXA = $ErrorXA + 1
+          } else {
+            "Uptime: $($hostUptime.TimeSpan.days)"  | LogMe -display -progress
+            $tests.Uptime = "SUCCESS", $hostUptime.TimeSpan.days
+          }
+        } else {
+          "Unable to get host uptime" | LogMe -display -error
+        }
 
+        #==============================================================================================
+        #  Check the AvgCPU value for 5 seconds
+        #==============================================================================================
+        $XAAvgCPUval = CheckCpuUsage -hostname:$machineDNS -UseWinRM:$UseWinRM
 
-    }#If WMI Not Null
-    else {
-	    
-        "WMI connection failed - check WMI for corruption" | LogMe -display -error
-	    
-        #Original Line v1.4.4
-        #stop-job $job
+        #$VDtests.LoadBalancingAlgorithm = "SUCCESS", "LB is set to BEST EFFORT"} 
 
-        #ALTERED LINES
-        $JobID = $Job.Id
+        if( [int] $XAAvgCPUval -lt 75) { "CPU usage is normal [ $XAAvgCPUval % ]" | LogMe -display; $tests.AvgCPU = "SUCCESS", "$XAAvgCPUval %" }
+        elseif([int] $XAAvgCPUval -lt 85) { "CPU usage is medium [ $XAAvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$XAAvgCPUval %" }   	
+        elseif([int] $XAAvgCPUval -lt 95) { "CPU usage is high [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %" }
+        elseif([int] $XAAvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err" }
+        else { "CPU usage is Critical [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %" }   
+        $XAAvgCPUval = 0
 
-        Get-Job -Id $JobID | Remove-Job -Force
+        #==============================================================================================
+        #  Check the Physical Memory usage 
+        #==============================================================================================
+        [int] $XAUsedMemory = CheckMemoryUsage -hostname:$machineDNS -UseWinRM:$UseWinRM
 
-        $XAAvgCPUval = 101 | LogMe -error; $tests.AvgCPU = "ERROR", "Wmi Err"
-    
-        $XAUsedMemory = 101 | LogMe -error; $tests.MemUsg = "ERROR", "Wmi Err"
-    
-            foreach ($disk in $diskLettersWorkers){
-        
-                $XAPercentageDS = 0 | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "Wmi Err"
+        if( [int] $XAUsedMemory -lt 75) { "Memory usage is normal [ $XAUsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$XAUsedMemory %" }
+        elseif( [int] $XAUsedMemory -lt 85) { "Memory usage is medium [ $XAUsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$XAUsedMemory %" }   	
+        elseif( [int] $XAUsedMemory -lt 95) { "Memory usage is high [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" }
+        elseif( [int] $XAUsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
+        else { "Memory usage is Critical [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" }   
+        $XAUsedMemory = 0  
 
-                $XAPercentageDS = 0
-		        $frSpace = 0
-		        $HardDisk = $null
-                
-            }#end of Foreach disk
-
-    }#Else WMI Not Null
-#----
-  
-# Column WriteCacheSize (only if Ping is successful)
-################ PVS SECTION ###############
-if (test-path "\\$machineDNS\c$\Personality.ini") {
-    # Test if PVS cache is of type "device's hard drive"
-    $PvsWriteCacheUNC = Join-Path "\\$machineDNS" ($PvsWriteCacheDrive+"$"+"\.vdiskcache")
-    
-    $CacheDiskOnHD = Test-Path $PvsWriteCacheUNC
-
-if ($CacheDiskOnHD -eq $True) {
-    
-    $CacheDiskExists = $True
-    
-    $CachePVSType = "Device HD"
-}
-else{
-  # Test if PVS cache is of type "device RAM with overflow to hard drive"
-  $PvsWriteCacheUNC = Join-Path "\\$machineDNS" ($PvsWriteCacheDrive+"$"+"\vdiskdif.vhdx")
-  
-  $CacheDiskRAMwithOverflow = Test-Path $PvsWriteCacheUNC
-  if ($CacheDiskRAMwithOverflow -eq $True) {
-    
-    $CacheDiskExists = $True
-    
-    $CachePVSType = "Device RAM with overflow to disk"
-  }
-  else {
-    
-    $CacheDiskExists = $False
-    
-    $CachePVSType = ""
-  }
-}
-
-if ($CacheDiskExists -eq $True) {
-    $CacheDisk = [long] ((get-childitem $PvsWriteCacheUNC -force).length)
-    $CacheDiskGB = "{0:n2}GB" -f($CacheDisk / 1GB)
-    "PVS Cache file size: {0:n2}GB" -f($CacheDisk / 1GB) | LogMe
-    #"PVS Cache max size: {0:n2}GB" -f($PvsWriteMaxSizeInGB / 1GB) | LogMe -display
-    $tests.WriteCacheType = "NEUTRAL", $CachePVSType
-    if ($CacheDisk -lt ($PvsWriteMaxSizeInGB * 0.5)) {
-        "WriteCache file size is low" | LogMe
-        $tests.WriteCacheSize = "SUCCESS", $CacheDiskGB
-    }
-    elseif ($CacheDisk -lt ($PvsWriteMaxSizeInGB * 0.8)) {
-        "WriteCache file size moderate" | LogMe -display -warning
-        $tests.WriteCacheSize = "WARNING", $CacheDiskGB
-    }
-    else {
-        "WriteCache file size is high" | LogMe -display -error
-        $tests.WriteCacheSize = "ERROR", $CacheDiskGB
-    }
-}
-$Cachedisk = 0
-}
-else {
-
-    $tests.WriteCacheSize = "SUCCESS", "N/A"
-}
-############## END PVS SECTION #############
-  
-# Check services
-$services = Get-Service -ComputerName $machineDNS
-  
-if (($services | Where-Object {$_.Name -eq "Spooler"}).Status -Match "Running") {
-    "SPOOLER service running..." | LogMe
-    $tests.Spooler = "SUCCESS","Success"
-}
-else {
-    "SPOOLER service stopped" | LogMe -display -error
-    $tests.Spooler = "ERROR","Error"
-}
-  
-if (($services | Where-Object {$_.Name -eq "cpsvc"}).Status -Match "Running") {
-    "Citrix Print Manager service running..." | LogMe
-    $tests.CitrixPrint = "SUCCESS","Success"
-}
-else {
-    "Citrix Print Manager service stopped" | LogMe -display -error
-    $tests.CitrixPrint = "ERROR","Error"
-}
+        #==============================================================================================
+        #  Check Disk Usage
+        #==============================================================================================
+        foreach ($disk in $diskLettersWorkers)
+        {
+          "Checking free space on $($disk):" | LogMe -display
+          $HardDisk = CheckHardDiskUsage -hostname:$machineDNS -deviceID:"$($disk):" -UseWinRM:$UseWinRM
+          if ($null -ne $HardDisk) {	
+            $XAPercentageDS = $HardDisk.PercentageDS
+            $frSpace = $HardDisk.frSpace
+            If ( [int] $XAPercentageDS -gt 15) { "Disk Free is normal [ $XAPercentageDS % ]" | LogMe -display; $tests."$($disk)Freespace" = "SUCCESS", "$frSpace GB" } 
+            ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests.CFreespace = "ERROR", "Err" }
+            ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" } 
+            ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests."$($disk)Freespace" = "WARNING", "$frSpace GB" }     
+            Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" }
+            $XAPercentageDS = 0
+            $frSpace = 0
+            $HardDisk = $null
+          }
+        }
  
- # Column OSBuild 
-$MachineOSVersion = "N/A"
-$MachineOSVersion = (Get-ItemProperty -Path "\\$machineDNS\C$\WINDOWS\System32\hal.dll" -ErrorAction SilentlyContinue).VersionInfo.FileVersion.Split()[0]
-$tests.OSBuild = "NEUTRAL", $MachineOSVersion
+        # Column OSBuild 
+        $WinEntMultisession = $False
+        $return = Get-OSVersion -hostname:$machineDNS -UseWinRM:$UseWinRM
+        If ($return.Error -eq "Success") {
+          $tests.OSBuild = "NEUTRAL", $return.Version
+          "OS Caption: $($return.Caption)" | LogMe -display -progress
+          If ($return.Caption -like "*Enterprise*" -AND $return.Caption -like "*multi-session*") {
+            $WinEntMultisession = $True
+          }
+          "OS Version: $($return.Version)" | LogMe -display -progress
+        } Else {
+          $tests.OSBuild = "ERROR", $return.Version
+          "OS Test: $($return.Error)" | LogMe -display -error
+        }
 
+        ################ Start PVS SECTION ###############
+
+        If ($IsUNCPathAccessible) {
+          $PersonalityInfo = Get-PersonalityInfo -computername:$machineDNS
+          $wcdrive = "D"
+          If ($PersonalityInfo.IsPVS -OR $PersonalityInfo.IsMCS) {
+            If ($PersonalityInfo.IsPVS ) { $wcdrive = $PvsWriteCacheDrive }
+            If ($PersonalityInfo.IsMCS ) { $wcdrive = $MCSIOWriteCacheDrive }
+            $WriteCacheDriveInfo = Get-WriteCacheDriveInfo -computername:$machineDNS -IsPVS:$PersonalityInfo.IsPVS -IsMCS:$PersonalityInfo.IsMCS -wcdrive:$wcdrive -UseWinRM:$UseWinRM
+
+            If ($PersonalityInfo.IsPVS) {
+              $tests.IsPVS = "SUCCESS", $PersonalityInfo.IsPVS
+              $PersonalityInfo.Output_To_Log1 | LogMe -display -progress
+              $tests.WriteCacheType = $PersonalityInfo.Output_For_HTML1, $PersonalityInfo.PVSCacheType
+              $tests.PVSvDiskName = "NORMAL", $PersonalityInfo.PVSDiskName
+              "Image Type: PVS"  | LogMe -display -progress
+              "PVS vDisk Name: $($PersonalityInfo.PVSDiskName)"  | LogMe -display -progress
+            }
+            If ($PersonalityInfo.IsMCS) {
+              $tests.IsMCS = "SUCCESS", $PersonalityInfo.IsMCS
+              "Image Type: MCS"  | LogMe -display -progress
+            }
+            If ($PersonalityInfo.IsPVS -OR $PersonalityInfo.IsMCS) {
+              $tests.DiskMode = "NEUTRAL", $PersonalityInfo.DiskMode
+              "DiskMode: $($PersonalityInfo.DiskMode)"  | LogMe -display -progress
+            } Else {
+              "This is a standalone VDA"  | LogMe -display -progress
+            }
+
+            $tests.WCdrivefreespace = $WriteCacheDriveInfo.Output_For_HTML2, $WriteCacheDriveInfo.WCdrivefreespace
+            if (($WriteCacheDriveInfo.Output_To_Log2 -like "*normal*") -OR ($WriteCacheDriveInfo.Output_To_Log2 -like "*does not exist")) {
+              $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -progress
+            }
+            elseif ($WriteCacheDriveInfo.Output_To_Log2 -like "*low*") {
+              $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -warning
+            }
+            else {
+              $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -error
+            }
+
+            If ($WriteCacheDriveInfo.vhdxSize_inMB -ne "N/A") {
+              $CacheDiskMB = [long]($WriteCacheDriveInfo.vhdxSize_inMB)
+              $CacheDiskGB = ($CacheDiskMB / 1024)
+              "Write Cache file size: {0:n3} MB" -f($CacheDiskMB) | LogMe -display
+              "Write Cache file size: {0:n3} GB" -f($CacheDiskMB / 1024) | LogMe -display
+              "Write Cache max size: {0:n2} GB" -f($WriteCacheMaxSizeInGB) | LogMe -display
+              if ($CacheDiskGB -lt ($WriteCacheMaxSizeInGB * 0.5)) {
+                # If the cache file is less than 50% the max size, flag as all good
+                "WriteCache file size is low" | LogMe
+                 $tests.vhdxSize_inGB = "SUCCESS", ("{0:n3} GB" -f($CacheDiskGB))
+              }
+              elseif ($CacheDiskGB -lt ($WriteCacheMaxSizeInGB * 0.8)) {
+                # If the cache file is less than 80% the max size, flag as a warning
+                "WriteCache file size moderate" | LogMe -display -warning
+                $tests.vhdxSize_inGB = "WARNING", ("{0:n3} GB" -f($CacheDiskGB))
+              }
+              else {
+                # Flag as an error when 80% or greater
+                "WriteCache file size is high" | LogMe -display -error
+                $tests.vhdxSize_inGB = "ERROR", ("{0:n3} GB" -f($CacheDiskGB))
+              }
+            } Else {
+              $tests.vhdxSize_inGB = $WriteCacheDriveInfo.Output_For_HTML3, $WriteCacheDriveInfo.vhdxSize_inMB
+            }
+            if (($WriteCacheDriveInfo.Output_To_Log3 -like "*size is*") -OR ($WriteCacheDriveInfo.Output_To_Log3 -like "*N/A")) {
+              $WriteCacheDriveInfo.Output_To_Log3 | LogMe -display -progress
+            }
+            else {
+              $WriteCacheDriveInfo.Output_To_Log3 | LogMe -display -error
+            }
+
+            If ($PersonalityInfo.IsMCS -AND $WriteCacheDriveInfo.Output_To_Log2 -Like "*Failed to connect") {
+              "It is assumed this is not using MCSIO" | LogMe -display -progress
+              # If this is an Azure VM, Machine Creation Services (MCS) supports using Azure Ephemeral OS disk for
+              # non-persistent VMs. Ephemeral disks should be fast IO because it uses temp storage on the local host.
+              # MCSIO is not compatible with Azure Ephemeral Disks, and is therefore not an available configuration.
+            }
+          }
+        } Else {
+          # Cannot access UNC path so cannot test for the Personality.ini or MCSPersonality.ini
+        }
+
+        ################ End PVS SECTION ###############
+
+        ################ Start Nvidia License Check SECTION ###############
+
+        $NvidiaLicensedDriver = $False
+        If ($IsWMIAccessible) {
+          $return = Get-NvidiaDetails -computername:$machineDNS
+
+          If ($return.Display_Driver_Ver -ne "N/A" -AND $returnLicensable_Product -ne "N/A") {
+            $tests.NvidiaDriverVer = "NEUTRAL", $return.Display_Driver_Ver
+            $NvidiaLicensedDriver = $True
+          }
+        } Else {
+          # WMI is not accessible
+        }
+        If ($NvidiaLicensedDriver) {
+          If ($IsUNCPathAccessible) {
+            $return = Check-NvidiaLicenseStatus -computername:$machineDNS
+            $tests.nvidiaLicense = $return.Output_For_HTML, $return.Licensed
+            if (($return.Output_To_Log -like "*successfully") -OR ($return.Output_To_Log -like "*does not exist") -OR ($return.Output_To_Log -like "*N/A")) {
+              $return.Output_To_Log | LogMe -display -progress
+            } else {
+              $return.Output_To_Log | LogMe -display -error
+            }
+          } Else {
+            # UNC Path is not accessible
+          }
+        } Else {
+          # This host does not contain an Nvidia licensable product
+        }
+
+        ################ End Nvidia License Check SECTION ###############
+
+        ################ Start RDS Licensing Details Check SECTION ###############
+
+        If ($WinEntMultisession -eq $False) {
+          $return = Get-RDSLicensingDetails -computername:$machineDNS -UseWinRM:$UseWinRM
+          $tests.RDSGracePeriod = $return.Output_For_HTML, $return.GracePeriod
+          if (($return.Output_To_Log -like "*Good*") -OR ($return.Output_To_Log -like "*N/A")) {
+            $return.Output_To_Log | LogMe -display -progress
+          }
+          elseif ($return.Output_To_Log -like "*Warning*") {
+            $return.Output_To_Log | LogMe -display -warning
+          }
+          else {
+            $return.Output_To_Log | LogMe -display -error
+          }
+          If ($return.TerminalServerMode -eq "AppServer") {
+            $tests.TerminalServerMode = "SUCCESS",$return.TerminalServerMode
+            "TerminalServerMode: $($return.TerminalServerMode)" | LogMe -display -progress
+          } Else {
+            $tests.TerminalServerMode = "ERROR",$return.TerminalServerMode
+            "TerminalServerMode: $($return.TerminalServerMode)" | LogMe -display -Error
+            If ($return.TerminalServerMode -eq "RemoteAdmin") {
+              "RemoteAdmin mode does not have a GetGracePeriodDays method or path to query" | LogMe -display -Error
+            }
+          }
+          $tests.LicensingName = "NEUTRAL", $return.LicensingName
+          "LicensingName: $($return.LicensingName)" | LogMe -display -progress
+          $tests.LicensingType = "NEUTRAL", $return.LicensingType
+          "LicensingType: $($return.LicensingType)" | LogMe -display -progress
+          $tests.LicenseServerList = "NEUTRAL", $return.LicenseServerList
+          "LicenseServerList: $($return.LicenseServerList)" | LogMe -display -progress
+        } Else {
+          $tests.RDSGracePeriod = "NORMAL", "N/A"
+          "This is an Azure Windows 10/11 multi-session host. Traditional RDS CALs are not relevant" | LogMe -display -progress
+          $tests.TerminalServerMode = "NORMAL","AppServer"
+          "TerminalServerMode: AppServer" | LogMe -display -progress
+          $tests.LicensingName = "NORMAL", "AAD Per User"
+          "LicensingName: AAD Per User" | LogMe -display -progress
+          $tests.LicensingType = "NORMAL", "6"
+          "LicensingType: 6" | LogMe -display -progress
+          $tests.LicenseServerList = "NORMAL", "N/A"
+        }
+
+        ################ End RDS Licensing Details Check SECTION ###############
+
+        # Check services
+        # The Get-Service command with -ComputerName parameter made use of DCOM and such functionality is
+        # removed from PowerShell 7. So we use the Invoke-Command, which uses WinRM to run a ScriptBlock
+        # instead.
+
+        $ServicesChecked = $False
+        If ($IsWinRMAccessible) {
+          $ServicesChecked = $True
+          Try {
+            $services = Invoke-Command -ComputerName $machineDNS -ErrorAction Stop -ScriptBlock {Get-Service | where-object {$_.Name -eq 'Spooler' -OR $_.Name -eq 'cpsvc'}}
+
+            if (($services | Where-Object {$_.Name -eq "Spooler"}).Status -Match "Running") {
+              "SPOOLER service running..." | LogMe
+              $tests.Spooler = "SUCCESS","Success"
+            }
+            else {
+              "SPOOLER service stopped" | LogMe -display -error
+              $tests.Spooler = "ERROR","Error"
+            }
+
+            if (($services | Where-Object {$_.Name -eq "cpsvc"}).Status -Match "Running") {
+              "Citrix Print Manager service running..." | LogMe
+              $tests.CitrixPrint = "SUCCESS","Success"
+            }
+            else {
+              "Citrix Print Manager service stopped" | LogMe -display -error
+              $tests.CitrixPrint = "ERROR","Error"
+            }
+          }
+          Catch {
+            #"Error returned while checking the services" | LogMe -error; return 101
+          }
+        } Else {
+          # Cannot connect via WinRM
+        }
+
+        If ($IsWMIAccessible -AND $ServicesChecked -eq $False) {
+          Try {
+            $services = Get-WmiObject -ComputerName $machineDNS -Class Win32_Service -ErrorAction Stop | where-object {$_.Name -eq 'Spooler' -OR $_.Name -eq 'cpsvc'}
+
+            if (($services | Where-Object {$_.Name -eq "Spooler"}).State -Match "Running") {
+              "SPOOLER service running..." | LogMe
+              $tests.Spooler = "SUCCESS","Success"
+            }
+            else {
+              "SPOOLER service stopped" | LogMe -display -error
+              $tests.Spooler = "ERROR","Error"
+            }
+
+            if (($services | Where-Object {$_.Name -eq "cpsvc"}).State -Match "Running") {
+              "Citrix Print Manager service running..." | LogMe
+              $tests.CitrixPrint = "SUCCESS","Success"
+            }
+            else {
+              "Citrix Print Manager service stopped" | LogMe -display -error
+              $tests.CitrixPrint = "ERROR","Error"
+            }
+          }
+          Catch {
+            #"Error returned while checking the services" | LogMe -error; return 101
+          }
+        } Else {
+          # Cannot connect via WMI
+        }
+
+      }#If can connect via WinRM or WMI
+      else {
+        $ErrorXA = $ErrorXA + 0 # No WinRM or WMI connectivity
+        "WinRM or WMI connection not possible" | LogMe -display -error
+        $XAAvgCPUval = 101 | LogMe -error; $tests.AvgCPU = "ERROR", "WinRM or Wmi connectivity Err"
+        $XAUsedMemory = 101 | LogMe -error; $tests.MemUsg = "ERROR", "WinRM or Wmi connectivity Err"
+        foreach ($disk in $diskLettersWorkers){
+          $XAPercentageDS = 0 | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "WinRM or Wmi connectivity Err"
+          $XAPercentageDS = 0
+          $frSpace = 0
+          $HardDisk = $null
+        }#end of Foreach disk
+
+      } # Closing else cannot connect via WinRM or WMI
+
+    } # Close off $Powered -eq "On", "Unknown", or "Unmanaged"
+
+    # Column Serverload
+    $Serverload = $XAmachine | ForEach-Object{ $_.LoadIndex }
+    "Serverload: $Serverload" | LogMe -display -progress
+    if ($Serverload -ge $loadIndexError) { $tests.Serverload = "ERROR", $Serverload }
+    elseif ($Serverload -ge $loadIndexWarning) { $tests.Serverload = "WARNING", $Serverload }
+    else { $tests.Serverload = "SUCCESS", $Serverload }
   
-}
-else { $tests.Ping = "Neutral", $result }
-#END of Ping-Section
-  
-# Column Serverload
-$Serverload = $XAmachine | ForEach-Object{ $_.LoadIndex }
-"Serverload: $Serverload" | LogMe -display -progress
-if ($Serverload -ge $loadIndexError) { $tests.Serverload = "ERROR", $Serverload }
-elseif ($Serverload -ge $loadIndexWarning) { $tests.Serverload = "WARNING", $Serverload }
-else { $tests.Serverload = "SUCCESS", $Serverload }
-  
-# Column MaintMode
-$MaintMode = $XAmachine | ForEach-Object{ $_.InMaintenanceMode }
-"MaintenanceMode: $MaintMode" | LogMe -display -progress
-if ($MaintMode) { 
-	$objMaintenance = $Maintenance | Where-Object { $_.TargetName.ToUpper() -eq $XAmachine.MachineName.ToUpper() } | Select-Object -First 1
-	If ($null -ne $objMaintenance){$MaintenanceModeOn = ("ON, " + $objMaintenance.User)} Else {$MaintenanceModeOn = "ON"}
-	"MaintenanceModeInfo: $MaintenanceModeOn" | LogMe -display -progress
-	$tests.MaintMode = "WARNING", $MaintenanceModeOn
-	$ErrorVDI = $ErrorVDI + 1
-}
-else { $tests.MaintMode = "SUCCESS", "OFF" }
-  
-# Column RegState
-$RegState = $XAmachine | ForEach-Object{ $_.RegistrationState }
-"State: $RegState" | LogMe -display -progress
-  
-if ($RegState -ne "Registered") { $tests.RegState = "ERROR", $RegState }
-else { $tests.RegState = "SUCCESS", $RegState }
-
-# Column VDAVersion AgentVersion
-$VDAVersion = $XAmachine | ForEach-Object{ $_.AgentVersion }
-"VDAVersion: $VDAVersion" | LogMe -display -progress
-$tests.VDAVersion = "NEUTRAL", $VDAVersion
-
-# Column HostedOn - v1.4.4 Lines
-#$HostedOn = $XAmachine | ForEach-Object{ $_.HostingServerName }
-#"HostedOn: $HostedOn" | LogMe -display -progress
-#$tests.HostedOn = "NEUTRAL", $HostedOn
-
-# Column HostedOn 
-$HostedOn = $XAmachine | ForEach-Object{ 
- if ($_.HostingServerName){
-
-$_.HostingServerName.Split(".")[0]
-
-}else{
-
-"Not Known"
-
+    # Column MaintMode
+    $MaintMode = $XAmachine | ForEach-Object{ $_.InMaintenanceMode }
+    "MaintenanceMode: $MaintMode" | LogMe -display -progress
+    if ($MaintMode) {
+      $objMaintenance = $null
+      Try {
+        $objMaintenance = $Maintenance | Where-Object { $_.TargetName.ToUpper() -eq $XAmachine.MachineName.ToUpper() } | Select-Object -First 1
+      }
+      Catch {
+        # Avoid the error "The property 'TargetName' cannot be found on this object."
+      }
+      If ($null -ne $objMaintenance){$MaintenanceModeOn = ("ON, " + $objMaintenance.User)} Else {$MaintenanceModeOn = "ON"}
+      # The Get-LogLowLevelOperation cmdlet will tell us who placed a machine into maintanance mode. However, the Get-BrokerMachine cmdlet
+      # will provide the MaintenanceReason, where the underlying reason, if manually entered, is stored in the MetadataMap property as part
+      # of a Dictionary object.
+      $MetadataMapDictionary = $XAmachine | ForEach-Object{ $_.MetadataMap }
+      foreach ($key in $MetadataMapDictionary.Keys) {
+        if ($key -eq "MaintenanceModeMessage") {
+          $MaintenanceModeOn = $MaintenanceModeOn + ", " + $MetadataMapDictionary[$key]
+        }
+      }
+      "MaintenanceModeInfo: $MaintenanceModeOn" | LogMe -display -progress
+      $tests.MaintMode = "WARNING", $MaintenanceModeOn
+      $ErrorXA = $ErrorXA + 1
     }
-}#end ForEach
-"HostedOn: $HostedOn" | LogMe -display -progress
-$tests.HostedOn = "NEUTRAL", $HostedOn
+    else { $tests.MaintMode = "SUCCESS", "OFF" }
 
-# Column Tags 
-$Tags = $XAmachine | ForEach-Object{ $_.Tags }
-"Tags: $Tags" | LogMe -display -progress
-$tests.Tags = "NEUTRAL", $Tags
+    # Column RegState
+    $RegState = $XAmachine | ForEach-Object{ $_.RegistrationState }
+    "State: $RegState" | LogMe -display -progress
+    if ($RegState -ne "Registered") {
+      $tests.RegState = "ERROR", $RegState
+      $ErrorXA = $ErrorXA + 1
+    }
+    else { $tests.RegState = "SUCCESS", $RegState }
+
+    # Column VDAVersion AgentVersion
+    $VDAVersion = $XAmachine | ForEach-Object{ $_.AgentVersion }
+    "VDAVersion: $VDAVersion" | LogMe -display -progress
+    $tests.VDAVersion = "NEUTRAL", $VDAVersion
+
+    # Column HostedOn - v1.4.4 Lines
+    #$HostedOn = $XAmachine | ForEach-Object{ $_.HostingServerName }
+    #"HostedOn: $HostedOn" | LogMe -display -progress
+    #$tests.HostedOn = "NEUTRAL", $HostedOn
+
+    # Column HostedOn 
+    $HostedOn = $XAmachine | ForEach-Object{ 
+      if ($_.HostingServerName){
+        $_.HostingServerName.Split(".")[0]
+      }else{
+        "Not Known"
+      }
+    }#end ForEach
+    "HostedOn: $HostedOn" | LogMe -display -progress
+    $tests.HostedOn = "NEUTRAL", $HostedOn
+
+    # Column Tags 
+    $Tags = $XAmachine | ForEach-Object{ $_.Tags }
+    "Tags: $Tags" | LogMe -display -progress
+    $tests.Tags = "NEUTRAL", $Tags
   
-# Column ActiveSessions
-$ActiveSessions = $XAmachine | ForEach-Object{ $_.SessionCount }
-"Active Sessions: $ActiveSessions" | LogMe -display -progress
-$tests.ActiveSessions = "NEUTRAL", $ActiveSessions
+    $ProvisioningType = ""
+    # The Machine Catalogs should exist in the $Catalogs variable, so test this first before collecting them again using the Get-BrokerCatalog cmdlet.
+    $GetCatalogs = $True
+    If (($Catalogs | Measure-Object).Count -gt 0) {
+      $ProvisioningType = ($Catalogs | Where-Object {$_.Name -eq $CatalogName} | Select-Object -ExpandProperty ProvisioningType)
+      $GetCatalogs = $False
+    }
+    If ($GetCatalogs) {
+      If ($CitrixCloudCheck -ne 1) { 
+        $ProvisioningType = (Get-BrokerCatalog -AdminAddress $AdminAddress -Name $CatalogName | Select-Object -ExpandProperty ProvisioningType)
+      } Else {
+        $ProvisioningType = (Get-BrokerCatalog -Name $CatalogName | Select-Object -ExpandProperty ProvisioningType)
+      }
+    }
+    If ($ProvisioningType -eq "MCS") {
+      # Column MCSImageOutOfDate
+      $MCSImageOutOfDate = $XAmachine | ForEach-Object{ $_.ImageOutOfDate }
+      "ImageOutOfDate: $MCSImageOutOfDate" | LogMe -display -progress
+      if ($MCSImageOutOfDate -eq $true) { $tests.MCSImageOutOfDate = "ERROR", $MCSImageOutOfDate }
+      elseif ($MCSImageOutOfDate -eq $false) { $tests.MCSImageOutOfDate = "SUCCESS", $MCSImageOutOfDate  }
+      else { $tests.MCSImageOutOfDate = "NEUTRAL", $MCSImageOutOfDate }
+    }
 
-# Column ConnectedUsers
-$ConnectedUsers = $XAmachine | ForEach-Object{ $_.AssociatedUserNames }
-"Connected users: $ConnectedUsers" | LogMe -display -progress
-$tests.ConnectedUsers = "NEUTRAL", $ConnectedUsers
+    # Column ActiveSessions
+    $ActiveSessions = $XAmachine | ForEach-Object{ $_.SessionCount }
+    "Active Sessions: $ActiveSessions" | LogMe -display -progress
+    $tests.ActiveSessions = "NEUTRAL", $ActiveSessions
+
+    # Column ConnectedUsers
+    $ConnectedUsers = $XAmachine | ForEach-Object{ $_.AssociatedUserNames }
+    "Connected users: $ConnectedUsers" | LogMe -display -progress
+    $tests.ConnectedUsers = "NEUTRAL", $ConnectedUsers
   
-# Column DeliveryGroup
-$DeliveryGroup = $XAmachine | ForEach-Object{ $_.DesktopGroupName }
-"DeliveryGroup: $DeliveryGroup" | LogMe -display -progress
-$tests.DeliveryGroup = "NEUTRAL", $DeliveryGroup
+    # Fill $tests into array if error occured OR $ShowOnlyErrorXA = 0
+    # Check if error exists on this vdi
+    if ($ShowOnlyErrorXA -eq 0 ) { $allXenAppResults.$machineDNS = $tests }
+    else {
+      if ($ErrorXA -gt 0) { $allXenAppResults.$machineDNS = $tests }
+      else { "$machineDNS is ok, no output into HTML-File" | LogMe -display -progress }
+    }
 
-# Column MCSImageOutOfDate
-$MCSImageOutOfDate = $XAmachine | ForEach-Object{ $_.ImageOutOfDate }
-"ImageOutOfDate: $MCSImageOutOfDate" | LogMe -display -progress
-if ($MCSImageOutOfDate -eq $true) { $tests.MCSImageOutOfDate = "ERROR", $MCSImageOutOfDate }
-elseif ($MCSImageOutOfDate -eq $false) { $tests.MCSImageOutOfDate = "SUCCESS", $MCSImageOutOfDate  }
-else { $tests.MCSImageOutOfDate = "NEUTRAL", $MCSImageOutOfDate }
+    " --- " | LogMe -display -progress
 
+  } # Closing foreach $XAmachine
+
+} # Closing if $ShowXenAppTable
+
+else { "XenApp Check skipped because ShowXenAppTable = 0" | LogMe -display -progress }
   
-# Check to see if the server is in an excluded folder path
-if ($ExcludedCatalogs -contains $CatalogName) { "$machineDNS in excluded folder - skipping" | LogMe -display -progress }
-else { $allXenAppResults.$machineDNS = $tests }
-}
-}
+"####################### Check END  ##########################################################" | LogMe -display -progress
+
+#==============================================================================================
+# End of XenApp/RDSH (multi-session) Check
+#==============================================================================================
+
+#==============================================================================================
+# Start of Stuck Sessions Check
+#==============================================================================================
+
+#  Check Stuck Sessions only if $ShowStuckSessionsTable is 1
+if($ShowStuckSessionsTable -eq 1 ) {
+
+  "Check Stuck Sessions ########################################################################" | LogMe -display -progress
+  " " | LogMe -display -progress
+
+  $allStuckSessionResults = @{}
+  $AllStuckSessions = @()
+
+  If (($ActualExcludedCatalogs | Measure-Object).Count -gt 0) {
+    "Excluding machines from the following Catalogs from these tests..." | LogMe -display -progress
+    ForEach ($ActualExcludedCatalog in $ActualExcludedCatalogs) {
+      "- $ActualExcludedCatalog" | LogMe -display -progress
+    }
+    " " | LogMe -display -progress
+  }
+  If (($ActualExcludedDeliveryGroups | Measure-Object).Count -gt 0) {
+    "Excluding machines from the following Delivery Groups from these tests..." | LogMe -display -progress
+    ForEach ($ActualExcludedDeliveryGroup in $ActualExcludedDeliveryGroups) {
+      "- $ActualExcludedDeliveryGroup" | LogMe -display -progress
+    }
+    " " | LogMe -display -progress
+  }
+  If (($ActualExcludedBrokerTags | Measure-Object).Count -gt 0) {
+    "Excluding machines with the following Tags from these tests..." | LogMe -display -progress
+    ForEach ($ActualExcludedBrokerTag in $ActualExcludedBrokerTags) {
+      "- $ActualExcludedBrokerTag" | LogMe -display -progress
+    }
+    " " | LogMe -display -progress
   }
 
-  }#skip2end
-  
+  # Get all sessions that are in a Connected state with no User with the logon in progress for more than 10 minutes
+  If ($CitrixCloudCheck -ne 1) {
+    $AllStuckSessions += Get-BrokerSession -AdminAddress $AdminAddress -MaxRecordCount $maxmachines -Filter { SessionState -eq 'Connected' -AND UserName -eq $null -AND LogonInProgress -eq $True -AND SessionStateChangeTime -lt '0:10' } | Where-Object {($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  } Else {
+    $AllStuckSessions += Get-BrokerSession -MaxRecordCount $maxmachines -Filter { SessionState -eq 'Connected' -AND UserName -eq $null -AND LogonInProgress -eq $True -AND SessionStateChangeTime -lt '0:10' } | Where-Object {($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  }
 
-else { "XenApp Check skipped because ShowXenAppTable = 0 or Farm is < V7.x " | LogMe -display -progress }
-  
-####################### Check END ####################################################################################" | LogMe -display -progress
+  # Get all sessions where the app state of the session is in a PreLogon state for more than 10 minutes
+  If ($CitrixCloudCheck -ne 1) {
+    $AllStuckSessions += Get-BrokerSession -AdminAddress $AdminAddress -MaxRecordCount $maxmachines -Filter { AppState -eq 'PreLogon' -AND SessionStateChangeTime -lt '0:10' } | Where-Object {($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  } Else {
+    $AllStuckSessions += Get-BrokerSession -MaxRecordCount $maxmachines -Filter { AppState -eq 'PreLogon' -AND SessionStateChangeTime -lt '0:10' } | Where-Object {($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  }
+
+  # Get all non-Active Sessions that have not changed state for more than x hours
+  If ($CitrixCloudCheck -ne 1) {
+    $AllStuckSessions += Get-BrokerSession -AdminAddress $AdminAddress -MaxRecordCount $maxmachines -Filter { SessionState -ne 'Active'} | Where {$_.SessionStateChangeTime -lt ((Get-Date).AddHours(-$MaxDisconnectTimeInHours))} | Where-Object {($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  } Else {
+    $AllStuckSessions += Get-BrokerSession -MaxRecordCount $maxmachines -Filter { SessionState -ne 'Active'} | Where {$_.SessionStateChangeTime -lt ((Get-Date).AddHours(-$MaxDisconnectTimeInHours))} | Where-Object {($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  }
+
+  # Get all non-Active Sessions that have a Client Address of 127.0.0.1 and have been in this state for more than 10 minutes. They may be stuck and need logging off or rebooting.
+  # This needs more assessment
+  #If ($CitrixCloudCheck -ne 1) {
+    #$AllStuckSessions += Get-BrokerSession -AdminAddress $AdminAddress -MaxRecordCount $maxmachines -Filter { SessionState -ne 'Active' -AND ClientAddress -eq "127.0.0.1" -AND SessionStateChangeTime -lt '0:10' } | Where-Object {($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  #} Else {
+    #$AllStuckSessions += Get-BrokerSession -MaxRecordCount $maxmachines -Filter { SessionState -ne 'Active' -AND ClientAddress -eq "127.0.0.1" -AND SessionStateChangeTime -lt '0:10' } | Where-Object {($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  #}
+
+  # Get all unbrokered sessions that have been in a state for more than x hours
+  If ($CitrixCloudCheck -ne 1) {
+    $AllStuckSessions += Get-BrokerSession -AdminAddress $AdminAddress -MaxRecordCount $maxmachines -Filter { ConnectionMode -eq "Unbrokered"} | Where {$_.SessionStateChangeTime -lt ((Get-Date).AddHours(-$MaxDisconnectTimeInHours))} | Where-Object {($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  } Else {
+    $AllStuckSessions += Get-BrokerSession -MaxRecordCount $maxmachines -Filter { ConnectionMode -eq "Unbrokered"} | Where {$_.SessionStateChangeTime -lt ((Get-Date).AddHours(-$MaxDisconnectTimeInHours))} | Where-Object {($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  }
+
+  # Get all sessions where the protocol is Console. They may be stuck sessions and need logging off or rebooting.
+  # This needs more assessment
+  #If ($CitrixCloudCheck -ne 1) {
+    #$AllStuckSessions += Get-BrokerSession -AdminAddress $AdminAddress -MaxRecordCount $maxmachines -Filter { Protocol -eq "Console"} | Where-Object {($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  #} Else {
+    #$AllStuckSessions += Get-BrokerSession -MaxRecordCount $maxmachines -Filter { Protocol -eq "Console"} | Where-Object {($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  #}
+
+  # Get all sessions where the Client Address is 127.0.0.1 where the session is not in a disconnected state. They may be stuck sessions and need logging off or rebooting.
+  # This needs more assessment
+  #If ($CitrixCloudCheck -ne 1) {
+    #$AllStuckSessions += Get-BrokerSession -AdminAddress $AdminAddress -MaxRecordCount $maxmachines -Filter { ClientAddress -eq '127.0.0.1' -AND SessionState -ne 'Disconnected'} | Where-Object {($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  #} Else {
+    #$AllStuckSessions += Get-BrokerSession -MaxRecordCount $maxmachines -Filter { ClientAddress -eq '127.0.0.1' -AND SessionState -ne 'Disconnected'} | Where-Object {($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  #}
+
+  # Get all sessions that have not been used in more than x hours
+  If ($CitrixCloudCheck -ne 1) {
+    $AllStuckSessions += Get-BrokerSession -AdminAddress $AdminAddress -MaxRecordCount $maxmachines -Filter { BrokeringTime -ne $null -AND BrokeringDuration -gt 0 -AND SessionStateChangeTime -ne $null} | where { $_.BrokeringTime -lt ((Get-Date).AddHours(-$MaxDisconnectTimeInHours)) -AND $_.SessionStateChangeTime -lt ((Get-Date).AddHours(-$MaxDisconnectTimeInHours))} | Where-Object {($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  } Else {
+    $AllStuckSessions += Get-BrokerSession -MaxRecordCount $maxmachines -Filter { BrokeringTime -ne $null -AND BrokeringDuration -gt 0 -AND SessionStateChangeTime -ne $null} | where { $_.BrokeringTime -lt ((Get-Date).AddHours(-$MaxDisconnectTimeInHours)) -AND $_.SessionStateChangeTime -lt ((Get-Date).AddHours(-$MaxDisconnectTimeInHours))} | Where-Object {($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  }
+
+  # Get all sessions where the BrokeringTime has not changed in x hours.
+  If ($CitrixCloudCheck -ne 1) {
+    $AllStuckSessions += Get-BrokerSession -AdminAddress $AdminAddress -MaxRecordCount $maxmachines -Filter { BrokeringTime -ne $null -AND BrokeringDuration -gt 0 -AND EstablishmentDuration -gt 0} | where { $_.BrokeringTime -lt ((Get-Date).AddHours(-$MaxDisconnectTimeInHours)) } | Where-Object {($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  } Else {
+    $AllStuckSessions += Get-BrokerSession -MaxRecordCount $maxmachines -Filter { BrokeringTime -ne $null -AND BrokeringDuration -gt 0 -AND EstablishmentDuration -gt 0} | where { $_.BrokeringTime -lt ((Get-Date).AddHours(-$MaxDisconnectTimeInHours)) } | Where-Object {($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+  }
+
+  # Sort sessions to remove duplicates
+  $AllStuckSessions = $AllStuckSessions | Sort-Object -Property MachineName -Unique
+
+  # Filter out sessions that contain accounts names in the $ExcludedStuckSessionUserAccounts array.
+  $Found = $False
+  If ($ExcludedStuckSessionUserAccounts.Count -gt 0) {
+    If (!([String]::IsNullOrEmpty($ExcludedStuckSessionUserAccounts[0]))) {
+      ForEach ($ExcludedStuckSessionUserAccount in $ExcludedStuckSessionUserAccounts) {
+        # Ensure there is no match for the UserName or the BrokeringUserName
+        $AllStuckSessions = $AllStuckSessions | ForEach-Object {
+          $Found = $False
+          ForEach ($ExcludedStuckSessionUserAccount in $ExcludedStuckSessionUserAccounts) {
+            If ($_.UserName -eq $ExcludedStuckSessionUserAccount -OR $_.UserName -like $ExcludedStuckSessionUserAccount -OR $_.BrokeringUserName -eq $ExcludedStuckSessionUserAccount -OR $_.BrokeringUserName -like $ExcludedStuckSessionUserAccount) {
+              $Found = $True
+              break
+            }
+          }
+          If ($Found -eq $False) {
+            $_
+          }
+        }
+      }
+    }
+  }
+
+  # Filter out machines that contain any $ActualExcludedBrokerTags. We need to do this here using the Get-BrokerMachine cmdlet because the Get-BrokerSession cmdlet does not have a tags property.
+  If (($ActualExcludedBrokerTags | Measure-Object).Count -gt 0) {
+    $nontaggedMachineIds = @()
+    If ($CitrixCloudCheck -ne 1) {
+      $nontaggedMachineIds = (Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0}) | Select-Object -ExpandProperty DNSName
+    } Else {
+      $nontaggedMachineIds = (Get-BrokerMachine -MaxRecordCount $maxmachines | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0}) | Select-Object -ExpandProperty DNSName
+    }
+    $AllStuckSessions = $AllStuckSessions | Where-Object {$nontaggedMachineIds -contains $_.DNSName}
+  }
+
+  foreach ($StuckSession in $AllStuckSessions) {
+
+    $tests = @{}
+
+    # Column Name of Machine
+    $machineDNS = $StuckSession | %{ $_.DNSName }
+    "Machine: $machineDNS" | LogMe -display -progress
+
+    # Column CatalogName
+    $CatalogName = $StuckSession | %{ $_.CatalogName }
+    "Catalog: $CatalogName" | LogMe -display -progress
+    $tests.CatalogName = "NEUTRAL", $CatalogName
+
+    # Column DesktopGroupName
+    $DesktopGroupName = $StuckSession | %{ $_.DesktopGroupName }
+    "DesktopGroupName: $DesktopGroupName" | LogMe -display -progress
+    $tests.DesktopGroupName = "NEUTRAL", $DesktopGroupName
+
+    # Column UserName
+    $UserName = $StuckSession | %{ $_.UserName}
+    $BrokeringUserName = $StuckSession | %{ $_.BrokeringUserName}
+    if (!([String]::IsNullOrEmpty($UserName))) {
+      "UserName: $UserName" | LogMe -display -progress
+      $tests.UserName = "NEUTRAL", $UserName
+    } elseif (!([String]::IsNullOrEmpty($BrokeringUserName))) {
+      "UserName: $BrokeringUserName" | LogMe -display -progress
+      $tests.UserName = "WARNING", $BrokeringUserName
+    } else {
+      "UserName: $UserName" | LogMe -display -progress
+      $tests.UserName = "ERROR", $UserName
+    }
+
+    # Column SessionState
+    $SessionState = $StuckSession | %{ $_.SessionState}
+    "SessionState: $SessionState" | LogMe -display -progress
+    if ($SessionState -eq "Connected") {
+      $tests.SessionState = "WARNING", $SessionState
+    } else { $tests.SessionState = "SUCCESS", $SessionState}
+
+    # Column AppState
+    $AppState = $StuckSession | %{ $_.AppState}
+    "AppState: $AppState" | LogMe -display -progress
+    if ($AppState -eq "PreLogon") {
+      $tests.AppState = "WARNING", $AppState
+    } else { $tests.AppState = "SUCCESS", $AppState}
+
+    # Column SessionStateChangeTime
+    $SessionStateChangeTime = $StuckSession | %{ $_.SessionStateChangeTime}
+    $BrokeringTime = $StuckSession | %{ $_.BrokeringTime}
+    "SessionStateChangeTime: $SessionStateChangeTime" | LogMe -display -progress
+    if ($SessionState -eq "Disconnected" -AND $SessionStateChangeTime -lt ((Get-Date).AddHours(-$MaxDisconnectTimeInHours))) {
+      $tests.SessionStateChangeTime = "ERROR", $SessionStateChangeTime
+    } elseif ($BrokeringTime -lt ((Get-Date).AddHours(-$MaxDisconnectTimeInHours)) -AND $SessionStateChangeTime -lt ((Get-Date).AddHours(-$MaxDisconnectTimeInHours))) {
+      $tests.SessionStateChangeTime = "ERROR", $SessionStateChangeTime
+    } elseif (($AppState -eq "PreLogon" -OR $SessionState -eq "Connected" ) -AND $SessionStateChangeTime -lt ((Get-Date).AddMinutes(-10))) {
+      $tests.SessionStateChangeTime = "ERROR", $SessionStateChangeTime
+    } else { $tests.SessionStateChangeTime = "SUCCESS", $SessionStateChangeTime }
+
+    # Column LogonInProgress
+    $LogonInProgress = $StuckSession | %{ $_.LogonInProgress}
+    "LogonInProgress: $LogonInProgress" | LogMe -display -progress
+    if ($LogonInProgress) {
+      $tests.LogonInProgress = "ERROR", $LogonInProgress
+    } else { $tests.LogonInProgress = "SUCCESS", $LogonInProgress }
+
+    # Column LogoffInProgress
+    $LogoffInProgress = $StuckSession | %{ $_.LogoffInProgress}
+    "LogoffInProgress: $LogoffInProgress" | LogMe -display -progress
+    if ($LogoffInProgress) {
+      $tests.LogoffInProgress = "ERROR", $LogoffInProgress
+    } else { $tests.LogoffInProgress = "SUCCESS", $LogoffInProgress }
+
+    # Column ClientAddress
+    $ClientAddress = $StuckSession | %{ $_.ClientAddress}
+    "ClientAddress: $ClientAddress" | LogMe -display -progress
+    if ($ClientAddress -eq "127.0.0.1") {
+      $tests.ClientAddress = "WARNING", $ClientAddress
+    } else { $tests.ClientAddress = "SUCCESS", $ClientAddress }
+
+    # Column ConnectionMode
+    $ConnectionMode = $StuckSession | %{ $_.ConnectionMode}
+    "ConnectionMode: $ConnectionMode" | LogMe -display -progress
+    if ($ConnectionMode -eq "Unbrokered") {
+      $tests.ConnectionMode = "WARNING", $ConnectionMode
+    } else { $tests.ConnectionMode = "SUCCESS", $ConnectionMode}
+
+    # Column Protocol
+    $Protocol = $StuckSession | %{ $_.Protocol}
+    "Protocol: $Protocol" | LogMe -display -progress
+    if ($Protocol -eq "Console") {
+      $tests.Protocol = "ERROR", $Protocol
+    } elseif ($Protocol -eq "RDP") {
+      $tests.Protocol = "WARNING", $Protocol
+    } else { $tests.Protocol = "SUCCESS", $Protocol }
+
+    " --- " | LogMe -display -progress
+
+    $allStuckSessionResults.$machineDNS = $tests 
+
+  }
+} # Close if $ShowStuckSessionsTable
+else { "Stuck Sessions Check skipped because ShowStuckSessionsTable = 0" | LogMe -display -progress	}
+
+"####################### Check END  ##########################################################" | LogMe -display -progress
+
+#==============================================================================================
+# End of Stuck Sessions Check
+#==============================================================================================
+
 # ======= Write all results to an html file =================================================
-# Add Version of XenDesktop to EnvironmentName
-$XDmajor, $XDminor = $controllerversion.Split(".")[0..1]
-$XDVersion = "$XDmajor.$XDminor"
-$EnvironmentNameOut = "$EnvironmentName $XDVersion"
-$emailSubject = ("$EnvironmentNameOut Farm Report - " + $ReportDate)
+# Add Version of CVAD to EnvironmentName
+$EnvironmentNameOut = "$EnvironmentName Site $sitename"
+If ($CitrixCloudCheck -ne 1) {
+  $XDmajor, $XDminor = $controllerversion.Split(".")[0..1]
+  $XDVersion = "$XDmajor.$XDminor"
+  $EnvironmentNameOut = "$EnvironmentNameOut v$XDVersion"
+}
+$emailSubject = ("$EnvironmentNameOut Report - " + $ReportDate)
 
 Write-Host ("Saving results to html report: " + $resultsHTM)
-writeHtmlHeader "$EnvironmentNameOut Farm Report" $resultsHTM
+writeHtmlHeader "$EnvironmentNameOut Report" $resultsHTM
 
 # Write Table with the Failures #FUTURE !!!!
-#writeTableHeader $resultsHTM $CTXFailureFirstheaderName $CTXFailureHeaderNames $CTXFailureHeaderWidths $CTXFailureTableWidth
-#$ControllerResults | sort-object -property XDControllerFirstheaderName | ForEach-Object{ writeData $CTXFailureResults $resultsHTM $CTXFailureFirstheaderName }
+#"Adding Failures output to HTML" | LogMe -display -progress 
+#writeTableHeader $resultsHTM $CTXFailureFirstheaderName $CTXFailureHeaderNames $CTXFailureTableWidth
+#$ControllerResults | ForEach-Object{ writeData $CTXFailureResults $resultsHTM $CTXFailureFirstheaderName }
 #writeTableFooter $resultsHTM
 
 # Write Table with the Controllers
-if ( $CitrixCloudCheck -eq "0" ) {
-writeTableHeader $resultsHTM $XDControllerFirstheaderName $XDControllerHeaderNames $XDControllerHeaderWidths $XDControllerTableWidth
-$ControllerResults | sort-object -property XDControllerFirstheaderName | ForEach-Object{ writeData $ControllerResults $resultsHTM $XDControllerHeaderNames }
-writeTableFooter $resultsHTM
+if ( $CitrixCloudCheck -ne "1" ) {
+  "Adding Controller output to HTML" | LogMe -display -progress 
+  writeTableHeader $resultsHTM $XDControllerFirstheaderName $XDControllerHeaderNames $XDControllerTableWidth
+  $ControllerResults | ForEach-Object{ writeData $ControllerResults $resultsHTM $XDControllerHeaderNames }
+  writeTableFooter $resultsHTM
 }
 else { "No Controller output in HTML (CitrixCloud) " | LogMe -display -progress }
 
+if ($CitrixCloudCheck -ne "1" -AND $ShowCloudConnectorTable -eq 1 ) {
+  # Write Table with the CloudConnectorServers
+  "Adding Cloud Connector output to HTML" | LogMe -display -progress 
+  writeTableHeader $resultsHTM $CCFirstheaderName $CCHeaderNames $CCTableWidth
+  $CCResults | ForEach-Object{ writeData $CCResults $resultsHTM $CCHeaderNames }
+  writeTableFooter $resultsHTM
+}
+else { "No Cloud Connector output in HTML (CitrixCloud) " | LogMe -display -progress }
+
+if ($ShowStorefrontTable -eq 1 ) {
+  # Write Table with the StorefrontServers
+  "Adding Storefront output to HTML" | LogMe -display -progress 
+  writeTableHeader $resultsHTM $SFFirstheaderName $SFHeaderNames $SFTableWidth
+  $SFResults | ForEach-Object{ writeData $SFResults $resultsHTM $SFHeaderNames }
+  writeTableFooter $resultsHTM
+}
+else { "No Storefront output in HTML (CitrixCloud) " | LogMe -display -progress }
 
 # Write Table with the License
-if ( $CitrixCloudCheck -eq "0" ) {
-writeTableHeader $resultsHTM $CTXLicFirstheaderName $CTXLicHeaderNames $CTXLicHeaderWidths $CTXLicTableWidth
-$CTXLicResults | sort-object -property LicenseName | ForEach-Object{ writeData $CTXLicResults $resultsHTM $CTXLicHeaderNames }
-writeTableFooter $resultsHTM
+If ($CitrixCloudCheck -ne 1) {
+  "Adding License output to HTML" | LogMe -display -progress 
+  writeTableHeader $resultsHTM $CTXLicFirstheaderName $CTXLicHeaderNames $CTXLicTableWidth
+  $CTXLicResults | ForEach-Object{ writeData $CTXLicResults $resultsHTM $CTXLicHeaderNames }
+  writeTableFooter $resultsHTM
 }
 else { "No License output in HTML (CitrixCloud) " | LogMe -display -progress }
-  
-# Write Table with the Catalogs
-writeTableHeader $resultsHTM $CatalogHeaderName $CatalogHeaderNames $CatalogWidths $CatalogTablewidth
+
+# Write Table with the Machine Catalogs
+"Adding Machine Catalog output to HTML" | LogMe -display -progress 
+writeTableHeader $resultsHTM $CatalogHeaderName $CatalogHeaderNames $CatalogTablewidth
 $CatalogResults | ForEach-Object{ writeData $CatalogResults $resultsHTM $CatalogHeaderNames}
 writeTableFooter $resultsHTM
-  
-  
+
 # Write Table with the Assignments (Delivery Groups)
-writeTableHeader $resultsHTM $AssigmentFirstheaderName $vAssigmentHeaderNames $vAssigmentHeaderWidths $Assigmenttablewidth
-$AssigmentsResults | sort-object -property ReplState | ForEach-Object{ writeData $AssigmentsResults $resultsHTM $vAssigmentHeaderNames }
+"Adding Delivery Group output to HTML" | LogMe -display -progress 
+writeTableHeader $resultsHTM $AssigmentFirstheaderName $vAssigmentHeaderNames $Assigmenttablewidth
+$AssigmentsResults | ForEach-Object{ writeData $AssigmentsResults $resultsHTM $vAssigmentHeaderNames }
 writeTableFooter $resultsHTM
 
-# Write Table with all XenApp Servers
+# Write Table with the Connection Failures from Broker Connection Log
+If ($BrokerConnectionLogResults.Count -gt 0) {
+  "Adding Connection Failures output to HTML" | LogMe -display -progress 
+  writeTableHeader $resultsHTM $BrkrConFailureFirstheaderName $BrkrConFailureHeaderNames $BrkrConFailureTableWidth
+  $BrokerConnectionLogResults | ForEach-Object{ writeData $BrokerConnectionLogResults $resultsHTM $BrkrConFailureHeaderNames }
+  writeTableFooter $resultsHTM
+} Else { "The Connection Failures output has not been added to the HTML as it contains no data" | LogMe -display -progress }
+
+# Write Table with the Hypervisor Connections
+If ($HypervisorConnectionResults.Count -gt 0) {
+  "Adding Hypervisor Connection output to HTML" | LogMe -display -progress 
+  writeTableHeader $resultsHTM $HypervisorConnectionFirstheaderName $HypervisorConnectionHeaderNames $HypervisorConnectiontablewidth
+  $HypervisorConnectionResults | ForEach-Object{ writeData $HypervisorConnectionResults $resultsHTM $HypervisorConnectionHeaderNames }
+  writeTableFooter $resultsHTM
+} Else { "The Hypervisor Connection output has not been added to the HTML as it contains no data" | LogMe -display -progress }
+
+# Write Table with all XenApp/RDSH (multi-session) Servers
 if ($ShowXenAppTable -eq 1 ) {
-writeTableHeader $resultsHTM $XenAppFirstheaderName $XenAppHeaderNames $XenAppHeaderWidths $XenApptablewidth
-$allXenAppResults | sort-object -property CatalogName | ForEach-Object{ writeData $allXenAppResults $resultsHTM $XenAppHeaderNames }
-writeTableFooter $resultsHTM
+  If ($allXenAppResults.Count -gt 0) {
+    "Adding XenApp/RDSH (multi-session) output to HTML" | LogMe -display -progress 
+    writeTableHeader $resultsHTM $XenAppFirstheaderName $XenAppHeaderNames $XenApptablewidth
+    $allXenAppResults | ForEach-Object{ writeData $allXenAppResults $resultsHTM $XenAppHeaderNames }
+    writeTableFooter $resultsHTM
+  } Else { "The XenApp/RDSH (multi-session) output has not been added to the HTML as it contains no data" | LogMe -display -progress }
 }
-else { "No XenApp output in HTML " | LogMe -display -progress }
+else { "No XenApp/RDSH (multi-session) output in HTML " | LogMe -display -progress }
 
 # Write Table with all Desktops
 if ($ShowDesktopTable -eq 1 ) {
-writeTableHeader $resultsHTM $VDIFirstheaderName $VDIHeaderNames $VDIHeaderWidths $VDItablewidth
-$allResults | sort-object -property CatalogName | ForEach-Object{ writeData $allResults $resultsHTM $VDIHeaderNames }
-writeTableFooter $resultsHTM
+  If ($allResults.Count -gt 0) {
+    "Adding VDI (single-session) output to HTML" | LogMe -display -progress 
+    writeTableHeader $resultsHTM $VDIFirstheaderName $VDIHeaderNames $VDItablewidth
+    $allResults | ForEach-Object{ writeData $allResults $resultsHTM $VDIHeaderNames }
+    writeTableFooter $resultsHTM
+  } Else { "The VDI (single-session) output has not been added to the HTML as it contains no data" | LogMe -display -progress }
 }
-else { "No XenDesktop output in HTML " | LogMe -display -progress }
-  
- 
-writeHtmlFooter $resultsHTM
+else { "No VDI (single-session) output in HTML " | LogMe -display -progress }
+
+# Write Table with all Stuck Sessions
+if ($ShowStuckSessionsTable -eq 1 ) {
+  If ($allStuckSessionResults.Count -gt 0) {
+    "Adding Stuck Session output to HTML" | LogMe -display -progress 
+    writeTableHeader $resultsHTM $StuckSessionsFirstheaderName $StuckSessionsHeaderNames $StuckSessionstablewidth
+    $allStuckSessionResults | ForEach-Object{ writeData $allStuckSessionResults $resultsHTM $StuckSessionsHeaderNames }
+    writeTableFooter $resultsHTM
+  } Else { "The Stuck Session output has not been added to the HTML as it contains no data" | LogMe -display -progress }
+}
+else { "No Stuck Session output in HTML " | LogMe -display -progress }
+
+"Adding footer output to HTML" | LogMe -display -progress
+If ($CitrixCloudCheck -ne 1) {
+  writeHtmlFooter -fileName $resultsHTM
+} Else {
+  writeHtmlFooter -fileName $resultsHTM -cloud
+}
+
+"HTML file created: $resultsHTM" | LogMe -display -progress
 
 $scriptend = Get-Date
 $scriptruntime =  $scriptend - $scriptstart | Select-Object TotalSeconds
@@ -1714,7 +4058,9 @@ if ($CheckSendMail -eq 1){
 $emailMessage = New-Object System.Net.Mail.MailMessage
 $emailMessage.From = $emailFrom
 $emailMessage.To.Add( $emailTo )
-$emailMessage.CC.Add( $emailCC )
+if (!([String]::IsNullOrEmpty($emailCC))) {
+  $emailMessage.CC.Add( $emailCC )
+}
 $emailMessage.Subject = $emailSubject 
 $emailMessage.IsBodyHtml = $true
 $emailMessage.Body = (Get-Content $resultsHTM) | Out-String
@@ -1738,15 +4084,64 @@ If ((![string]::IsNullOrEmpty($smtpUser)) -and (![string]::IsNullOrEmpty($smtpPW
 
 $smtpClient.Send( $emailMessage )
 
-
+    "Report sent via email" | LogMe -display -progress
 
 }#end of IF CheckSendMail
 else{
 
-    "XenApp Check skipped because CheckSendMail = 0" | LogMe -display -progress
+    "Report not sent via email because CheckSendMail = 0" | LogMe -display -progress
 
 }#Skip Send Mail
 
+} # Close off $scriptBlockExecute
+
+If ($UseRunspace) {
+  $PSinstance = [PowerShell]::Create().AddScript($scriptBlockExecute).AddParameter('ParameterFilePath', "$ParameterFilePath").AddParameter('ParameterFile', "$ParameterFile").AddParameter('outputpath', "$outputpath")
+  $PSinstance.RunspacePool = $RunspacePool
+  $runspaces.Add(([pscustomobject]@{
+        Id = $ParameterFile
+        PowerShell = $PSinstance
+        Handle = $PSinstance.BeginInvoke()
+    })) | out-null
+  write-verbose "$(Get-Date): Runspace created: $ParameterFile" -verbose
+} Else {
+  # It was super challenging to pass named parameters to Invoke-Command -ScriptBlock.
+  # Answer found here: https://stackoverflow.com/questions/27794898/powershell-pass-named-parameters-to-argumentlist
+  [hashtable]$hashArgs = @{ParameterFilePath=$ParameterFilePath; ParameterFile=$ParameterFile; outputpath=$outputpath }
+  $formattedParams = &{ $args } @hashArgs
+  # The following '.{}' statement could be replaced with '&{}' here, because we don't need to persist variables after
+  # script call.
+  $scriptBlockContent = ".{ $scriptBlockExecute } $formattedParams"
+  $sb = [scriptblock]::create($scriptBlockContent)
+  Invoke-Command -ScriptBlock $sb
+}
+
+} # Close off ForEach $ParameterFile
+
+If ($UseRunspace) {
+  $CountRunspaces = ($runspaces | Measure-Object).count
+  Write-Verbose "$(Get-Date): $CountRunspaces runspaces were created." -verbose
+  Write-Verbose "$(Get-Date): --------WAITING FOR JOBS TO COMPLETE---------" -verbose
+  Write-Verbose "$(Get-Date): Check the output logs for progress." -verbose
+  # Use a sleep timer to control CPU utilization
+  $SleepTimer = 1000
+  while ($runspaces.Handle -ne $null)
+  {
+    foreach ($runspace in $runspaces)
+    {
+       If ($runspace.Handle -ne $null) {
+         If ($runspace.Handle.IsCompleted) {
+          write-verbose "$(Get-Date): Runspace complete: $($runspace.Id)" -verbose
+          $runspace.Handle = $null
+         }
+       }
+    }
+    Start-Sleep -Milliseconds $SleepTimer
+  }
+  $RunspacePool.Close()
+  $RunspacePool.Dispose()
+  Write-Verbose "$(Get-Date): Script complete!" -verbose
+}
 
 #=========== History ===========================================================================
 # Version 0.6
@@ -1932,11 +4327,94 @@ else{
 # - 1.4.5, Enabled to work for Citrix Cloud (see also changes in XML!) 
 # - 1.4.5.1, Ping to Desktop or AppServer is no more red because not critical
 # - 1.4.6, Removed HTML Output of Controller / License for CitrixCloud and added a proper exclude from check when catalog is excluded GitHub issue #56
+# - 1.4.7, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+#          - Bugfix added emailCC to XML
+#          - Added new functions to test for connectivity: Test-Ping, IsWinRMAccessible, IsWMIAccessible, IsUNCPathAccessible
+#            These are fast and efficent for testing base connectivity to the machines before running each test, which helps prevent the functions from waiting for timeouts when connectivity
+#            is a problem.
+#          - Removed the old Ping function. There wasn't anything wrong with it. I was just attempting to improve its efficiency.
+#          - Removed the $wmiOSBlock scriptblock. This is now in a function.
+#          - Removed the OS version check using the version of C:\Windows\System32\hal.dll. This is inefficient, slow and can be inaccurate as the hal.dll version loosely correlates to OS builds,
+#            but isn't guaranteed to match OS version of edition exactly. Replaced it with the Get-OSVersion function, which also returns the caption that can be useful for other checks.
+#          - Added new functions for tests: Get-UpTime, Get-OSVersion, Get-NvidiaDetails, Check-NvidiaLicenseStatus, Get-RDSLicensingDetails, Get-PersonalityInfo, Get-WriteCacheDriveInfo
+#            - These will help move the code to functions as per future improvements from version 1.5
+#          - Enhanced the following functions to allow for WinRM: CheckCpuUsage, CheckMemoryUsage, CheckHardDiskUsage
+#          - Fixed a bug in the CheckHardDiskUsage function so it won't fail if an ISO is left mounted as the D: drive.
+#          - Added $OutputLog, $OutputHTML, $ShowStuckSessionsTable and $MaxDisconnectTimeInHours variables to XML file.
+#          - Added new Stuck Sessions table and the logic that generates the information so you can quickly see any machines or sessions that may not look healthy.
+#            - Some of this logic relies on the $MaxDisconnectTimeInHours variable being set correctly in the parameters XML file.
+#            - The only limitation here is that the Get-BrokerSession cmdlet does not have a tags property. So it will not support filtering against the $ExcludedTags array.
+#              Thereofre, we use the Get-BrokerMachine cmdlet to filter the $AllStuckSessions collection correctly against the $ExcludedTags array.
+#          - Added 3 new script parameters $ParamsFile, $All and $UseRunspace so the script can be launched from a central server to health check multiple sites in parallel.
+#          - Added Get-LogicalProcessorCount function for the Runspace pool.
+#          - Reordered and improved some of the code so that it flows in and out of the scriptblock.
+#          - Improved some checking on the Delivery Controllers so that it exits the scriptblock if invalid.
+#          - Changed the $LicWMIQuery variable to $LicQuery and enhanced the code so it can use WinRM.
+#          - Implemented Storefront checks from Naveen Arya's version of the script.
+#          - Added ShowStorefrontTable and StoreFrontServers variables to XML file to facilitate the Storefront checks.
+#          - Added ShowCloudConnectorTable and CloudConnectorServers variables to XML file to facilitate the Cloud Connector checks.
+#          - Removed $ControllerVersion -lt 7 code, as this is old and should no longer be needed in this script.
+#          - Added ExcludedDeliveryGroups variable to XML file, as a further option to ExcludedCatalogs and ExcludedTags.  Updated the Check Assigments (Delivery Group Check) with this variable.
+#            Updated the code so they all support wildcards.
+#          - Added more checks to ensure the first element of the ExcludedDeliveryGroups, ExcludedCatalogs and ExcludedTags arrays is not empty. This ensures the script functions if the values
+#            in the XML file are left empty.
+#          - Improved the Get-BrokerMachine filtering for SessionSupport, so less objects are returned. This reduces processing time for the Where-Object filtering.
+#          - It's important to note that Cloud PCs are Azure AD joined only, and may be managed by a different group. So it's most likely that you would not have permissions
+#            to run health checks against them. Therefore it's recommended to exclude the Catalogs and/or Delivery Groups from these checks.
+#          - The Windows 10/11 Enterprise multi-session hosts are processed as multi-session hosts, but the RDS licensing is not relevant. So the RDS Grace period is marked as N/A
+#            and we don't run the Get-RDSLicensingDetails function on those machines.
+#          - Added the HypervisorConnection table and removed the HypervisorConnectionstate from the footer. It didn't make sense to have it there.
+#          - As the HTML <td> width attribute is deprecated in HTML5 and now considered obsolete, uncommented the CSS from the writeHtmlHeader function and added "width: fit-content" to the td.
+#            Have removed the $headerWidths requirement for the writeTableHeader function and from the remainder of the script.
+#          - Whilst we can use "white-space: nowrap" to prevent a line-break at hyphen in the HTML, this will make the table too wide. Therefore modified the writeData function to replace
+#            hyphens with a non-breaking hyphen before it writes the data to the table.
+#          - Removed WriteCacheSize from tables in favor of vhdxSize_inMB. It makes more sense for PVS and MCSIO.
+#          - Renamed MCSVDIImageOutOfDate to MCSImageOutOfDate and added this to the XenApp/RDS/Multisession host checks.
+#          - Added the MCSIOWriteCacheDrive variable to the XML file to pass to the Get-WriteCacheDriveInfo function in line with PvsWriteCacheDrive.
+#          - Renamed the PvsWriteMaxSize variable to WriteCacheMaxSizeInGB in the XML file, and removed the PvsWriteMaxSizeInGB variable altogether, which makes sense for both PVS, when
+#            assessing the size of the vdiskdif.vhdx file, and MCSIO, when assessing the size of the mcsdif.vhdx file. This is used against the output of the Get-WriteCacheDriveInfo function.
+#          - The output to the "vhdxSize_inGB" column now goes to 3 decimal points, which allows us to see the 4MB default value after a reboot. This way we know it's all good and healthy.
+#          - Added the "MasterImageVMDate", "UseFullDiskClone", "UseWriteBackCache", "WriteBackCacheMemSize" columns to the Check Catalog table using the Get-ProvScheme cmdlet.
+#          - If the MasterImageVMDate is older than 90 days, mark it as a warning as it's missed patching cycles.
+#          - Check the Machine Catalog ProvisioningType that the machine belongs to is MCS before filing out the MCSImageOutOfDate column. This reduces confusion.
+#          - Added ShowOnlyErrorXA and ErrorXA back into the logic like ShowOnlyErrorVDI and ErrorVDI.
+#          - Added a new table for "ConnectionFailureOnMachine" that uses the Get-BrokerConnectionLog cmdlet.
+#          - Added a new variable called BrokerConnectionFailuresinHours to the XML file used by the ConnectionFailureOnMachine check. If the report is run first thing in the morning, this will
+#            help see any brokering issues that occurred overnight.
+#          - Machine Creation Services (MCS) supports using Azure Ephemeral OS disk for non-persistent VMs. Ephemeral disks should be fast IO because it uses temp storage on the local host.
+#            MCSIO is not compatible with Azure Ephemeral Disks, and is therefore not an available configuration.
+#          - Added a Get-BrokerTag section to create the $ActualExcludedBrokerTags and $ActualIncludedBrokerTags arrays used for filtering
+#          - The script will generate 6 new arrays as it processes the Machine Catalogs, Delivery Groups and Tags: $ActualExcludedCatalogs, $ActualIncludedCatalogs, $ActualExcludedDeliveryGroups,
+#            $ActualIncludedDeliveryGroups, $ActualExcludedBrokerTags, $ActualIncludedBrokerTags
+#            This helps us filter out the $ExcludedCatalogs, $ExcludedDeliveryGroups, $ExcludedTags by simply using wildcards. This works well if you have naming standards for these items such as
+#            "*Remote PC*", "*Cloud PC*", etc.
+#          - Added the MaintModeReason info to the MaintMode column for the VDI (singlesession) and XenApp/RDSH (multisession) tests. This is handy if an Administrator has recorded why they have
+#            placed a machine into maintenance mode, such as draining the sessions, a change record, etc.
+#          - Removed the Get-CitrixMaintenanceInfo function as we are now calling the Get-LogLowLevelOperation cmdlet directly, but still using the methodology the Stefan Beckmann created. Will
+#            revisit PS Remoting for sections of the script in a future version. Enhanced it further so we can also get information for who placed Delivery Groups and Hypervisor Connections into
+#            maintenance mode. Added PropertyName and TargetType to the output to help with debugging.
+#          - Added the $MaintenanceModeActionsFromPastinDays variable to the XML file. It is used for the Get-LogLowLevelOperation cmdlet so we know how far back to go to get maintenance mode
+#            actions.
+#          - Added the Test-OpenPort function that uses the Test-NetConnection cmdlet to test for Port 80 and 443 to the Delivery Controllers, which is needed for the PowerShell SDK. This
+#            replaces the Test-Connection cmdlet, which only sends ICMP echo request packets (pings). Not only is a ping a poor test to validate a Delivery Controller, OT environments are also
+#            typically locked down where even pings are not allowed through. This could even be further enhanced to do an XDPing to check the Broker's Registrar service. That function can be
+#            found here: https://www.jhouseconsulting.com/2019/05/16/xdping-powershell-function-1931
+#          - Added minor updates to the New-XMLVariables function so it's easier to debug.
+#          - Added the $ExcludedStuckSessionUserAccounts variable to the XML file. It is used to exclude certain sessions from the Stuck Sessions table. It supports wildcards. The purpose of
+#            this is to exclude kiosk accounts that may stay logged in for long periods of time.
+#          - Enhanced the Uptime VDI (single-session) and XenApp/RDSH (multi-session) tests so that they are marked as an error when Uptime is $maxUpTimeDays x 3.
 #
 # == FUTURE ==
 # #  1.5
-# Version changes by S.Thomet
+# Version changes by S.Thomet & J.Saunders
 # - CREATE Proper functions
+# - Change all functions to allow for Invoke-Command for PS Remoting where possible.
+# - Look to merge the Singlesession and Multisession sections using a for loop to process, as there is quite a bit of code duplication in those two sections.
+# - Enhance the MCSIO tests, where possible.
+# - Combine functions where possible to collect data more efficiently.
+# - Implement DaaS APIs (from 2209 and above) to remove reliance on PowerShell SDK. It should be able to be slotted in quite easily with a variable to switch between them, which will allow
+#   new and legacy to work side-by-side.
+# - Convert the output for ingestion into tools like Splunk, Azure Monitor Logs, VMware Aria Operations for Logs (formerly VMware vRealize Log Insight), OpenSearch, Elasticsearch, Crible, etc.
 #
 # #  1.5.1
 # Version changes by S.Thomet
