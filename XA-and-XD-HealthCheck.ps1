@@ -1,5 +1,5 @@
 ﻿#==============================================================================================
-# Created on: 11.2014 modfied 06.2025 Version: 1.4.7
+# Created on: 11.2014 modfied 06.2025 Version: 1.4.8
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -364,7 +364,7 @@ If ($CitrixCloudCheck -ne 1) {
 
   If ($FoundHealthyDeliveryController -eq $False) {
     "Unable to validate a healthy Delivery Controller" | LogMe -display -progress
-    "- Locally installed Studio or the PowerShell SDK requires TCP 80, 443 open to the remote Delivery Controllers at minimum"| LogMe -display -progress
+    "- Locally installed Studio PowerShell module or the PowerShell SDK requires TCP 80, 443 open to the remote Delivery Controllers at minimum"| LogMe -display -progress
     "- Exiting the script" | LogMe -display -progress
     Exit
   }
@@ -383,102 +383,92 @@ If ($CitrixCloudCheck -ne 1) {
   #Header for Table "XD/XA Controllers" Get-BrokerController
   $XDControllerFirstheaderName = "ControllerServer"
   $XDControllerHeaderNames = "Ping", "State", "DesktopsRegistered", "ActiveSiteServices"
-  $XDControllerHeaderWidths = "2", "2", "2", "10"				
-  $XDControllerTableWidth= 1200
+  $XDControllerTableWidth= 1800
   foreach ($disk in $diskLettersControllers)
   {
     $XDControllerHeaderNames += "$($disk)Freespace"
-    $XDControllerHeaderWidths += "4"
   }
-  $XDControllerHeaderNames += "AvgCPU", "MemUsg", "Uptime"
-  #$XDControllerHeaderWidths += "4", "4", "4"
+  $XDControllerHeaderNames += "OSCaption", "OSBuild", "Uptime", "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg"
 }
 
-if ($CitrixCloudCheck -ne "1" -AND $ShowCloudConnectorTable -eq 1 ) {
+if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
   #Header for Table "Cloud Connector Servers"
   $CCFirstheaderName = "CloudConnectorServer"
   $CCHeaderNames = "Ping",  "CitrixServices"
-  $CCHeaderWidths = "2", "4"
-  $CCTableWidth= 1200
+  $CCTableWidth= 1800
   foreach ($disk in $diskLettersControllers)
   {
     $CCHeaderNames += "$($disk)Freespace"
-    $CCHeaderWidths += "4"
   }
-  $CCHeaderNames += "AvgCPU", "MemUsg", "Uptime"
-  #$CCHeaderWidths += "4", "4", "6"
+  $CCHeaderNames += "OSCaption", "OSBuild", "Uptime", "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg"
 }
 
 If ($ShowStorefrontTable -eq 1) {
   #Header for Table "Storefront Servers"
   $SFFirstheaderName = "StorefrontServer"
   $SFHeaderNames = "Ping",  "CitrixServices"
-  $SFHeaderWidths = "2", "4"
-  $SFTableWidth= 1200
+  $SFTableWidth= 1800
   foreach ($disk in $diskLettersControllers)
   {
     $SFHeaderNames += "$($disk)Freespace"
-    $SFHeaderWidths += "4"
   }
-  $SFHeaderNames += "AvgCPU", "MemUsg", "Uptime"
-  #$SFHeaderWidths += "4", "4", "6"
+  $SFHeaderNames += "OSCaption", "OSBuild", "Uptime", "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg"
 }
 
 #Header for Table "Fail Rates" FUTURE
 #$CTXFailureFirstheaderName = "Checks"
 #$CTXFailureHeaderNames = "#", "in Percentage", "CauseServiceInterruption", "CausePartialServiceInterruption"
-#$CTXFailureTableWidth= 900
+#$CTXFailureTableWidth= 1200
 
 #Header for Table "CTX Licenses" Get-BrokerController
 $CTXLicFirstheaderName = "LicenseName"
 $CTXLicHeaderNames = "LicenseServer", "Count", "InUse", "Available"
-$CTXLicHeaderWidths = "4", "2", "2", "2"
-$CTXLicTableWidth= 900
+$CTXLicTableWidth= 1200
   
 #Header for Table "MachineCatalogs" Get-BrokerCatalog
 $CatalogHeaderName = "CatalogName"
 $CatalogHeaderNames = "AssignedToUser", "AssignedToDG", "NotToUserAssigned", "ProvisioningType", "AllocationType", "MinimumFunctionalLevel", "UsedMCSSnapshot", "MasterImageVMDate", "UseFullDiskClone", "UseWriteBackCache", "WriteBackCacheMemSize"
-$CatalogTablewidth = 900
+$CatalogTablewidth = 1200
 
 #Header for Table "DeliveryGroups" Get-BrokerDesktopGroup
 $AssigmentFirstheaderName = "DeliveryGroup"
 $vAssigmentHeaderNames = "PublishedName", "DesktopKind", "SessionSupport", "ShutdownAfterUse", "TotalMachines", "DesktopsAvailable", "DesktopsUnregistered", "DesktopsInUse", "DesktopsFree", "MaintenanceMode", "MinimumFunctionalLevel"
-$Assigmenttablewidth = 900
+$Assigmenttablewidth = 1200
 
 #Header for Table "ConnectionFailureOnMachine" Get-BrokerConnectionLog
 $BrkrConFailureFirstheaderName = "ConnectionFailureOnMachine"
 $BrkrConFailureHeaderNames = "BrokeringTime", "ConnectionFailureReason", "BrokeringUserName", "BrokeringUserUPN"
-$BrkrConFailureTableWidth= 900
+$BrkrConFailureTableWidth= 1200
 
 #Header for Table "HypervisorConnection" Get-BrokerHypervisorConnection
 $HypervisorConnectionFirstheaderName = "HypervisorConnection"
 $HypervisorConnectionHeaderNames = "State", "IsReady", "MachineCount", "FaultState", "FaultReason", "TimeFaultStateEntered", "FaultStateDuration"
-$HypervisorConnectiontablewidth = 900
+$HypervisorConnectiontablewidth = 1200
 
 #Header for Table "VDI Singlesession Checks" Get-BrokerMachine
 $VDIfirstheaderName = "virtualDesktops"
-$VDIHeaderNames = "CatalogName", "DeliveryGroup", "Ping", "WinRM", "WMI", "UNC", "MaintMode", "Uptime", "LastConnect", "RegState", "PowerState", "VDAVersion", "OSBuild", "AssociatedUserNames", "Tags", "HostedOn", "displaymode", "EDT_MTU", "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace", "NvidiaLicense","NvidiaDriverVer"
-$VDItablewidth = 1200
+$VDIHeaderNames = "CatalogName", "DeliveryGroup", "Ping", "WinRM", "WMI", "UNC", "MaintMode", "Uptime", "LastConnect", "RegState", "PowerState", "VDAVersion", "OSCaption", "OSBuild", "AssociatedUserNames", "displaymode", "EDT_MTU", "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace", "NvidiaLicense","NvidiaDriverVer", "LogicalProcessors", "Sockets", "CoresPerSocket", "TotalPhysicalMemoryinGB", "Tags", "HostedOn"
+$VDItablewidth = 2400
   
 #Header for Table "XenApp/RDS/Multisession Checks" Get-BrokerMachine
 $XenAppfirstheaderName = "virtualApp-Servers"
-$XenAppHeaderNames = "CatalogName", "DeliveryGroup", "Ping", "WinRM", "WMI", "UNC", "Serverload", "MaintMode", "Uptime", "RegState", "PowerState", "VDAVersion", "Spooler", "CitrixPrint", "OSBuild", "RDSGracePeriod", "TerminalServerMode", "LicensingName", "LicensingType", "LicenseServerList", "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace", "NvidiaLicense","NvidiaDriverVer"
+$XenAppHeaderNames = "CatalogName", "DeliveryGroup", "Ping", "WinRM", "WMI", "UNC", "Serverload", "MaintMode", "Uptime", "RegState", "PowerState", "VDAVersion", "Spooler", "CitrixPrint", "OSCaption", "OSBuild", "RDSGracePeriod", "TerminalServerMode", "LicensingName", "LicensingType", "LicenseServerList", "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace", "NvidiaLicense","NvidiaDriverVer"
 foreach ($disk in $diskLettersWorkers)
 {
   $XenAppHeaderNames += "$($disk)Freespace"
 }
 if ($ShowConnectedXenAppUsers -eq "1") { 
-  $XenAppHeaderNames += "AvgCPU", "MemUsg", "ActiveSessions", "ConnectedUsers", "Tags", "HostedOn"
+  $XenAppHeaderNames += "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg", "ActiveSessions", "ConnectedUsers", "Tags", "HostedOn"
 }
 else {
-  $XenAppHeaderNames += "AvgCPU", "MemUsg", "ActiveSessions", "Tags", "HostedOn"
+  $XenAppHeaderNames += "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg", "ActiveSessions", "Tags", "HostedOn"
 }
-$XenApptablewidth = 1200
+$XenApptablewidth = 2400
 
 #Header for Table "StuckSessions"  Get-BrokerSession
 $StuckSessionsfirstheaderName = "Stuck-Session"
 $StuckSessionsHeaderNames  = "CatalogName", "DesktopGroupName", "UserName", "SessionState", "AppState", "SessionStateChangeTime", "LogonInProgress", "LogoffInProgress", "ClientAddress", "ConnectionMode", "Protocol"
-$StuckSessionstablewidth = 1200
+$StuckSessionstablewidth = 1800
 
 #==============================================================================================
 
@@ -693,25 +683,48 @@ public static class UncShareChecker
 
 #==============================================================================================
 
-Function CheckCpuUsage {
+Function Get-CpuConfigAndUsage {
   # The function checks the processor counter and check for the CPU usage. Takes an average CPU
   # usage for 5 seconds. It check the current CPU usage for 5 secs.
+  # It also gets the total logical processor count, as well as number of sockets and cores per
+  # socket, which helps identify misconfigurations.
   param (
          [switch]$UseWinRM,
          [int]$WinRMTimeoutSec=30,
          [string]$hostname
         )
+  $ResultProps = @{
+    LogicalProcessors = 0
+    Sockets = 0
+    CoresPerSocket = 0
+    CpuUsage = 0
+  }
+  $LogicalProcessors = 0
+  $Sockets = 0
+  $CoresPerSocket = 0
+  $ProcessorCountArray = @()
   Try {
     If ($UseWinRM) {
-      $CpuUsage=(Get-CimInstance -ClassName win32_processor -ComputerName $hostname -OperationTimeoutSec $WinRMTimeoutSec -ErrorAction Stop | Measure-Object -property LoadPercentage -Average | Select-Object -ExpandProperty Average)
+      $CpuConfigAndUsage = Get-CimInstance -ClassName win32_processor -ComputerName $hostname -OperationTimeoutSec $WinRMTimeoutSec -ErrorAction Stop | Select-Object DeviceID, SocketDesignation, NumberOfLogicalProcessors, LoadPercentage
     } Else {
-      $CpuUsage=(Get-WmiObject -computer $hostname -class win32_processor -ErrorAction Stop | Measure-Object -property LoadPercentage -Average | Select-Object -ExpandProperty Average)
+      $CpuConfigAndUsage = Get-WmiObject -computer $hostname -class win32_processor -ErrorAction Stop | Select-Object DeviceID, SocketDesignation, NumberOfLogicalProcessors, LoadPercentage
     }
-    $CpuUsage = [math]::round($CpuUsage, 1); return $CpuUsage
+    $CpuUsage = ($CpuConfigAndUsage | Measure-Object -property LoadPercentage -Average | Select-Object -ExpandProperty Average)
+    $ResultProps.CpuUsage = [math]::round($CpuUsage, 1)
+    ForEach ($CpuConfig in $CpuConfigAndUsage) {
+      $Sockets = $Sockets + 1
+      $CoresPerSocket = $CPUConfig.NumberOfLogicalProcessors
+      $LogicalProcessors = $LogicalProcessors + $CPUConfig.NumberOfLogicalProcessors
+    }
+    $ResultProps.LogicalProcessors = $LogicalProcessors
+    $ResultProps.Sockets = $Sockets
+    $ResultProps.CoresPerSocket = $CoresPerSocket
   }
-  Catch {
-    "Error returned while checking the CPU usage. Perfmon Counters may be fault" | LogMe -error; return 101
+  Catch [System.Exception]{
+    #$($Error[0].Exception.Message)
+    "Error returned while checking the CPU config and usage. If you are unable to collect usage information, there may be an issues with the Perfmon Counters." | LogMe -error; return $null
   }
+  return $ResultProps
 }
 
 #============================================================================================== 
@@ -737,8 +750,40 @@ Function CheckMemoryUsage {
     return $RAMPercentUsed
   }
   Catch {
-    "Error returned while checking the Memory usage. Perfmon Counters may be fault" | LogMe -error; return 101
+    "Error returned while checking the Memory usage. Perfmon Counters may be fault" | LogMe -error; return $null
   }
+}
+
+#==============================================================================================
+
+Function Get-TotalPhysicalMemory {
+  # The function gets the total physical memory, which helps identify misconfigurations.
+  # Note that the TotalPhysicalMemory property of the Win32_ComputerSystem class states that under some
+  # circumstances this property may not return an accurate value for the physical memory. For example, it
+  # is not accurate if the BIOS is using some of the physical memory. For an accurate value, use the
+  # Capacity property in Win32_PhysicalMemory instead.
+  param (
+         [switch]$UseWinRM,
+         [int]$WinRMTimeoutSec=30,
+         [string]$hostname
+        )
+  $TotalPhysicalMemoryinGB = 0
+  Try {
+    If ($UseWinRM) {
+      $PhysicalMemory = Get-CimInstance -ClassName Win32_PhysicalMemory -ComputerName $hostname -OperationTimeoutSec $WinRMTimeoutSec -ErrorAction Stop | Select-Object Capacity
+    } Else {
+      $PhysicalMemory = Get-WmiObject -computername $hostname -Class Win32_PhysicalMemory -ErrorAction Stop | Select-Object Capacity
+    }
+    $TotalPhysicalMemory = 0
+    ForEach ($Bank in $PhysicalMemory) {
+      $TotalPhysicalMemory = $TotalPhysicalMemory + $Bank.Capacity
+    }
+    $TotalPhysicalMemoryinGB = [math]::round(($TotalPhysicalMemory / 1GB),0)
+  }
+  Catch [System.Exception]{
+    #$($Error[0].Exception.Message)
+  }
+  return $TotalPhysicalMemoryinGB
 }
 
 #==============================================================================================
@@ -769,7 +814,6 @@ Function CheckHardDiskUsage {
     } 
     return $HardDisk
   } Catch { "Error returned while checking the Hard Disk usage. Perfmon Counters may be fault" | LogMe -error; return $null }
-  return "Hello"
 }
 
 #==============================================================================================
@@ -1029,32 +1073,39 @@ Function Check-NvidiaLicenseStatus {
 #==============================================================================================
 
 Function Get-RDSLicensingDetails {
-  # This functions checks the RDS Licensing Details:
-  # It gets the days remaining for the RDS licensing grace period so you can address any concerns.
-  # A grace period of 0 days is good. We report on anything less than 10 as a warning and 5 as an error, as it
-  # may take time to drain sessions for a reboot.
-  # Note that this function will still run against Windows 10/11 multi-session hosts, but the output is not relevant.
-  # If TerminalServerMode is set to 0, it's in RemoteAdmin mode and does not have a GetGracePeriodDays method or path
-  # to query. So we first test for TerminalServerMode before continuing.
-  # We also get the LicensingName, LicensingType and LicenseServerList values, which allows us to check for consistency
-  # across the environment.
-  # LicenseName Meaning:
-  # - Not Configured = No licensing mode is set (common on fresh systems or when licensing is unconfigured)
-  # - Per Device = Traditional RDS mode - one RDS CAL per device
-  # - Per User = Traditional RDS mode - one RDS CAL per user
-  # - Remote Desktop for Admin = Admin mode (no RDS CALs required, limited to 2 concurrent sessions)
-  # - AAD Per User = Azure Virtual Desktop - licensed via Azure AD and Microsoft 365 per-user license
-  # - AVD License = Alternative string to AAD Per User sometimes seen on AVD hosts. The functionally is equivalent.
-  # - Unknown or blank = Licensing misconfigured, corrupted, or not applicable
-  # LicenseType Meaning:
-  # - 1 = Not configured
-  # - 2 = Per Device
-  # - 4 = Per User
-  # - 5 = Remote Desktop for Administration (Admin mode)
-  # - 6 = Invalid or unknown licensing mode. You may also see this on Windows 10/11 Enterprise multi-session hosts on
-  #       Azure, which do not use traditional RDS CALs. This is expected and harmless.
-  # Original idea for the grace period taken from Manuel Winkel's (AKA Deyda) Citrix Morning Report script:
-  # - https://github.com/Deyda/Citrix/tree/master/Morning%20Report
+  # This functions checks the RDS Licensing Details, including grace period.
+  # IMPORTANT to understand the following:
+  # - If the "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server\RCM\GracePeriod" key is missing (typically because
+  #   it has been deleted), the GetGracePeriodDays method cannot be found on the Win32_TerminalServiceSetting class. The check will
+  #   be  marked as error.
+  # - If TerminalServerMode is set to 1 (AppServer) but licensing has never been configured/applied, the RDS licensing grace period
+  #   will be set to 0 (good), as it has never had a reference to start it. This can happen with new builds and the output of this
+  #   function can be confusing if this is not understood.
+  # - That function will still run against Windows 10/11 multi-session hosts, but the output is not relevant.
+  # - If TerminalServerMode is set to 0, it's in RemoteAdmin mode and does not have a GetGracePeriodDays method or path to query.
+  #   So we first test for TerminalServerMode before continuing.
+  # - It gets the days remaining for the RDS licensing grace period so you can address any concerns well within time.
+  # - A grace period of 0 days is good. We report on anything less than 10 as a warning and 5 as an error, as it may take time to
+  #   drain sessions for a reboot.
+  # - We get the LicensingName, LicensingType and LicenseServerList values, which allows us to check for consistency across all the
+  #   machines that are part of the overall health check.
+  # - LicenseName Meaning:
+  #   - Not Configured = No licensing mode is set (common on fresh systems or when licensing is unconfigured)
+  #   - Per Device = Traditional RDS mode - one RDS CAL per device
+  #   - Per User = Traditional RDS mode - one RDS CAL per user
+  #   - Remote Desktop for Admin = Admin mode (no RDS CALs required, limited to 2 concurrent sessions)
+  #   - AAD Per User = Azure Virtual Desktop - licensed via Azure AD and Microsoft 365 per-user license
+  #   - AVD License = Alternative string to AAD Per User sometimes seen on AVD hosts. The functionally is equivalent.
+  #   - Unknown or blank = Licensing misconfigured, corrupted, or not applicable
+  # - LicenseType Meaning:
+  #   - 1 = Not configured
+  #   - 2 = Per Device
+  #   - 4 = Per User
+  #   - 5 = Remote Desktop for Administration (Admin mode)
+  #   - 6 = Invalid or unknown licensing mode. You may also see this on Windows 10/11 Enterprise multi-session hosts on
+  #         Azure, which do not use traditional RDS CALs. This is expected and harmless.
+  # Although this function does so much more, the original idea for the grace period was taken from Manuel Winkel's (AKA Deyda) Citrix
+  # Morning Report script: https://github.com/Deyda/Citrix/tree/master/Morning%20Report
   # Written by Jeremy Saunders.
   param (
          [switch]$UseWinRM,
@@ -1126,7 +1177,7 @@ Function Get-RDSLicensingDetails {
     }
   }
   Catch [system.exception] {
-    #$_.Exception.Message
+    #"$($_.Exception.Message)"
     $ResultProps.TerminalServerMode = "Unknown"
     $ResultProps.LicensingName = "Unknown"
     $ResultProps.LicensingType = "Unknown"
@@ -1437,9 +1488,9 @@ $tableHeader = @"
   
 <table width='$tablewidth'><tbody>
 <tr bgcolor=#CCCCCC>
-<td width='6%' align='center'><strong>$firstheaderName</strong></td>
+<td align='center'><strong>$firstheaderName</strong></td>
 "@
-  
+
 $i = 0
 while ($i -lt $headerNames.count) {
 $headerName = $headerNames[$i]
@@ -1467,7 +1518,8 @@ Function writeData
 param($data, $fileName, $headerNames)
 
 $tableEntry  =""
-$data.Keys | Sort-Object | ForEach-Object {
+#$data.Keys | Sort-Object | ForEach-Object {
+$data.Keys | ForEach-Object {
 $tableEntry += "<tr>"
 $computerName = $_
 $tableEntry += ("<td bgcolor='#CCCCCC' align=center><font color='#003399'>$computerName</font></td>")
@@ -1496,7 +1548,55 @@ $tableEntry += "</tr>"
 }
 $tableEntry | Out-File $fileName -append
 }
-  
+
+Function writeDataSortedByHeaderName
+{
+param($data, $fileName, $headerNames, $headerToSortBy)
+
+$tableEntry  =""
+#  Hashtables are inherently unordered, meaning you cannot directly sort a hashtable and maintain the order. However, you
+#  can achieve a sorted representation by extracting the data, sorting it, and then displaying or using it in the desired
+#  order. We do this using the GetEnumerator() method, which converts the hashtable into a collection of key-value pairs
+#  (DictionaryEntry objects), which can then be piped to Sort-Object to sort on Key (Name), Value, or a Value within the
+#  Value. The Sort-Object cmdlet allows us to sort for multiple columns. Use commas to create a list of properties to sort
+#  by, in order to precedence. So in this case we want to primarily sort on the $headerToSortBy column, and then by Key
+#  (Name). If you want to preserve the order after sorting, you can then pipe it to a ForEach-Object to be stored into a
+#  new ordered dictionary.
+#$sortedData = $data.GetEnumerator() | Sort-Object {$_.Value.$headerToSortBy},Key
+$sortedData = [ordered]@{}
+$data.GetEnumerator() | Sort-Object {$_.Value.$headerToSortBy},Key | ForEach-Object {
+  $sortedData[$_.Key] = $_.Value
+}
+$sortedData.Keys | ForEach-Object {
+$tableEntry += "<tr>"
+$computerName = $_
+$tableEntry += ("<td bgcolor='#CCCCCC' align=center><font color='#003399'>$computerName</font></td>")
+#$sortedData.$_.Keys | foreach {
+$headerNames | ForEach-Object {
+#"$computerName : $_" | LogMe -display
+try {
+if ($sortedData.$computerName.$_[0] -eq "SUCCESS") { $bgcolor = "#387C44"; $fontColor = "#FFFFFF" }
+elseif ($sortedData.$computerName.$_[0] -eq "WARNING") { $bgcolor = "#FF7700"; $fontColor = "#FFFFFF" }
+elseif ($sortedData.$computerName.$_[0] -eq "ERROR") { $bgcolor = "#FF0000"; $fontColor = "#FFFFFF" }
+else { $bgcolor = "#CCCCCC"; $fontColor = "#003399" }
+$testResult = $sortedData.$computerName.$_[1]
+}
+catch {
+$bgcolor = "#CCCCCC"; $fontColor = "#003399"
+$testResult = ""
+}
+# Replace a regular hyphen with a non-breaking hyphen to reduce text breaking to the next line.
+$nonBreakingHyphen = [char]0x2011
+If (![string]::IsNullOrEmpty($testResult)) {
+$testResult = ($testResult -replace '-', $nonBreakingHyphen)
+}
+$tableEntry += ("<td bgcolor='" + $bgcolor + "' align=center><font color='" + $fontColor + "'>$testResult</font></td>")
+}
+$tableEntry += "</tr>"
+}
+$tableEntry | Out-File $fileName -append
+}
+
 # ==============================================================================================
 
 Function writeHtmlFooter
@@ -1656,9 +1756,14 @@ If ($CitrixCloudCheck -ne 1) {
     "Controller: $ControllerDNS" | LogMe -display -progress
   
     #Test-Ping $Controller
-    $result = Test-Ping -Target:$ControllerDNS -Timeout:100 -Count:3
-    if ($result -ne "SUCCESS") { $tests.Ping = "Error", $result }
-    else { $tests.Ping = "SUCCESS", $result }
+    $result = Test-Ping -Target:$ControllerDNS -Timeout:200 -Count:3
+    # Column Ping
+    If ($result -eq "SUCCESS") {
+      $tests.Ping = "SUCCESS", $result
+    } Else {
+      $tests.Ping = "NORMAL", $result
+    }
+    "Is Pingable: $result" | LogMe -display -progress
 
     $IsWinRMAccessible = IsWinRMAccessible -hostname:$ControllerDNS
 
@@ -1682,23 +1787,67 @@ If ($CitrixCloudCheck -ne 1) {
     #               CHECK CPU AND MEMORY USAGE
     #==============================================================================================
 
-    # Check the AvgCPU value for 5 seconds
-    $AvgCPUval = CheckCpuUsage -hostname:$ControllerDNS -UseWinRM:$IsWinRMAccessible
-    if( [int] $AvgCPUval -lt 75) { "CPU usage is normal [ $AvgCPUval % ]" | LogMe -display; $tests.AvgCPU = "SUCCESS", "$AvgCPUval %" }
-    elseif([int] $AvgCPUval -lt 85) { "CPU usage is medium [ $AvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$AvgCPUval %" }   	
-    elseif([int] $AvgCPUval -lt 95) { "CPU usage is high [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }
-    elseif([int] $AvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err" }
-    else { "CPU usage is Critical [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }   
-    $AvgCPUval = 0
+    # Get the CPU configuration and check the AvgCPU value for 5 seconds
+    $CpuConfigAndUsage = Get-CpuConfigAndUsage -hostname:$ControllerDNS -UseWinRM:$IsWinRMAccessible
+    If ($null -ne $CpuConfigAndUsage) {
+      $AvgCPUval = $CpuConfigAndUsage.CpuUsage
+      if( [int] $AvgCPUval -lt 75) { "CPU usage is normal [ $AvgCPUval % ]" | LogMe -display; $tests.AvgCPU = "SUCCESS", "$AvgCPUval %" }
+      elseif([int] $AvgCPUval -lt 85) { "CPU usage is medium [ $AvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$AvgCPUval %" }   	
+      elseif([int] $AvgCPUval -lt 95) { "CPU usage is high [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }
+      elseif([int] $AvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err" }
+      else { "CPU usage is Critical [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }   
+      $AvgCPUval = 0
+      "CPU Configuration:" | LogMe -display -progress
+      If ($CpuConfigAndUsage.LogicalProcessors -gt 1) {
+        "- LogicalProcessors: $($CpuConfigAndUsage.LogicalProcessors)" | LogMe -display -progress
+        $tests.LogicalProcessors = "NEUTRAL", $CpuConfigAndUsage.LogicalProcessors
+      } ElseIf ($CpuConfigAndUsage.LogicalProcessors -eq 1) {
+        "- LogicalProcessors: $($CpuConfigAndUsage.LogicalProcessors)" | LogMe -display -warning
+        $tests.LogicalProcessors = "WARNING", $CpuConfigAndUsage.LogicalProcessors
+      } Else {
+        "- LogicalProcessors: Unable to detect." | LogMe -display -progress
+      }
+      If ($CpuConfigAndUsage.Sockets -gt 0) {
+        "- Sockets: $($CpuConfigAndUsage.Sockets)" | LogMe -display -progress
+        $tests.Sockets = "NEUTRAL", $CpuConfigAndUsage.Sockets
+      } Else {
+        "- Sockets: Unable to detect." | LogMe -display -progress
+      }
+      If ($CpuConfigAndUsage.CoresPerSocket -gt 0) {
+        "- CoresPerSocket: $($CpuConfigAndUsage.CoresPerSocket)" | LogMe -display -progress
+        $tests.CoresPerSocket = "NEUTRAL", $CpuConfigAndUsage.CoresPerSocket
+      } Else {
+        "- CoresPerSocket: Unable to detect." | LogMe -display -progress
+      }
+    } else {
+      "Unable to get CPU configuration and usage" | LogMe -display -error
+    }
 
     # Check the Physical Memory usage       
     $UsedMemory = CheckMemoryUsage -hostname:$ControllerDNS -UseWinRM:$IsWinRMAccessible
-    if( $UsedMemory -lt 75) { "Memory usage is normal [ $UsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$UsedMemory %" }
-    elseif( [int] $UsedMemory -lt 85) { "Memory usage is medium [ $UsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$UsedMemory %" }   	
-    elseif( [int] $UsedMemory -lt 95) { "Memory usage is high [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }
-    elseif( [int] $UsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
-    else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }   
-    $UsedMemory = 0  
+    If ($null -ne $UsedMemory) {
+      if( $UsedMemory -lt 75) { "Memory usage is normal [ $UsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$UsedMemory %" }
+      elseif( [int] $UsedMemory -lt 85) { "Memory usage is medium [ $UsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$UsedMemory %" }   	
+      elseif( [int] $UsedMemory -lt 95) { "Memory usage is high [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }
+      elseif( [int] $UsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
+      else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }   
+      $UsedMemory = 0  
+    } else {
+      "Unable to get Memory usage" | LogMe -display -error
+    }
+
+    # Get the total Physical Memory
+    $TotalPhysicalMemoryinGB = Get-TotalPhysicalMemory -hostname:$ControllerDNS -UseWinRM:$IsWinRMAccessible
+    If ($TotalPhysicalMemoryinGB -ge 4) {
+      "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -progress
+      $tests.TotalPhysicalMemoryinGB = "NEUTRAL", $TotalPhysicalMemoryinGB
+    } ElseIf ($TotalPhysicalMemoryinGB -ge 2) {
+      "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -warning
+      $tests.TotalPhysicalMemoryinGB = "WARNING", $TotalPhysicalMemoryinGB
+    } Else {
+      "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -error
+      $tests.TotalPhysicalMemoryinGB = "ERROR", $TotalPhysicalMemoryinGB
+    }
 
     foreach ($disk in $diskLettersControllers)
     {
@@ -1716,7 +1865,26 @@ If ($CitrixCloudCheck -ne 1) {
         $XAPercentageDS = 0
         $frSpace = 0
         $HardDisk = $null
+      } else {
+        "Unable to get Hard Disk usage" | LogMe -display -error
       }
+    }
+
+    # Column OSBuild 
+    $return = Get-OSVersion -hostname:$ControllerDNS -UseWinRM:$IsWinRMAccessible
+    If ($null -ne $return) {
+      If ($return.Error -eq "Success") {
+        $tests.OSCaption = "NEUTRAL", $return.Caption
+        $tests.OSBuild = "NEUTRAL", $return.Version
+        "OS Caption: $($return.Caption)" | LogMe -display -progress
+        "OS Version: $($return.Version)" | LogMe -display -progress
+      } Else {
+        $tests.OSCaption = "ERROR", $return.Caption
+        $tests.OSBuild = "ERROR", $return.Version
+        "OS Test: $($return.Error)" | LogMe -display -error
+      }
+    } else {
+      "Unable to get OS Version and Caption" | LogMe -display -error
     }
 
     # Check uptime
@@ -1741,7 +1909,7 @@ If ($CitrixCloudCheck -ne 1) {
 }#Close off $CitrixCloudCheck
 
 #== Cloud Connector Check ===========================================================================================
-if ($CitrixCloudCheck -ne "1" -AND $ShowCloudConnectorTable -eq 1 ) {
+if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
   "Check Cloud Connector Servers #################################################################" | LogMe -display -progress
 
   " " | LogMe -display -progress
@@ -1756,9 +1924,14 @@ if ($CitrixCloudCheck -ne "1" -AND $ShowCloudConnectorTable -eq 1 ) {
     "Cloud Connector Server: $CloudConnectorServerDNS" | LogMe -display -progress
   
     #Ping $CloudConnectorServer
-    $result = Test-Ping -Target:$CloudConnectorServerDNS -Timeout:100 -Count:3
-    if ($result -ne "SUCCESS") { $tests.Ping = "Error", $result }
-    else { $tests.Ping = "SUCCESS", $result }
+    $result = Test-Ping -Target:$CloudConnectorServerDNS -Timeout:200 -Count:3
+    # Column Ping
+    If ($result -eq "SUCCESS") {
+      $tests.Ping = "SUCCESS", $result
+    } Else {
+      $tests.Ping = "NORMAL", $result
+    }
+    "Is Pingable: $result" | LogMe -display -progress
 
     $IsWinRMAccessible = IsWinRMAccessible -hostname:$CloudConnectorServerDNS
 
@@ -1772,12 +1945,12 @@ if ($CitrixCloudCheck -ne "1" -AND $ShowCloudConnectorTable -eq 1 ) {
         # Check if there are any stopped services
         if ($CCActiveSiteServices) {
           # If there are stopped services, print the list of stopped services
-          Write-Host "The following services are not running:$(($CCActiveSiteServices).Name)"
+          "The following services are not running:$(($CCActiveSiteServices).Name)" | LogMe -display -warning
           $NotRunning_Service = $CCActiveSiteServices | ForEach-Object { $_.Name }
-          $tests.CitrixCCServices = "Warning","$NotRunning_Service"
+          $tests.CitrixServices = "Warning","$NotRunning_Service"
         } else {
           # If no services are stopped, print success message
-          Write-Host "All services are running successfully."
+          "All services are running successfully." | LogMe -display -progress
           $tests.CitrixServices = "SUCCESS","OK"
         }
       }
@@ -1785,30 +1958,75 @@ if ($CitrixCloudCheck -ne "1" -AND $ShowCloudConnectorTable -eq 1 ) {
         #"Error returned while checking the services" | LogMe -error; return 101
       }
     } Else {
-      # Cannot connect via WinRM
+      $tests.CitrixServices = "WARNING","Cannot connect via WinRM"
+      "Cannot connect via WinRM" | LogMe -display -warning
     }
 
     #==============================================================================================
     #               CHECK CPU AND MEMORY USAGE
     #==============================================================================================
 
-    # Check the AvgCPU value for 5 seconds
-    $AvgCPUval = CheckCpuUsage -hostname:$CloudConnectorServerDNS -UseWinRM:$IsWinRMAccessible
-    if( [int] $AvgCPUval -lt 75) { "CPU usage is normal [ $AvgCPUval % ]" | LogMe -display; $tests.AvgCPU = "SUCCESS", "$AvgCPUval %" }
-    elseif([int] $AvgCPUval -lt 85) { "CPU usage is medium [ $AvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$AvgCPUval %" }   	
-    elseif([int] $AvgCPUval -lt 95) { "CPU usage is high [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }
-    elseif([int] $AvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err" }
-    else { "CPU usage is Critical [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }   
-    $AvgCPUval = 0
+    # Get the CPU configuration and check the AvgCPU value for 5 seconds
+    $CpuConfigAndUsage = Get-CpuConfigAndUsage -hostname:$CloudConnectorServerDNS -UseWinRM:$IsWinRMAccessible
+    If ($null -ne $CpuConfigAndUsage) {
+      $AvgCPUval = $CpuConfigAndUsage.CpuUsage
+      if( [int] $AvgCPUval -lt 75) { "CPU usage is normal [ $AvgCPUval % ]" | LogMe -display; $tests.AvgCPU = "SUCCESS", "$AvgCPUval %" }
+      elseif([int] $AvgCPUval -lt 85) { "CPU usage is medium [ $AvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$AvgCPUval %" }   	
+      elseif([int] $AvgCPUval -lt 95) { "CPU usage is high [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }
+      elseif([int] $AvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err" }
+      else { "CPU usage is Critical [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }   
+      $AvgCPUval = 0
+      "CPU Configuration:" | LogMe -display -progress
+      If ($CpuConfigAndUsage.LogicalProcessors -gt 1) {
+        "- LogicalProcessors: $($CpuConfigAndUsage.LogicalProcessors)" | LogMe -display -progress
+        $tests.LogicalProcessors = "NEUTRAL", $CpuConfigAndUsage.LogicalProcessors
+      } ElseIf ($CpuConfigAndUsage.LogicalProcessors -eq 1) {
+        "- LogicalProcessors: $($CpuConfigAndUsage.LogicalProcessors)" | LogMe -display -warning
+        $tests.LogicalProcessors = "WARNING", $CpuConfigAndUsage.LogicalProcessors
+      } Else {
+        "- LogicalProcessors: Unable to detect." | LogMe -display -progress
+      }
+      If ($CpuConfigAndUsage.Sockets -gt 0) {
+        "- Sockets: $($CpuConfigAndUsage.Sockets)" | LogMe -display -progress
+        $tests.Sockets = "NEUTRAL", $CpuConfigAndUsage.Sockets
+      } Else {
+        "- Sockets: Unable to detect." | LogMe -display -progress
+      }
+      If ($CpuConfigAndUsage.CoresPerSocket -gt 0) {
+        "- CoresPerSocket: $($CpuConfigAndUsage.CoresPerSocket)" | LogMe -display -progress
+        $tests.CoresPerSocket = "NEUTRAL", $CpuConfigAndUsage.CoresPerSocket
+      } Else {
+        "- CoresPerSocket: Unable to detect." | LogMe -display -progress
+      }
+    } else {
+      "Unable to get CPU configuration and usage" | LogMe -display -error
+    }
 
     # Check the Physical Memory usage       
     $UsedMemory = CheckMemoryUsage -hostname:$CloudConnectorServerDNS -UseWinRM:$IsWinRMAccessible
-    if( $UsedMemory -lt 75) { "Memory usage is normal [ $UsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$UsedMemory %" }
-    elseif( [int] $UsedMemory -lt 85) { "Memory usage is medium [ $UsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$UsedMemory %" }   	
-    elseif( [int] $UsedMemory -lt 95) { "Memory usage is high [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }
-    elseif( [int] $UsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
-    else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }   
-    $UsedMemory = 0  
+    If ($null -ne $UsedMemory) {
+      if( $UsedMemory -lt 75) { "Memory usage is normal [ $UsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$UsedMemory %" }
+      elseif( [int] $UsedMemory -lt 85) { "Memory usage is medium [ $UsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$UsedMemory %" }   	
+      elseif( [int] $UsedMemory -lt 95) { "Memory usage is high [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }
+      elseif( [int] $UsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
+      else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }   
+      $UsedMemory = 0  
+    } else {
+      "Unable to get Memory usage" | LogMe -display -error
+    }
+
+    # Get the total Physical Memory
+    $TotalPhysicalMemoryinGB = Get-TotalPhysicalMemory -hostname:$CloudConnectorServerDNS -UseWinRM:$IsWinRMAccessible
+    If ($TotalPhysicalMemoryinGB -ge 4) {
+      "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -progress
+      $tests.TotalPhysicalMemoryinGB = "NEUTRAL", $TotalPhysicalMemoryinGB
+    } ElseIf ($TotalPhysicalMemoryinGB -ge 2) {
+      "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -warning
+      $tests.TotalPhysicalMemoryinGB = "WARNING", $TotalPhysicalMemoryinGB
+    } Else {
+      "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -error
+      $tests.TotalPhysicalMemoryinGB = "ERROR", $TotalPhysicalMemoryinGB
+    }
 
     foreach ($disk in $diskLettersControllers)
     {
@@ -1826,7 +2044,26 @@ if ($CitrixCloudCheck -ne "1" -AND $ShowCloudConnectorTable -eq 1 ) {
         $XAPercentageDS = 0
         $frSpace = 0
         $HardDisk = $null
+      } else {
+        "Unable to get Hard Disk usage" | LogMe -display -error
       }
+    }
+
+    # Column OSBuild 
+    $return = Get-OSVersion -hostname:$CloudConnectorServerDNS -UseWinRM:$IsWinRMAccessible
+    If ($null -ne $return) {
+      If ($return.Error -eq "Success") {
+        $tests.OSCaption = "NEUTRAL", $return.Caption
+        $tests.OSBuild = "NEUTRAL", $return.Version
+        "OS Caption: $($return.Caption)" | LogMe -display -progress
+        "OS Version: $($return.Version)" | LogMe -display -progress
+      } Else {
+        $tests.OSCaption = "ERROR", $return.Caption
+        $tests.OSBuild = "ERROR", $return.Version
+        "OS Test: $($return.Error)" | LogMe -display -error
+      }
+    } else {
+      "Unable to get OS Version and Caption" | LogMe -display -error
     }
 
     # Check uptime
@@ -1850,7 +2087,7 @@ if ($CitrixCloudCheck -ne "1" -AND $ShowCloudConnectorTable -eq 1 ) {
   }#Close off foreach $CloudConnectorServer
 }#Close off if $ShowCloudConnectorTable
 
-#== Stortefront Check ===========================================================================================
+#== Storefront Check ================================================================================================
 If ($ShowStorefrontTable -eq 1) {
   "Check Storefront Servers ######################################################################" | LogMe -display -progress
 
@@ -1866,9 +2103,14 @@ If ($ShowStorefrontTable -eq 1) {
     "Storefront Server: $StoreFrontServerDNS" | LogMe -display -progress
   
     #Ping $StoreFrontServer
-    $result = Test-Ping -Target:$StoreFrontServerDNS -Timeout:100 -Count:3
-    if ($result -ne "SUCCESS") { $tests.Ping = "Error", $result }
-    else { $tests.Ping = "SUCCESS", $result }
+    $result = Test-Ping -Target:$StoreFrontServerDNS -Timeout:200 -Count:3
+    # Column Ping
+    If ($result -eq "SUCCESS") {
+      $tests.Ping = "SUCCESS", $result
+    } Else {
+      $tests.Ping = "NORMAL", $result
+    }
+    "Is Pingable: $result" | LogMe -display -progress
 
     $IsWinRMAccessible = IsWinRMAccessible -hostname:$StoreFrontServerDNS
 
@@ -1882,12 +2124,12 @@ If ($ShowStorefrontTable -eq 1) {
         # Check if there are any stopped services
         if ($SFActiveSiteServices) {
           # If there are stopped services, print the list of stopped services
-          Write-Host "The following services are not running:$(($SFActiveSiteServices).Name)"
+          "The following services are not running:$(($CCActiveSiteServices).Name)" | LogMe -display -warning
           $NotRunning_Service = $SFActiveSiteServices | ForEach-Object { $_.Name }
-          $tests.CitrixSFServices = "Warning","$NotRunning_Service"
+          $tests.CitrixServices = "Warning","$NotRunning_Service"
         } else {
           # If no services are stopped, print success message
-          Write-Host "All services are running successfully."
+          "All services are running successfully." | LogMe -display -progress
           $tests.CitrixServices = "SUCCESS","OK"
         }
       }
@@ -1895,30 +2137,75 @@ If ($ShowStorefrontTable -eq 1) {
         #"Error returned while checking the services" | LogMe -error; return 101
       }
     } Else {
-      # Cannot connect via WinRM
+      $tests.CitrixServices = "WARNING","Cannot connect via WinRM"
+      "Cannot connect via WinRM" | LogMe -display -warning
     }
 
     #==============================================================================================
     #               CHECK CPU AND MEMORY USAGE
     #==============================================================================================
 
-    # Check the AvgCPU value for 5 seconds
-    $AvgCPUval = CheckCpuUsage -hostname:$StoreFrontServerDNS -UseWinRM:$IsWinRMAccessible
-    if( [int] $AvgCPUval -lt 75) { "CPU usage is normal [ $AvgCPUval % ]" | LogMe -display; $tests.AvgCPU = "SUCCESS", "$AvgCPUval %" }
-    elseif([int] $AvgCPUval -lt 85) { "CPU usage is medium [ $AvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$AvgCPUval %" }   	
-    elseif([int] $AvgCPUval -lt 95) { "CPU usage is high [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }
-    elseif([int] $AvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err" }
-    else { "CPU usage is Critical [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }   
-    $AvgCPUval = 0
+    # Get the CPU configuration and check the AvgCPU value for 5 seconds
+    $CpuConfigAndUsage = Get-CpuConfigAndUsage -hostname:$StoreFrontServerDNS -UseWinRM:$IsWinRMAccessible
+    If ($null -ne $CpuConfigAndUsage) {
+      $AvgCPUval = $CpuConfigAndUsage.CpuUsage
+      if( [int] $AvgCPUval -lt 75) { "CPU usage is normal [ $AvgCPUval % ]" | LogMe -display; $tests.AvgCPU = "SUCCESS", "$AvgCPUval %" }
+      elseif([int] $AvgCPUval -lt 85) { "CPU usage is medium [ $AvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$AvgCPUval %" }   	
+      elseif([int] $AvgCPUval -lt 95) { "CPU usage is high [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }
+      elseif([int] $AvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err" }
+      else { "CPU usage is Critical [ $AvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$AvgCPUval %" }   
+      $AvgCPUval = 0
+      "CPU Configuration:" | LogMe -display -progress
+      If ($CpuConfigAndUsage.LogicalProcessors -gt 1) {
+        "- LogicalProcessors: $($CpuConfigAndUsage.LogicalProcessors)" | LogMe -display -progress
+        $tests.LogicalProcessors = "NEUTRAL", $CpuConfigAndUsage.LogicalProcessors
+      } ElseIf ($CpuConfigAndUsage.LogicalProcessors -eq 1) {
+        "- LogicalProcessors: $($CpuConfigAndUsage.LogicalProcessors)" | LogMe -display -warning
+        $tests.LogicalProcessors = "WARNING", $CpuConfigAndUsage.LogicalProcessors
+      } Else {
+        "- LogicalProcessors: Unable to detect." | LogMe -display -progress
+      }
+      If ($CpuConfigAndUsage.Sockets -gt 0) {
+        "- Sockets: $($CpuConfigAndUsage.Sockets)" | LogMe -display -progress
+        $tests.Sockets = "NEUTRAL", $CpuConfigAndUsage.Sockets
+      } Else {
+        "- Sockets: Unable to detect." | LogMe -display -progress
+      }
+      If ($CpuConfigAndUsage.CoresPerSocket -gt 0) {
+        "- CoresPerSocket: $($CpuConfigAndUsage.CoresPerSocket)" | LogMe -display -progress
+        $tests.CoresPerSocket = "NEUTRAL", $CpuConfigAndUsage.CoresPerSocket
+      } Else {
+        "- CoresPerSocket: Unable to detect." | LogMe -display -progress
+      }
+    } else {
+      "Unable to get CPU configuration and usage" | LogMe -display -error
+    }
 
     # Check the Physical Memory usage       
     $UsedMemory = CheckMemoryUsage -hostname:$StoreFrontServerDNS -UseWinRM:$IsWinRMAccessible
-    if( $UsedMemory -lt 75) { "Memory usage is normal [ $UsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$UsedMemory %" }
-    elseif( [int] $UsedMemory -lt 85) { "Memory usage is medium [ $UsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$UsedMemory %" }   	
-    elseif( [int] $UsedMemory -lt 95) { "Memory usage is high [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }
-    elseif( [int] $UsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
-    else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }   
-    $UsedMemory = 0  
+    If ($null -ne $UsedMemory) {
+      if( $UsedMemory -lt 75) { "Memory usage is normal [ $UsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$UsedMemory %" }
+      elseif( [int] $UsedMemory -lt 85) { "Memory usage is medium [ $UsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$UsedMemory %" }   	
+      elseif( [int] $UsedMemory -lt 95) { "Memory usage is high [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }
+      elseif( [int] $UsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
+      else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }   
+      $UsedMemory = 0  
+    } else {
+      "Unable to get Memory usage" | LogMe -display -error
+    }
+
+    # Get the total Physical Memory
+    $TotalPhysicalMemoryinGB = Get-TotalPhysicalMemory -hostname:$StoreFrontServerDNS -UseWinRM:$IsWinRMAccessible
+    If ($TotalPhysicalMemoryinGB -ge 4) {
+      "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -progress
+      $tests.TotalPhysicalMemoryinGB = "NEUTRAL", $TotalPhysicalMemoryinGB
+    } ElseIf ($TotalPhysicalMemoryinGB -ge 2) {
+      "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -warning
+      $tests.TotalPhysicalMemoryinGB = "WARNING", $TotalPhysicalMemoryinGB
+    } Else {
+      "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -error
+      $tests.TotalPhysicalMemoryinGB = "ERROR", $TotalPhysicalMemoryinGB
+    }
 
     foreach ($disk in $diskLettersControllers)
     {
@@ -1936,7 +2223,26 @@ If ($ShowStorefrontTable -eq 1) {
         $XAPercentageDS = 0
         $frSpace = 0
         $HardDisk = $null
+      } else {
+        "Unable to get Hard Disk usage" | LogMe -display -error
       }
+    }
+
+    # Column OSBuild 
+    $return = Get-OSVersion -hostname:$StoreFrontServerDNS -UseWinRM:$IsWinRMAccessible
+    If ($null -ne $return) {
+      If ($return.Error -eq "Success") {
+        $tests.OSCaption = "NEUTRAL", $return.Caption
+        $tests.OSBuild = "NEUTRAL", $return.Version
+        "OS Caption: $($return.Caption)" | LogMe -display -progress
+        "OS Version: $($return.Version)" | LogMe -display -progress
+      } Else {
+        $tests.OSCaption = "ERROR", $return.Caption
+        $tests.OSBuild = "ERROR", $return.Version
+        "OS Test: $($return.Error)" | LogMe -display -error
+      }
+    } else {
+      "Unable to get OS Version and Caption" | LogMe -display -error
     }
 
     # Check uptime
@@ -2558,7 +2864,7 @@ If ($null -ne $BrkrHvsCons) {
 
     Try {
       "FaultState: $($BrkrHvsCon.FaultState)" | LogMe -display -progress
-      If ($BrkrHvsCon.FaultState -eq "None") {
+      If ($BrkrHvsCon.FaultState -eq "None" -OR [string]::IsNullOrWhiteSpace($BrkrHvsCon.FaultState)) {
         $tests.FaultState = "NEUTRAL", $BrkrHvsCon.FaultState
       } Else {
         $tests.FaultState = "ERROR", $BrkrHvsCon.FaultState
@@ -2663,8 +2969,13 @@ if($ShowDesktopTable -eq 1 ) {
 
     # Column DeliveryGroup
     $DeliveryGroup = $machine | ForEach-Object{ $_.DesktopGroupName }
-    "DeliveryGroup: $DeliveryGroup" | LogMe -display -progress
-    $tests.DeliveryGroup = "NEUTRAL", $DeliveryGroup
+    if (!([string]::IsNullOrWhiteSpace($DeliveryGroup))) {
+      "DeliveryGroup: $DeliveryGroup" | LogMe -display -progress
+      $tests.DeliveryGroup = "NEUTRAL", $DeliveryGroup
+    } Else {
+      "DeliveryGroup: This machine is not assigned to a Delivery Group" | LogMe -display -warning
+      $tests.DeliveryGroup = "WARNING", $DeliveryGroup
+    }
 
     # Column Powerstate
     $Powered = $machine | ForEach-Object{ $_.PowerState }
@@ -2747,19 +3058,72 @@ if($ShowDesktopTable -eq 1 ) {
           "Unable to get host uptime" | LogMe -display -error
         }
 
+        #==============================================================================================
+        #  Get the CPU configuration
+        #==============================================================================================
+        $CpuConfigAndUsage = Get-CpuConfigAndUsage -hostname:$machineDNS -UseWinRM:$UseWinRM
+        If ($null -ne $CpuConfigAndUsage) {
+          "CPU Configuration:" | LogMe -display -progress
+          If ($CpuConfigAndUsage.LogicalProcessors -gt 1) {
+            "- LogicalProcessors: $($CpuConfigAndUsage.LogicalProcessors)" | LogMe -display -progress
+            $tests.LogicalProcessors = "NEUTRAL", $CpuConfigAndUsage.LogicalProcessors
+          } ElseIf ($CpuConfigAndUsage.LogicalProcessors -eq 1) {
+            "- LogicalProcessors: $($CpuConfigAndUsage.LogicalProcessors)" | LogMe -display -warning
+            $tests.LogicalProcessors = "WARNING", $CpuConfigAndUsage.LogicalProcessors
+          } Else {
+            "- LogicalProcessors: Unable to detect." | LogMe -display -progress
+          }
+          If ($CpuConfigAndUsage.Sockets -gt 0) {
+            "- Sockets: $($CpuConfigAndUsage.Sockets)" | LogMe -display -progress
+            $tests.Sockets = "NEUTRAL", $CpuConfigAndUsage.Sockets
+          } Else {
+            "- Sockets: Unable to detect." | LogMe -display -progress
+          }
+          If ($CpuConfigAndUsage.CoresPerSocket -gt 0) {
+            "- CoresPerSocket: $($CpuConfigAndUsage.CoresPerSocket)" | LogMe -display -progress
+            $tests.CoresPerSocket = "NEUTRAL", $CpuConfigAndUsage.CoresPerSocket
+          } Else {
+            "- CoresPerSocket: Unable to detect." | LogMe -display -progress
+          }
+        } else {
+          "Unable to get CPU configuration and usage" | LogMe -display -error
+        }
+
+        #==============================================================================================
+        #  Get the Physical Memory size
+        #==============================================================================================
+        # Get the total Physical Memory
+        $TotalPhysicalMemoryinGB = Get-TotalPhysicalMemory -hostname:$machineDNS -UseWinRM:$IsWinRMAccessible
+        If ($TotalPhysicalMemoryinGB -ge 4) {
+          "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -progress
+          $tests.TotalPhysicalMemoryinGB = "NEUTRAL", $TotalPhysicalMemoryinGB
+        } ElseIf ($TotalPhysicalMemoryinGB -ge 2) {
+          "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -warning
+          $tests.TotalPhysicalMemoryinGB = "WARNING", $TotalPhysicalMemoryinGB
+        } Else {
+          "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -error
+          $tests.TotalPhysicalMemoryinGB = "ERROR", $TotalPhysicalMemoryinGB
+        }
+
         # Column OSBuild 
         $WinEntMultisession = $False
         $return = Get-OSVersion -hostname:$machineDNS -UseWinRM:$UseWinRM
-        If ($return.Error -eq "Success") {
-          $tests.OSBuild = "NEUTRAL", $return.Version
-          "OS Caption: $($return.Caption)" | LogMe -display -progress
-          If ($return.Caption -like "*Enterprise*" -AND $return.Caption -like "*multi-session*") {
-            $WinEntMultisession = $True
+        If ($null -ne $return) {
+          If ($return.Error -eq "Success") {
+            $tests.OSCaption = "NEUTRAL", $return.Caption
+            $tests.OSBuild = "NEUTRAL", $return.Version
+            "OS Caption: $($return.Caption)" | LogMe -display -progress
+            If ($return.Caption -like "*Enterprise*" -AND $return.Caption -like "*multi-session*") {
+              $WinEntMultisession = $True
+            }
+            "OS Version: $($return.Version)" | LogMe -display -progress
+          } Else {
+            $tests.OSCaption = "ERROR", $return.Caption
+            $tests.OSBuild = "ERROR", $return.Version
+            "OS Test: $($return.Error)" | LogMe -display -error
           }
-          "OS Version: $($return.Version)" | LogMe -display -progress
-        } Else {
-          $tests.OSBuild = "ERROR", $return.Version
-          "OS Test: $($return.Error)" | LogMe -display -error
+        } else {
+          "Unable to get OS Version and Caption" | LogMe -display -error
         }
 
         ################ Start PVS SECTION ###############
@@ -2877,79 +3241,81 @@ if($ShowDesktopTable -eq 1 ) {
 
         ################ End Nvidia License Check SECTION ###############
 
-        $displaymode = "N/A"
-        if ( $ShowGraphicsMode -eq "1" ) {
+        If ($IsWMIAccessible) {
+          $displaymode = "N/A"
+          if ( $ShowGraphicsMode -eq "1" ) {
 
-          if ($sessionUser -notlike "" )
-          {
-            $displaymode = "unknown"
-            $displaymodeTable = @{}
-
-            #H264
-            $displaymodeTable.H264Active = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr IsActive=*
-
-            # H.264 Pure
-            #Component_Encoder=DeepCompressionV2Encoder	
-            $displaymodeTable.Component_Encoder_DeepCompressionEncoder = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=DeepCompressionEncoder
-            if ($displaymodeTable.Component_Encoder_DeepCompressionEncoder -eq "Component_Encoder=DeepCompressionEncoder")
+            if ($sessionUser -notlike "" )
             {
-              $Displaymode = "Pure H.264"
-            }
+              $displaymode = "unknown"
+              $displaymodeTable = @{}
+
+              #H264
+              $displaymodeTable.H264Active = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr IsActive=*
+
+              # H.264 Pure
+              #Component_Encoder=DeepCompressionV2Encoder	
+              $displaymodeTable.Component_Encoder_DeepCompressionEncoder = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=DeepCompressionEncoder
+              if ($displaymodeTable.Component_Encoder_DeepCompressionEncoder -eq "Component_Encoder=DeepCompressionEncoder")
+              {
+                $Displaymode = "Pure H.264"
+              }
 	
-            # Thinwire H.264 + Lossless (true native H264)
-            #Component_Encoder=DeepCompressionV2Encoder
-            $displaymodeTable.Component_Encoder_DeepCompressionV2Encoder = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=DeepCompressionV2Encoder
-            if ($displaymodeTable.Component_Encoder_DeepCompressionV2Encoder -eq "Component_Encoder=DeepCompressionV2Encoder")
-            {
-              $Displaymode = "H.264 + Lossless"
-            }
+              # Thinwire H.264 + Lossless (true native H264)
+              #Component_Encoder=DeepCompressionV2Encoder
+              $displaymodeTable.Component_Encoder_DeepCompressionV2Encoder = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=DeepCompressionV2Encoder
+              if ($displaymodeTable.Component_Encoder_DeepCompressionV2Encoder -eq "Component_Encoder=DeepCompressionV2Encoder")
+              {
+                $Displaymode = "H.264 + Lossless"
+              }
 	
-            #H.264 Compatibility Mode (ThinWire +)
-            #Component_Encoder=CompatibilityEncoder
-            $displaymodeTable.Component_Encoder_CompatibilityEncoder = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=CompatibilityEncoder
-            if ($displaymodeTable.Component_Encoder_CompatibilityEncoder -eq "Component_Encoder=CompatibilityEncoder")
-            {
-              $Displaymode = "H.264 Compatibility Mode (ThinWire +)"
-            }
+              #H.264 Compatibility Mode (ThinWire +)
+              #Component_Encoder=CompatibilityEncoder
+              $displaymodeTable.Component_Encoder_CompatibilityEncoder = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=CompatibilityEncoder
+              if ($displaymodeTable.Component_Encoder_CompatibilityEncoder -eq "Component_Encoder=CompatibilityEncoder")
+              {
+                $Displaymode = "H.264 Compatibility Mode (ThinWire +)"
+              }
 		
-            # Selective H.264 Is configured
-            $displaymodeTable.Component_Encoder_Deprecated = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=Deprecated
-            #Component_Encoder=Deprecated
+              # Selective H.264 Is configured
+              $displaymodeTable.Component_Encoder_Deprecated = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_Encoder=Deprecated
+              #Component_Encoder=Deprecated
 	
-            #fall back to H.264 Compatibility Mode (ThinWire +)
-            # Auf Receiver selective nicht geht:
-            $displaymodeTable.Component_VideoCodecUse_None = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_VideoCodecUse=None
-            if ($displaymodeTable.Component_VideoCodecUse_None -eq "Component_VideoCodecUse=None")
-            {
-              $Displaymode = "Compatibility Mode (ThinWire +), selective H264 maybe not supported by Receiver)"
+              #fall back to H.264 Compatibility Mode (ThinWire +)
+              # Auf Receiver selective nicht geht:
+              $displaymodeTable.Component_VideoCodecUse_None = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr Component_VideoCodecUse=None
+              if ($displaymodeTable.Component_VideoCodecUse_None -eq "Component_VideoCodecUse=None")
+              {
+                $Displaymode = "Compatibility Mode (ThinWire +), selective H264 maybe not supported by Receiver)"
+              }
+
+              #Is used
+              $displaymodeTable.Component_VideoCodecUse_Active = wmic /node:`'$machineDNS`' /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr 'Component_VideoCodecUse=For actively changing regions'			
+              if ($displaymodeTable.Component_VideoCodecUse_Active -eq "Component_VideoCodecUse=For actively changing regions")
+              {
+                $Displaymode = "Selective H264"
+              }
+
+              #Legacy Graphics
+              $displaymodeTable.LegacyGraphicsIsActive = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_graphics get /value | findstr IsActive=*
+              $displaymodeTable.Policy_LegacyGraphicsMode = wmic  /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_graphics get /value | findstr Policy_LegacyGraphicsMode=TRUE
+              if ($displaymodeTable.LegacyGraphicsIsActive -eq "IsActive=Active")
+              {
+                $Displaymode = "Legacy Graphics"
+              }	
+
+              #DCR
+              $displaymodeTable.DcrIsActive = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_d3d get /value | findstr IsActive=*
+              $displaymodeTable.DcrAERO = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_d3d get /value | findstr Policy_AeroRedirection=*
+              if ($displaymodeTable.DcrAERO -eq "Policy_AeroRedirection=TRUE")
+              {
+                $Displaymode = "DCR"
+              }
             }
+            $tests.displaymode = "NEUTRAL", $displaymode
 
-            #Is used
-            $displaymodeTable.Component_VideoCodecUse_Active = wmic /node:`'$machineDNS`' /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_thinwire get /value | findstr 'Component_VideoCodecUse=For actively changing regions'			
-            if ($displaymodeTable.Component_VideoCodecUse_Active -eq "Component_VideoCodecUse=For actively changing regions")
-            {
-              $Displaymode = "Selective H264"
-            }
-
-            #Legacy Graphics
-            $displaymodeTable.LegacyGraphicsIsActive = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_graphics get /value | findstr IsActive=*
-            $displaymodeTable.Policy_LegacyGraphicsMode = wmic  /node:$machineDNS /namespace:\\root\citrix\hdx path citrix_virtualchannel_graphics get /value | findstr Policy_LegacyGraphicsMode=TRUE
-            if ($displaymodeTable.LegacyGraphicsIsActive -eq "IsActive=Active")
-            {
-              $Displaymode = "Legacy Graphics"
-            }	
-
-            #DCR
-            $displaymodeTable.DcrIsActive = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_d3d get /value | findstr IsActive=*
-            $displaymodeTable.DcrAERO = wmic /node:`'$machineDNS`' /namespace:\\root\citrix\hdx path citrix_virtualchannel_d3d get /value | findstr Policy_AeroRedirection=*
-            if ($displaymodeTable.DcrAERO -eq "Policy_AeroRedirection=TRUE")
-            {
-              $Displaymode = "DCR"
-            }
-          }
-          $tests.displaymode = "NEUTRAL", $displaymode
-
-        } # Close off $ShowGraphicsMode
+          } # Close off $ShowGraphicsMode
+        }
 
         ## EDT MTU (set by default.ica or MTUDiscovery)
         If ($UseWinRM) {
@@ -2965,13 +3331,13 @@ if($ShowDesktopTable -eq 1 ) {
             "EDT MTU Size failed to return data" | LogMe -display -progress
           }
         } Else {
-          $tests.EDT_MTU = "ERROR", "Unknown"
           "EDT MTU Size cannot be checked" | LogMe -display -progress
         }
 
       }#If can connect via WinRM or WMI
       else {
         $ErrorVDI = $ErrorVDI + 0 # No WinRM or WMI connectivity
+        "WinRM or WMI connection not possible" | LogMe -display -error
       } # Closing else cannot connect via WinRM or WMI
 
     } # Close off $Powered -eq "On", "Unknown", or "Unmanaged"
@@ -3167,8 +3533,13 @@ if($ShowXenAppTable -eq 1 ) {
 
     # Column DeliveryGroup
     $DeliveryGroup = $XAmachine | ForEach-Object{ $_.DesktopGroupName }
-    "DeliveryGroup: $DeliveryGroup" | LogMe -display -progress
-    $tests.DeliveryGroup = "NEUTRAL", $DeliveryGroup
+    if (!([string]::IsNullOrWhiteSpace($DeliveryGroup))) {
+      "DeliveryGroup: $DeliveryGroup" | LogMe -display -progress
+      $tests.DeliveryGroup = "NEUTRAL", $DeliveryGroup
+    } Else {
+      "DeliveryGroup: This machine is not assigned to a Delivery Group" | LogMe -display -warning
+      $tests.DeliveryGroup = "WARNING", $DeliveryGroup
+    }
 
     # Column Powerstate
     $Powered = $XAmachine | ForEach-Object{ $_.PowerState }
@@ -3248,30 +3619,72 @@ if($ShowXenAppTable -eq 1 ) {
         }
 
         #==============================================================================================
-        #  Check the AvgCPU value for 5 seconds
+        #  Get the CPU configuration and check the AvgCPU value for 5 seconds
         #==============================================================================================
-        $XAAvgCPUval = CheckCpuUsage -hostname:$machineDNS -UseWinRM:$UseWinRM
 
-        #$VDtests.LoadBalancingAlgorithm = "SUCCESS", "LB is set to BEST EFFORT"} 
-
-        if( [int] $XAAvgCPUval -lt 75) { "CPU usage is normal [ $XAAvgCPUval % ]" | LogMe -display; $tests.AvgCPU = "SUCCESS", "$XAAvgCPUval %" }
-        elseif([int] $XAAvgCPUval -lt 85) { "CPU usage is medium [ $XAAvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$XAAvgCPUval %" }   	
-        elseif([int] $XAAvgCPUval -lt 95) { "CPU usage is high [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %" }
-        elseif([int] $XAAvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err" }
-        else { "CPU usage is Critical [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %" }   
-        $XAAvgCPUval = 0
+        $CpuConfigAndUsage = Get-CpuConfigAndUsage -hostname:$machineDNS -UseWinRM:$UseWinRM
+        If ($null -ne $CpuConfigAndUsage) {
+          $XAAvgCPUval = $CpuConfigAndUsage.CpuUsage
+          if( [int] $XAAvgCPUval -lt 75) { "CPU usage is normal [ $XAAvgCPUval % ]" | LogMe -display; $tests.AvgCPU = "SUCCESS", "$XAAvgCPUval %" }
+          elseif([int] $XAAvgCPUval -lt 85) { "CPU usage is medium [ $XAAvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$XAAvgCPUval %" }   	
+          elseif([int] $XAAvgCPUval -lt 95) { "CPU usage is high [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %" }
+          elseif([int] $XAAvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err" }
+          else { "CPU usage is Critical [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %" }   
+          $XAAvgCPUval = 0
+          "CPU Configuration:" | LogMe -display -progress
+          If ($CpuConfigAndUsage.LogicalProcessors -gt 1) {
+            "- LogicalProcessors: $($CpuConfigAndUsage.LogicalProcessors)" | LogMe -display -progress
+            $tests.LogicalProcessors = "NEUTRAL", $CpuConfigAndUsage.LogicalProcessors
+          } ElseIf ($CpuConfigAndUsage.LogicalProcessors -eq 1) {
+            "- LogicalProcessors: $($CpuConfigAndUsage.LogicalProcessors)" | LogMe -display -warning
+            $tests.LogicalProcessors = "WARNING", $CpuConfigAndUsage.LogicalProcessors
+          } Else {
+            "- LogicalProcessors: Unable to detect." | LogMe -display -progress
+          }
+          If ($CpuConfigAndUsage.Sockets -gt 0) {
+            "- Sockets: $($CpuConfigAndUsage.Sockets)" | LogMe -display -progress
+            $tests.Sockets = "NEUTRAL", $CpuConfigAndUsage.Sockets
+          } Else {
+            "- Sockets: Unable to detect." | LogMe -display -progress
+          }
+          If ($CpuConfigAndUsage.CoresPerSocket -gt 0) {
+            "- CoresPerSocket: $($CpuConfigAndUsage.CoresPerSocket)" | LogMe -display -progress
+            $tests.CoresPerSocket = "NEUTRAL", $CpuConfigAndUsage.CoresPerSocket
+          } Else {
+            "- CoresPerSocket: Unable to detect." | LogMe -display -progress
+          }
+        } else {
+          "Unable to get CPU configuration and usage" | LogMe -display -error
+        }
 
         #==============================================================================================
-        #  Check the Physical Memory usage 
+        #  Get the Physical Memory size and usage 
         #==============================================================================================
         [int] $XAUsedMemory = CheckMemoryUsage -hostname:$machineDNS -UseWinRM:$UseWinRM
 
-        if( [int] $XAUsedMemory -lt 75) { "Memory usage is normal [ $XAUsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$XAUsedMemory %" }
-        elseif( [int] $XAUsedMemory -lt 85) { "Memory usage is medium [ $XAUsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$XAUsedMemory %" }   	
-        elseif( [int] $XAUsedMemory -lt 95) { "Memory usage is high [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" }
-        elseif( [int] $XAUsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
-        else { "Memory usage is Critical [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" }   
-        $XAUsedMemory = 0  
+        If ($null -ne $XAUsedMemory) {
+          if( [int] $XAUsedMemory -lt 75) { "Memory usage is normal [ $XAUsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$XAUsedMemory %" }
+          elseif( [int] $XAUsedMemory -lt 85) { "Memory usage is medium [ $XAUsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$XAUsedMemory %" }   	
+          elseif( [int] $XAUsedMemory -lt 95) { "Memory usage is high [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" }
+          elseif( [int] $XAUsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
+          else { "Memory usage is Critical [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" }   
+          $XAUsedMemory = 0  
+        } else {
+          "Unable to get Memory usage" | LogMe -display -error
+        }
+
+        # Get the total Physical Memory
+        $TotalPhysicalMemoryinGB = Get-TotalPhysicalMemory -hostname:$machineDNS -UseWinRM:$IsWinRMAccessible
+        If ($TotalPhysicalMemoryinGB -ge 4) {
+          "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -progress
+          $tests.TotalPhysicalMemoryinGB = "NEUTRAL", $TotalPhysicalMemoryinGB
+        } ElseIf ($TotalPhysicalMemoryinGB -ge 2) {
+          "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -warning
+          $tests.TotalPhysicalMemoryinGB = "WARNING", $TotalPhysicalMemoryinGB
+        } Else {
+          "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -error
+          $tests.TotalPhysicalMemoryinGB = "ERROR", $TotalPhysicalMemoryinGB
+        }
 
         #==============================================================================================
         #  Check Disk Usage
@@ -3291,22 +3704,30 @@ if($ShowXenAppTable -eq 1 ) {
             $XAPercentageDS = 0
             $frSpace = 0
             $HardDisk = $null
+          } else {
+            "Unable to get Hard Disk usage" | LogMe -display -error
           }
         }
  
         # Column OSBuild 
         $WinEntMultisession = $False
         $return = Get-OSVersion -hostname:$machineDNS -UseWinRM:$UseWinRM
-        If ($return.Error -eq "Success") {
-          $tests.OSBuild = "NEUTRAL", $return.Version
-          "OS Caption: $($return.Caption)" | LogMe -display -progress
-          If ($return.Caption -like "*Enterprise*" -AND $return.Caption -like "*multi-session*") {
-            $WinEntMultisession = $True
+        If ($null -ne $return) {
+          If ($return.Error -eq "Success") {
+            $tests.OSCaption = "NEUTRAL", $return.Caption
+            $tests.OSBuild = "NEUTRAL", $return.Version
+            "OS Caption: $($return.Caption)" | LogMe -display -progress
+            If ($return.Caption -like "*Enterprise*" -AND $return.Caption -like "*multi-session*") {
+              $WinEntMultisession = $True
+            }
+            "OS Version: $($return.Version)" | LogMe -display -progress
+          } Else {
+            $tests.OSCaption = "ERROR", $return.Caption
+            $tests.OSBuild = "ERROR", $return.Version
+            "OS Test: $($return.Error)" | LogMe -display -error
           }
-          "OS Version: $($return.Version)" | LogMe -display -progress
-        } Else {
-          $tests.OSBuild = "ERROR", $return.Version
-          "OS Test: $($return.Error)" | LogMe -display -error
+        } else {
+          "Unable to get OS Version and Caption" | LogMe -display -error
         }
 
         ################ Start PVS SECTION ###############
@@ -3448,12 +3869,27 @@ if($ShowXenAppTable -eq 1 ) {
               "RemoteAdmin mode does not have a GetGracePeriodDays method or path to query" | LogMe -display -Error
             }
           }
-          $tests.LicensingName = "NEUTRAL", $return.LicensingName
-          "LicensingName: $($return.LicensingName)" | LogMe -display -progress
-          $tests.LicensingType = "NEUTRAL", $return.LicensingType
-          "LicensingType: $($return.LicensingType)" | LogMe -display -progress
-          $tests.LicenseServerList = "NEUTRAL", $return.LicenseServerList
-          "LicenseServerList: $($return.LicenseServerList)" | LogMe -display -progress
+          If ([string]::IsNullOrEmpty($return.LicensingName) -OR $return.LicensingName -eq "Unknown") {
+            $tests.LicensingName = "ERROR", $return.LicensingName
+            "LicensingName: $($return.LicensingName)" | LogMe -display -error
+          } ELse {
+            $tests.LicensingName = "NEUTRAL", $return.LicensingName
+            "LicensingName: $($return.LicensingName)" | LogMe -display -progress
+          }
+          If ($return.LicensingType -eq "5" -OR $return.LicensingType -eq "Unknown") {
+            $tests.LicensingType = "ERROR", $return.LicensingType
+            "LicensingType: $($return.LicensingType)" | LogMe -display -error
+          } Else {
+            $tests.LicensingType = "NEUTRAL", $return.LicensingType
+            "LicensingType: $($return.LicensingType)" | LogMe -display -progress
+          }
+          If ($return.LicenseServerList -eq "Unknown") {
+            $tests.LicenseServerList = "ERROR", $return.LicenseServerList
+            "LicenseServerList: $($return.LicenseServerList)" | LogMe -display -error
+          } Else {
+            $tests.LicenseServerList = "NEUTRAL", $return.LicenseServerList
+            "LicenseServerList: $($return.LicenseServerList)" | LogMe -display -progress
+          }
         } Else {
           $tests.RDSGracePeriod = "NORMAL", "N/A"
           "This is an Azure Windows 10/11 multi-session host. Traditional RDS CALs are not relevant" | LogMe -display -progress
@@ -3537,15 +3973,6 @@ if($ShowXenAppTable -eq 1 ) {
       else {
         $ErrorXA = $ErrorXA + 0 # No WinRM or WMI connectivity
         "WinRM or WMI connection not possible" | LogMe -display -error
-        $XAAvgCPUval = 101 | LogMe -error; $tests.AvgCPU = "ERROR", "WinRM or Wmi connectivity Err"
-        $XAUsedMemory = 101 | LogMe -error; $tests.MemUsg = "ERROR", "WinRM or Wmi connectivity Err"
-        foreach ($disk in $diskLettersWorkers){
-          $XAPercentageDS = 0 | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "WinRM or Wmi connectivity Err"
-          $XAPercentageDS = 0
-          $frSpace = 0
-          $HardDisk = $null
-        }#end of Foreach disk
-
       } # Closing else cannot connect via WinRM or WMI
 
     } # Close off $Powered -eq "On", "Unknown", or "Unmanaged"
@@ -3940,7 +4367,7 @@ writeHtmlHeader "$EnvironmentNameOut Report" $resultsHTM
 #writeTableFooter $resultsHTM
 
 # Write Table with the Controllers
-if ( $CitrixCloudCheck -ne "1" ) {
+if ($CitrixCloudCheck -ne 1 ) {
   "Adding Controller output to HTML" | LogMe -display -progress 
   writeTableHeader $resultsHTM $XDControllerFirstheaderName $XDControllerHeaderNames $XDControllerTableWidth
   $ControllerResults | ForEach-Object{ writeData $ControllerResults $resultsHTM $XDControllerHeaderNames }
@@ -3948,7 +4375,7 @@ if ( $CitrixCloudCheck -ne "1" ) {
 }
 else { "No Controller output in HTML (CitrixCloud) " | LogMe -display -progress }
 
-if ($CitrixCloudCheck -ne "1" -AND $ShowCloudConnectorTable -eq 1 ) {
+if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
   # Write Table with the CloudConnectorServers
   "Adding Cloud Connector output to HTML" | LogMe -display -progress 
   writeTableHeader $resultsHTM $CCFirstheaderName $CCHeaderNames $CCTableWidth
@@ -4008,7 +4435,11 @@ if ($ShowXenAppTable -eq 1 ) {
   If ($allXenAppResults.Count -gt 0) {
     "Adding XenApp/RDSH (multi-session) output to HTML" | LogMe -display -progress 
     writeTableHeader $resultsHTM $XenAppFirstheaderName $XenAppHeaderNames $XenApptablewidth
-    $allXenAppResults | ForEach-Object{ writeData $allXenAppResults $resultsHTM $XenAppHeaderNames }
+    If ([string]::IsNullOrEmpty($SortXenAppTableByHeaderName)) {
+      $allXenAppResults | ForEach-Object{ writeData $allXenAppResults $resultsHTM $XenAppHeaderNames }
+    } Else {
+      $allXenAppResults | ForEach-Object{ writeDataSortedByHeaderName $allXenAppResults $resultsHTM $XenAppHeaderNames $SortXenAppTableByHeaderName }
+    }
     writeTableFooter $resultsHTM
   } Else { "The XenApp/RDSH (multi-session) output has not been added to the HTML as it contains no data" | LogMe -display -progress }
 }
@@ -4019,7 +4450,11 @@ if ($ShowDesktopTable -eq 1 ) {
   If ($allResults.Count -gt 0) {
     "Adding VDI (single-session) output to HTML" | LogMe -display -progress 
     writeTableHeader $resultsHTM $VDIFirstheaderName $VDIHeaderNames $VDItablewidth
-    $allResults | ForEach-Object{ writeData $allResults $resultsHTM $VDIHeaderNames }
+    If ([string]::IsNullOrEmpty($SortDesktopTableByHeaderName)) {
+      $allResults | ForEach-Object{ writeData $allResults $resultsHTM $VDIHeaderNames }
+    } Else {
+      $allResults | ForEach-Object{ writeDataSortedByHeaderName $allResults $resultsHTM $VDIHeaderNames $SortDesktopTableByHeaderName }
+    }
     writeTableFooter $resultsHTM
   } Else { "The VDI (single-session) output has not been added to the HTML as it contains no data" | LogMe -display -progress }
 }
@@ -4404,13 +4839,42 @@ If ($UseRunspace) {
 #            this is to exclude kiosk accounts that may stay logged in for long periods of time.
 #          - Enhanced the Uptime VDI (single-session) and XenApp/RDSH (multi-session) tests so that they are marked as an error when Uptime is $maxUpTimeDays x 3.
 #
+# - 1.4.8, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+#          - Replaced the CheckCpuUsage function with the Get-CpuConfigAndUsage function. This now gets the total logical processor count, as well as number of sockets and cores per socket,
+#            which helps identify misconfigurations. It will flag a warning if there is only 1 logical processor.
+#          - Added LogicalProcessors, Sockets, CoresPerSocket to the tests and column outputs.
+#          - Added the Get-TotalPhysicalMemory function to get the total physical memory, which helps identify misconfigurations.
+#          - Added the TotalPhysicalMemoryinGB to the tests and column outputs. It will flag as warning if less than 4GB and an error is less than 2GB.
+#          - Removed the error from the XenApp/RDS (multisession) report for AvgCPU, MemUsg and drive Freespace if there is no WinRM or WMI connectivity. It makes the report look untidy.
+#          - For the RDS Licensing tests, LicensingType 5 and LicenseServerList Unknown should be marked as error (red). Improved the documentation for the Get-RDSLicensingDetails function.
+#          - Fixed up a bug when the Hypervisor Connection FaultState was marked as ERROR when empty or null.
+#          - Tidied up the ETD_MTU test being marked as unknown if the WinRM connection is not possible. It made the report look messy and misleading.
+#          - The $displaymode section needs to be re-written so it uses WinRM. However, for the moment is will only run if the machine is accessable via WMI.
+#          - The Ping timedout result is no longer marked as an error for the Delivery Controllers, Cloud Connectors and Storefront Servers. This just depends on your security policies and
+#            relevant firewall rules for ICMP.
+#          - Fixed an error in the logic so that the Cloud Connector tests and table will run when $CitrixCloudCheck variable is 1.
+#          - If a VDI (single-session) or XenApp/RDSH (multi-session) machine is not assigned to a Delivery Group, it will be marked as a warning.
+#          - Added OSCaption and OSBuild column to the Delivery Controllers, Cloud Connectors and Storefront Servers tests. This helps with OS lifecycle planning.
+#          - Added OSCaption column to the VDI (single-session) or XenApp/RDSH (multi-session) tests. This helps with OS lifecycle planning.
+#          - Added the ability to sort the VDI (single-session) or XenApp/RDSH (multi-session) tables by a specific header name. For example, you can sort by Delivery Group in ascending order,
+#            instead of hostname, which can help to identify config differences within that Delivery Group where hostnames are not contiguous or naming standards have changed over time.
+#            - To facilitate this have added...
+#              - new $SortDesktopTableByHeaderName and $SortXenAppTableByHeaderName variables to the XML file.
+#              - a new function called writeDataSortedByHeaderName that uses the $headerToSortBy parameter that we pass the new variables to. The function contains documentation on how we
+#                convert the hashtable into a collection of key-value pairs (DictionaryEntry objects), sort it, and then store it in a new ordered dictionary before creating the output.
+#          - Cleaned up the outputs and error capturing as much as possible throughout the script.
+#          - Modified the writeTableHeader function to remove td width='6%', which helps better with the layout.
+#          - Updated all table widths to help fit all the extra data collected without looking too squashed.
+#
 # == FUTURE ==
 # #  1.5
 # Version changes by S.Thomet & J.Saunders
 # - CREATE Proper functions
 # - Change all functions to allow for Invoke-Command for PS Remoting where possible.
 # - Look to merge the Singlesession and Multisession sections using a for loop to process, as there is quite a bit of code duplication in those two sections.
+# - Look to merge the Delivery Controllers, Cloud Connectors and Storefront Servers sections using a for loop to process, as there is quite a bit of code duplication in those three sections.
 # - Enhance the MCSIO tests, where possible.
+# - $displaymode section needs to be re-written so it uses WinRM.
 # - Combine functions where possible to collect data more efficiently.
 # - Implement DaaS APIs (from 2209 and above) to remove reliance on PowerShell SDK. It should be able to be slotted in quite easily with a variable to switch between them, which will allow
 #   new and legacy to work side-by-side.
