@@ -179,11 +179,15 @@
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
-			<!-- Define if you ONLY want to see bad XENAPP (Unregistered, to high Uptime)
-				 I propose to set this value to 1 in not small environments >50 Desktops -->
-			<Name>ShowOnlyErrorXA</Name>
-			<Value>0</Value>
-			<Type>[int]</Type>
+			<!-- Set to the header name you would like to use to sort the table in ascending order.
+				 Example: DeliveryGroup
+				 This will sort by Delivery Group in ascending order, instead of hostname, which can
+				 to identify config differences within that Delivery Group  where hostnames are not
+				 contiguous or naming standards have changed over time.
+				 Leave blank for default sort, which is hostname in ascending order. -->
+			<Name>SortDesktopTableByHeaderName</Name>
+			<Value></Value>
+			<Type>[string]</Type>
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
@@ -207,6 +211,26 @@
 			<!-- Set to 1 if you want to Check a Environment with XenApp (V 7.x and higher) - if you need a Script for versions below visit http://deptive.co.nz/xenapp-farm-health-check-v2/ -->
 			<Name>ShowXenAppTable</Name>
 			<Value>1</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Set to the header name you would like to use to sort the table in ascending order.
+				 Example: DeliveryGroup
+				 This will sort by Delivery Group in ascending order, instead of hostname, which can
+				 to identify config differences within that Delivery Group  where hostnames are not
+				 contiguous or naming standards have changed over time.
+				 Leave blank for default sort, which is hostname in ascending order. -->
+			<Name>SortXenAppTableByHeaderName</Name>
+			<Value></Value>
+			<Type>[string]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Define if you ONLY want to see bad XENAPP (Unregistered, to high Uptime)
+				 I propose to set this value to 1 in not small environments >50 Desktops -->
+			<Name>ShowOnlyErrorXA</Name>
+			<Value>0</Value>
 			<Type>[int]</Type>
 			<Scope>Script</Scope>
 		</Variable>
@@ -239,6 +263,7 @@
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
+<!-- License Options -->
 			<!-- # Set to 1 if you want to Check a Citrix license usage -->
 			<Name>ShowCTXLicense</Name>
 			<Value>1</Value>
