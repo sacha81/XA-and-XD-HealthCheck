@@ -1,5 +1,5 @@
 ﻿#==============================================================================================
-# Created on: 11.2014 modfied 06.2025 Version: 1.4.8
+# Created on: 11.2014 modfied 06.2025 Version: 1.4.9
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -432,7 +432,7 @@ $CatalogTablewidth = 1200
 
 #Header for Table "DeliveryGroups" Get-BrokerDesktopGroup
 $AssigmentFirstheaderName = "DeliveryGroup"
-$vAssigmentHeaderNames = "PublishedName", "DesktopKind", "SessionSupport", "ShutdownAfterUse", "TotalMachines", "DesktopsAvailable", "DesktopsUnregistered", "DesktopsInUse", "DesktopsFree", "MaintenanceMode", "MinimumFunctionalLevel"
+$vAssigmentHeaderNames = "PublishedName", "DesktopKind", "SessionSupport", "Enabled", "MaintenanceMode", "ShutdownAfterUse", "TotalMachines", "DesktopsAvailable", "DesktopsUnregistered", "DesktopsPowerStateUnknown", "DesktopsNotUsedLast90Days", "DesktopsInUse", "DesktopsFree", "MinimumFunctionalLevel"
 $Assigmenttablewidth = 1200
 
 #Header for Table "ConnectionFailureOnMachine" Get-BrokerConnectionLog
@@ -447,12 +447,12 @@ $HypervisorConnectiontablewidth = 1200
 
 #Header for Table "VDI Singlesession Checks" Get-BrokerMachine
 $VDIfirstheaderName = "virtualDesktops"
-$VDIHeaderNames = "CatalogName", "DeliveryGroup", "Ping", "WinRM", "WMI", "UNC", "MaintMode", "Uptime", "LastConnect", "RegState", "PowerState", "VDAVersion", "OSCaption", "OSBuild", "AssociatedUserNames", "displaymode", "EDT_MTU", "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace", "NvidiaLicense","NvidiaDriverVer", "LogicalProcessors", "Sockets", "CoresPerSocket", "TotalPhysicalMemoryinGB", "Tags", "HostedOn"
+$VDIHeaderNames = "CatalogName", "DeliveryGroup", "Ping", "WinRM", "WMI", "UNC", "MaintMode", "Uptime", "RegState", "PowerState", "LastConnectionTime", "VDAVersion", "OSCaption", "OSBuild", "AssociatedUserNames", "displaymode", "EDT_MTU", "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace", "NvidiaLicense","NvidiaDriverVer", "LogicalProcessors", "Sockets", "CoresPerSocket", "TotalPhysicalMemoryinGB", "Tags", "HostedOn"
 $VDItablewidth = 2400
   
 #Header for Table "XenApp/RDS/Multisession Checks" Get-BrokerMachine
 $XenAppfirstheaderName = "virtualApp-Servers"
-$XenAppHeaderNames = "CatalogName", "DeliveryGroup", "Ping", "WinRM", "WMI", "UNC", "Serverload", "MaintMode", "Uptime", "RegState", "PowerState", "VDAVersion", "Spooler", "CitrixPrint", "OSCaption", "OSBuild", "RDSGracePeriod", "TerminalServerMode", "LicensingName", "LicensingType", "LicenseServerList", "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace", "NvidiaLicense","NvidiaDriverVer"
+$XenAppHeaderNames = "CatalogName", "DeliveryGroup", "Ping", "WinRM", "WMI", "UNC", "Serverload", "MaintMode", "Uptime", "RegState", "PowerState", "LastConnectionTime", "VDAVersion", "Spooler", "CitrixPrint", "OSCaption", "OSBuild", "RDSGracePeriod", "TerminalServerMode", "LicensingName", "LicensingType", "LicenseServerList", "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace", "NvidiaLicense","NvidiaDriverVer"
 foreach ($disk in $diskLettersWorkers)
 {
   $XenAppHeaderNames += "$($disk)Freespace"
@@ -532,15 +532,24 @@ Function Test-Ping {
 }
 
 Function IsWinRMAccessible {
-  # Get-CimInstance uses WinRM, so we test to see if WinRM is enabled.
+  # Get-CimInstance and Invoke-Command uses WinRM, so we test to see if WinRM is enabled and responding correctly.
+  # The Test-WSMan cmdlet submits an identification request that determines whether the WinRM service is running on a local or remote computer.
+  # If the tested computer is running the service, the cmdlet displays the WS-Management identity schema, the protocol version, the product
+  # vendor, and the product version of the tested service. By default the request is sent to the remote computer anonymously, without using
+  # authentication. So we include the Authentication parameter and with the Default value, which will use the authentication method
+  # implemented by the WS-Management protocol. This will fail on kerberos issues, for example. This can happen when there is a missing SPN,
+  # the computer account has lost its domain trust, etc.
   param ([string]$hostname)
   $success = $False
   try {
-    Test-WSMan -Computername $hostname -ErrorAction Stop | out-null
-    $success = $True
+    $output = Test-WSMan -Computername $hostname -Authentication Default -ErrorAction Stop
+    # Verify that Test-WSMan hasn't returned a null (0.0.0) value for the operating system version.
+    If (($output.ProductVersion -split (" "))[1] -ne "0.0.0") {
+      $success = $True
+    }
   }
   Catch {
-    #
+    #$_.Exception.Message
   }
   return $success
 }
@@ -1402,6 +1411,7 @@ Function Get-WriteCacheDriveInfo {
         }
       } Else {
         $ResultProps.Output_To_Log2 = "WCdrivefreespace: Failed to connect"
+        $ResultProps.WCdrivefreespace = "Failed to connect"
         $ResultProps.Output_For_HTML2 = "ERROR"
       }
     }
@@ -1518,8 +1528,7 @@ Function writeData
 param($data, $fileName, $headerNames)
 
 $tableEntry  =""
-#$data.Keys | Sort-Object | ForEach-Object {
-$data.Keys | ForEach-Object {
+$data.Keys | Sort-Object | ForEach-Object {
 $tableEntry += "<tr>"
 $computerName = $_
 $tableEntry += ("<td bgcolor='#CCCCCC' align=center><font color='#003399'>$computerName</font></td>")
@@ -2642,6 +2651,11 @@ foreach ($Assigment in $Assigments) {
 	
 	}
 
+    $AssigmentDesktopsenabled = $Assigment | ForEach-Object{ $_.enabled }
+    "Enabled: $AssigmentDesktopsenabled" | LogMe -display -progress
+    if ($AssigmentDesktopsenabled) { $tests.enabled = "SUCCESS", "TRUE" }
+    else { $tests.Enabled = "WARNING", "FALSE" }
+
     #inMaintenanceMode
     $AssigmentDesktopsinMaintenanceMode = $Assigment | ForEach-Object{ $_.inMaintenanceMode }
     "inMaintenanceMode: $AssigmentDesktopsinMaintenanceMode" | LogMe -display -progress
@@ -2672,13 +2686,43 @@ foreach ($Assigment in $Assigments) {
     $AssigmentDesktopsUnregistered = $Assigment | ForEach-Object{ $_.DesktopsUnregistered }
     "DesktopsUnregistered: $AssigmentDesktopsUnregistered" | LogMe -display -progress    
     if ($AssigmentDesktopsUnregistered -gt 0 ) {
-      "DesktopsUnregistered > 0 ! ($AssigmentDesktopsUnregistered)" | LogMe -display -progress
+      "DesktopsUnregistered > 0 ! ($AssigmentDesktopsUnregistered)" | LogMe -display -warning
       $tests.DesktopsUnregistered = "WARNING", $AssigmentDesktopsUnregistered
     } else {
       $tests.DesktopsUnregistered = "SUCCESS", $AssigmentDesktopsUnregistered
       "DesktopsUnregistered <= 0 ! ($AssigmentDesktopsUnregistered)" | LogMe -display -progress
     }
-      
+
+    $DesktopsPowerStateUnknown = 0
+    If ($CitrixCloudCheck -ne 1) {
+      #$DesktopsPowerStateUnknown = (Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -DesktopGroupName $FullDeliveryGroupNameIncAdminFolder -PowerState Unknown | Measure-Object).Count
+      $DesktopsPowerStateUnknown = (Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -DesktopGroupName $FullDeliveryGroupNameIncAdminFolder -Filter "PowerState -eq 'Unknown'" | Measure-Object).Count
+    } Else {
+      #$DesktopsPowerStateUnknown = (Get-BrokerMachine -MaxRecordCount $maxmachines -DesktopGroupName $FullDeliveryGroupNameIncAdminFolder -PowerState Unknown | Measure-Object).Count
+      $DesktopsPowerStateUnknown = (Get-BrokerMachine -MaxRecordCount $maxmachines -DesktopGroupName $FullDeliveryGroupNameIncAdminFolder -Filter "PowerState -eq 'Unknown'" | Measure-Object).Count
+    }
+    if ($DesktopsPowerStateUnknown -eq 0 ) {
+      "DesktopsPowerStateUnknown: $($DesktopsPowerStateUnknown)" | LogMe -display -progress
+      $tests.DesktopsPowerStateUnknown = "SUCCESS", $DesktopsPowerStateUnknown
+    } else {
+      "DesktopsPowerStateUnknown: $($DesktopsPowerStateUnknown)" | LogMe -display -error
+      $tests.DesktopsPowerStateUnknown = "ERROR", $DesktopsPowerStateUnknown
+    }
+
+    $DesktopsNotUsedLast90Days = 0
+    If ($CitrixCloudCheck -ne 1) {
+      $DesktopsNotUsedLast90Days = (Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -DesktopGroupName $FullDeliveryGroupNameIncAdminFolder-Filter "LastConnectionTime -lt '-90'" | Measure-Object).Count
+    } Else {
+      $DesktopsNotUsedLast90Days = (Get-BrokerMachine -MaxRecordCount $maxmachines -DesktopGroupName $FullDeliveryGroupNameIncAdminFolder -Filter "LastConnectionTime -lt '-90'" | Measure-Object).Count
+    }
+    if ($DesktopsNotUsedLast90Days -eq 0 ) {
+      "DesktopsNotUsedLast90Days: $($DesktopsNotUsedLast90Days)" | LogMe -display -progress
+      $tests.DesktopsNotUsedLast90Days = "SUCCESS", $DesktopsNotUsedLast90Days
+    } else {
+      "DesktopsNotUsedLast90Days: $($DesktopsNotUsedLast90Days)" | LogMe -display -warning
+      $tests.DesktopsNotUsedLast90Days = "WARNING", $DesktopsNotUsedLast90Days
+    }
+
     #Fill $tests into array
     $AssigmentsResults.$FullDeliveryGroupNameIncAdminFolder = $tests
   }
@@ -2782,6 +2826,14 @@ If ($null -ne $BrkrConFailures) {
       $tests.BrokeringTime = "NEUTRAL", $BrokeringTime
 
       $ConnectionFailureReason = $BrkrConFailure.ConnectionFailureReason
+      # As per Article ID: CTX137378, Failure Reasons and Causes:
+      # - None - No failure (successful connection - session went active).
+      # - SessionPreparation - Failure to prepare session, typically Virtual Desktop Agent (VDA) refused 'prepare' call, or communication error on prepare call to VDA.
+      # - RegistrationTimeout - Timeout while waiting for worker to register when worker is being spun up to satisfy the launch.
+      # - ConnectionTimeout - Timeout while waiting for client to connect to VDA after successful brokering part.
+      # - Licensing - Licensing issue (for example - unable to verify a license).
+      # - Ticketing - Failure during ticketing, indicating that the client connection to VDA does not match the brokered request.
+      # - Other - Other
       "ConnectionFailureReason: $($BrkrConFailure.ConnectionFailureReason)" | LogMe -display -progress
       $tests.ConnectionFailureReason = "WARNING", $ConnectionFailureReason
 
@@ -2944,9 +2996,9 @@ if($ShowDesktopTable -eq 1 ) {
   $ErrorVDI = 0
 
   If ($CitrixCloudCheck -ne 1) {
-    $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -Filter "SessionSupport -eq 'SingleSession'" | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+    $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -Filter "SessionSupport -eq 'SingleSession'" | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)} | Sort-Object DNSName
   } Else {
-    $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -Filter "SessionSupport -eq 'SingleSession'" | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+    $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -Filter "SessionSupport -eq 'SingleSession'" | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)} | Sort-Object DNSName
   }
 
   If (($machines | Measure-Object).Count -eq 0) {
@@ -2979,13 +3031,15 @@ if($ShowDesktopTable -eq 1 ) {
 
     # Column Powerstate
     $Powered = $machine | ForEach-Object{ $_.PowerState }
-    "PowerState: $Powered" | LogMe -display -progress
-    $tests.PowerState = "NEUTRAL", $Powered
-    if ($Powered -eq "Off" -OR $Powered -eq "Unknown") {
-      $tests.PowerState = "NEUTRAL", $Powered
-    }
-    if ($Powered -eq "On") {
+    if ($Powered -eq "On" -OR $Powered -eq "Unmanaged") {
+      "PowerState: $Powered" | LogMe -display -progress
       $tests.PowerState = "SUCCESS", $Powered
+    } ElseIf ($Powered -eq "Off") {
+      "PowerState: $Powered" | LogMe -display -progress
+      $tests.PowerState = "NEUTRAL", $Powered
+    } else {
+      "PowerState: $Powered" | LogMe -display -error
+      $tests.PowerState = "ERROR", $Powered
     }
 
     # Column displaymode when a User has a Session
@@ -3155,15 +3209,23 @@ if($ShowDesktopTable -eq 1 ) {
               "This is a standalone VDA"  | LogMe -display -progress
             }
 
-            $tests.WCdrivefreespace = $WriteCacheDriveInfo.Output_For_HTML2, $WriteCacheDriveInfo.WCdrivefreespace
-            if (($WriteCacheDriveInfo.Output_To_Log2 -like "*normal*") -OR ($WriteCacheDriveInfo.Output_To_Log2 -like "*does not exist")) {
-              $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -progress
-            }
-            elseif ($WriteCacheDriveInfo.Output_To_Log2 -like "*low*") {
-              $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -warning
-            }
-            else {
-              $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -error
+            If ($PersonalityInfo.IsMCS -AND $WriteCacheDriveInfo.Output_To_Log2 -Like "*Failed to connect") {
+              "It is assumed this is not using MCSIO" | LogMe -display -progress
+              # If this is an Azure VM, Machine Creation Services (MCS) supports using Azure Ephemeral OS disk for
+              # non-persistent VMs. Ephemeral disks should be fast IO because it uses temp storage on the local host.
+              # MCSIO is not compatible with Azure Ephemeral Disks, and is therefore not an available configuration.
+              $tests.WCdrivefreespace = "NEUTRAL", "N/A"
+            } Else {
+              $tests.WCdrivefreespace = $WriteCacheDriveInfo.Output_For_HTML2, $WriteCacheDriveInfo.WCdrivefreespace
+              if (($WriteCacheDriveInfo.Output_To_Log2 -like "*normal*") -OR ($WriteCacheDriveInfo.Output_To_Log2 -like "*does not exist")) {
+                $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -progress
+              }
+              elseif ($WriteCacheDriveInfo.Output_To_Log2 -like "*low*") {
+                $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -warning
+              }
+              else {
+                $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -error
+              }
             }
 
             If ($WriteCacheDriveInfo.vhdxSize_inMB -ne "N/A") {
@@ -3197,12 +3259,6 @@ if($ShowDesktopTable -eq 1 ) {
               $WriteCacheDriveInfo.Output_To_Log3 | LogMe -display -error
             }
 
-            If ($PersonalityInfo.IsMCS -AND $WriteCacheDriveInfo.Output_To_Log2 -Like "*Failed to connect") {
-              "It is assumed this is not using MCSIO" | LogMe -display -progress
-              # If this is an Azure VM, Machine Creation Services (MCS) supports using Azure Ephemeral OS disk for
-              # non-persistent VMs. Ephemeral disks should be fast IO because it uses temp storage on the local host.
-              # MCSIO is not compatible with Azure Ephemeral Disks, and is therefore not an available configuration.
-            }
           }
         } Else {
           # Cannot access UNC path so cannot test for the Personality.ini or MCSPersonality.ini
@@ -3343,14 +3399,21 @@ if($ShowDesktopTable -eq 1 ) {
     } # Close off $Powered -eq "On", "Unknown", or "Unmanaged"
 
     # Column RegistrationState
-    $RegistrationState = $machine | ForEach-Object{ $_.RegistrationState }
-    "State: $RegistrationState" | LogMe -display -progress
-    if ($RegistrationState -ne "Registered") {
-      $tests.RegState = "ERROR", $RegistrationState
-      $ErrorVDI = $ErrorVDI + 1
+    $RegState = $machine | ForEach-Object{ $_.RegistrationState }
+    if ($RegState -ne "Registered") {
+      if ($Powered -eq "Off") {
+        "RegistrationState: $RegState" | LogMe -display -progress
+        $tests.RegState = "NEUTRAL", $RegState
+      } else {
+        "RegistrationState: $RegState" | LogMe -display -error
+        $tests.RegState = "ERROR", $RegState
+        $ErrorVDI = $ErrorVDI + 1
+      }
+    } else {
+      "RegistrationState: $RegState" | LogMe -display -progress
+      $tests.RegState = "SUCCESS", $RegState
     }
-    else { $tests.RegState = "SUCCESS", $RegistrationState }
- 
+
     # Column MaintenanceMode
     $MaintenanceMode = $machine | ForEach-Object{ $_.InMaintenanceMode }
     "MaintenanceMode: $MaintenanceMode" | LogMe -display -progress
@@ -3398,55 +3461,67 @@ if($ShowDesktopTable -eq 1 ) {
     "Tags: $Tags" | LogMe -display -progress
     $tests.Tags = "NEUTRAL", $Tags
 
-    $ProvisioningType = ""
+    # Column MCSImageOutOfDate
+    $ProvisioningType = $machine | ForEach-Object{ $_.ProvisioningType }
+    # The Get-BrokerMachine cmdlet has a ProvisioningType property, but we can also get this from the Machine Catalogs we have already collected.
     # The Machine Catalogs should exist in the $Catalogs variable, so test this first before collecting them again using the Get-BrokerCatalog cmdlet.
-    $GetCatalogs = $True
-    If (($Catalogs | Measure-Object).Count -gt 0) {
-      $ProvisioningType = ($Catalogs | Where-Object {$_.Name -eq $CatalogName} | Select-Object -ExpandProperty ProvisioningType)
-      $GetCatalogs = $False
-    }
-    If ($GetCatalogs) {
-      If ($CitrixCloudCheck -ne 1) { 
-        $ProvisioningType = (Get-BrokerCatalog -AdminAddress $AdminAddress -Name $CatalogName | Select-Object -ExpandProperty ProvisioningType)
-      } Else {
-        $ProvisioningType = (Get-BrokerCatalog -Name $CatalogName | Select-Object -ExpandProperty ProvisioningType)
+    # Have left the next 13 lines of code in for future reference.
+    # $ProvisioningType = ""
+    # $GetCatalogs = $True
+    # If (($Catalogs | Measure-Object).Count -gt 0) {
+    #   $ProvisioningType = ($Catalogs | Where-Object {$_.Name -eq $CatalogName} | Select-Object -ExpandProperty ProvisioningType)
+    #   $GetCatalogs = $False
+    # }
+    # If ($GetCatalogs) {
+    #   If ($CitrixCloudCheck -ne 1) { 
+    #     $ProvisioningType = (Get-BrokerCatalog -AdminAddress $AdminAddress -Name $CatalogName | Select-Object -ExpandProperty ProvisioningType)
+    #   } Else {
+    #     $ProvisioningType = (Get-BrokerCatalog -Name $CatalogName | Select-Object -ExpandProperty ProvisioningType)
+    #   }
+    # }
+    If ($ProvisioningType -eq "MCS") {
+      $MCSImageOutOfDate = $machine | ForEach-Object{ $_.ImageOutOfDate }
+      if ($MCSImageOutOfDate -eq $true) {
+        if ($Powered -eq "Off") {
+          "MCSImageOutOfDate: $MCSImageOutOfDate" | LogMe -display -progress
+          $tests.MCSImageOutOfDate = "NEUTRAL", $MCSImageOutOfDate
+        } else {
+          "MCSImageOutOfDate: $MCSImageOutOfDate" | LogMe -display -error
+          $tests.MCSImageOutOfDate = "ERROR", $MCSImageOutOfDate
+        }
+      } else {
+        "MCSImageOutOfDate: $MCSImageOutOfDate" | LogMe -display -progress
+        if ($Powered -eq "Off") {
+          $tests.MCSImageOutOfDate = "NEUTRAL", $MCSImageOutOfDate
+        } else {
+          $tests.MCSImageOutOfDate = "SUCCESS", $MCSImageOutOfDate
+        }
       }
     }
-    If ($ProvisioningType -eq "MCS") {
-      # Column MCSImageOutOfDate
-      $MCSImageOutOfDate = $machine | ForEach-Object{ $_.ImageOutOfDate }
-      "ImageOutOfDate: $MCSImageOutOfDate" | LogMe -display -progress
-      if ($MCSImageOutOfDate -eq $true) { $tests.MCSImageOutOfDate = "ERROR", $MCSImageOutOfDate }
-      elseif ($MCSImageOutOfDate -eq $false) { $tests.MCSImageOutOfDate = "SUCCESS", $MCSImageOutOfDate  }
-      else { $tests.MCSImageOutOfDate = "NEUTRAL", $MCSImageOutOfDate }
-    }
 
-    # Column LastConnect
-    $yellow =((Get-Date).AddMonths(-1).ToString('yyyy-MM-dd HH:mm:s'))
-    $red =((Get-Date).AddMonths(-3).ToString('yyyy-MM-dd HH:mm:s'))
-
-    $machineLastConnect = $machine | ForEach-Object{ $_.LastConnectionTime }
-
-    if ([string]::IsNullOrWhiteSpace($machineLastConnect))
+    # Column LastConnectionTime
+    $yellow =((Get-Date).AddDays(-30).ToString('yyyy-MM-dd HH:mm:s'))
+    $red =((Get-Date).AddDays(-90).ToString('yyyy-MM-dd HH:mm:s'))
+    $machineLastConnectionTime = $machine | ForEach-Object{ $_.LastConnectionTime }
+    if ([string]::IsNullOrWhiteSpace($machineLastConnectionTime))
     {
-      $tests.LastConnect = "NEUTRAL", "NO DATA"
+      $tests.LastConnectionTime = "NEUTRAL", "NO DATA"
     }
-    elseif ($machineLastConnect -lt $red)
+    elseif ($machineLastConnectionTime -lt $red)
     {
-      "LastConnect: $machineLastConnect" | LogMe -display -ERROR
-      $tests.LastConnect = "ERROR", $machineLastConnect
+      "LastConnectionTime: $machineLastConnectionTime" | LogMe -display -ERROR
+      $tests.LastConnectionTime = "ERROR", $machineLastConnectionTime
     } 	
-    elseif ($machineLastConnect -lt $yellow)
+    elseif ($machineLastConnectionTime -lt $yellow)
     {
-      "LastConnect: $machineLastConnect" | LogMe -display -WARNING
-      $tests.LastConnect = "WARNING", $machineLastConnect
+      "LastConnectionTime: $machineLastConnectionTime" | LogMe -display -WARNING
+      $tests.LastConnectionTime = "WARNING", $machineLastConnectionTime
     }
     else 
     {
-      $tests.LastConnect = "SUCCESS", $machineLastConnect
-      "LastConnect: $machineLastConnect" | LogMe -display -progress
+      $tests.LastConnectionTime = "SUCCESS", $machineLastConnectionTime
+      "LastConnectionTime: $machineLastConnectionTime" | LogMe -display -progress
     }
-    ## End Column LastConnect
 
     # Fill $tests into array if error occured OR $ShowOnlyErrorVDI = 0
     # Check if error exists on this vdi
@@ -3508,9 +3583,9 @@ if($ShowXenAppTable -eq 1 ) {
   $ErrorXA = 0
 
   If ($CitrixCloudCheck -ne 1) {
-    $XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -Filter "SessionSupport -eq 'MultiSession'"  | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+    $XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -Filter "SessionSupport -eq 'MultiSession'"  | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)} | Sort-Object DNSName
   } Else {
-    $XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -Filter "SessionSupport -eq 'MultiSession'"  | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+    $XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -Filter "SessionSupport -eq 'MultiSession'"  | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)} | Sort-Object DNSName
   }
 
   If (($XAmachines | Measure-Object).Count -eq 0) {
@@ -3543,13 +3618,15 @@ if($ShowXenAppTable -eq 1 ) {
 
     # Column Powerstate
     $Powered = $XAmachine | ForEach-Object{ $_.PowerState }
-    "PowerState: $Powered" | LogMe -display -progress
-    $tests.PowerState = "NEUTRAL", $Powered
-    if ($Powered -eq "Off" -OR $Powered -eq "Unknown") {
-      $tests.PowerState = "NEUTRAL", $Powered
-    }
-    if ($Powered -eq "On") {
+    if ($Powered -eq "On" -OR $Powered -eq "Unmanaged") {
+      "PowerState: $Powered" | LogMe -display -progress
       $tests.PowerState = "SUCCESS", $Powered
+    } ElseIf ($Powered -eq "Off") {
+      "PowerState: $Powered" | LogMe -display -progress
+      $tests.PowerState = "NEUTRAL", $Powered
+    } else {
+      "PowerState: $Powered" | LogMe -display -error
+      $tests.PowerState = "ERROR", $Powered
     }
 
     if ($Powered -eq "On" -OR $Powered -eq "Unknown" -OR $Powered -eq "Unmanaged") {
@@ -3759,15 +3836,23 @@ if($ShowXenAppTable -eq 1 ) {
               "This is a standalone VDA"  | LogMe -display -progress
             }
 
-            $tests.WCdrivefreespace = $WriteCacheDriveInfo.Output_For_HTML2, $WriteCacheDriveInfo.WCdrivefreespace
-            if (($WriteCacheDriveInfo.Output_To_Log2 -like "*normal*") -OR ($WriteCacheDriveInfo.Output_To_Log2 -like "*does not exist")) {
-              $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -progress
-            }
-            elseif ($WriteCacheDriveInfo.Output_To_Log2 -like "*low*") {
-              $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -warning
-            }
-            else {
-              $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -error
+            If ($PersonalityInfo.IsMCS -AND $WriteCacheDriveInfo.Output_To_Log2 -Like "*Failed to connect") {
+              "It is assumed this is not using MCSIO" | LogMe -display -progress
+              # If this is an Azure VM, Machine Creation Services (MCS) supports using Azure Ephemeral OS disk for
+              # non-persistent VMs. Ephemeral disks should be fast IO because it uses temp storage on the local host.
+              # MCSIO is not compatible with Azure Ephemeral Disks, and is therefore not an available configuration.
+              $tests.WCdrivefreespace = "NEUTRAL", "N/A"
+            } Else {
+              $tests.WCdrivefreespace = $WriteCacheDriveInfo.Output_For_HTML2, $WriteCacheDriveInfo.WCdrivefreespace
+              if (($WriteCacheDriveInfo.Output_To_Log2 -like "*normal*") -OR ($WriteCacheDriveInfo.Output_To_Log2 -like "*does not exist")) {
+                $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -progress
+              }
+              elseif ($WriteCacheDriveInfo.Output_To_Log2 -like "*low*") {
+                $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -warning
+              }
+              else {
+                $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -error
+              }
             }
 
             If ($WriteCacheDriveInfo.vhdxSize_inMB -ne "N/A") {
@@ -3801,12 +3886,6 @@ if($ShowXenAppTable -eq 1 ) {
               $WriteCacheDriveInfo.Output_To_Log3 | LogMe -display -error
             }
 
-            If ($PersonalityInfo.IsMCS -AND $WriteCacheDriveInfo.Output_To_Log2 -Like "*Failed to connect") {
-              "It is assumed this is not using MCSIO" | LogMe -display -progress
-              # If this is an Azure VM, Machine Creation Services (MCS) supports using Azure Ephemeral OS disk for
-              # non-persistent VMs. Ephemeral disks should be fast IO because it uses temp storage on the local host.
-              # MCSIO is not compatible with Azure Ephemeral Disks, and is therefore not an available configuration.
-            }
           }
         } Else {
           # Cannot access UNC path so cannot test for the Personality.ini or MCSPersonality.ini
@@ -3984,6 +4063,22 @@ if($ShowXenAppTable -eq 1 ) {
     elseif ($Serverload -ge $loadIndexWarning) { $tests.Serverload = "WARNING", $Serverload }
     else { $tests.Serverload = "SUCCESS", $Serverload }
   
+    # Column RegistrationState
+    $RegState = $XAmachine| ForEach-Object{ $_.RegistrationState }
+    if ($RegState -ne "Registered") {
+      if ($Powered -eq "Off") {
+        "RegistrationState: $RegState" | LogMe -display -progress
+        $tests.RegState = "NEUTRAL", $RegState
+      } else {
+        "RegistrationState: $RegState" | LogMe -display -error
+        $tests.RegState = "ERROR", $RegState
+        $ErrorVDI = $ErrorVDI + 1
+      }
+    } else {
+      "RegistrationState: $RegState" | LogMe -display -progress
+      $tests.RegState = "SUCCESS", $RegState
+    }
+
     # Column MaintMode
     $MaintMode = $XAmachine | ForEach-Object{ $_.InMaintenanceMode }
     "MaintenanceMode: $MaintMode" | LogMe -display -progress
@@ -4011,15 +4106,6 @@ if($ShowXenAppTable -eq 1 ) {
     }
     else { $tests.MaintMode = "SUCCESS", "OFF" }
 
-    # Column RegState
-    $RegState = $XAmachine | ForEach-Object{ $_.RegistrationState }
-    "State: $RegState" | LogMe -display -progress
-    if ($RegState -ne "Registered") {
-      $tests.RegState = "ERROR", $RegState
-      $ErrorXA = $ErrorXA + 1
-    }
-    else { $tests.RegState = "SUCCESS", $RegState }
-
     # Column VDAVersion AgentVersion
     $VDAVersion = $XAmachine | ForEach-Object{ $_.AgentVersion }
     "VDAVersion: $VDAVersion" | LogMe -display -progress
@@ -4046,27 +4132,42 @@ if($ShowXenAppTable -eq 1 ) {
     "Tags: $Tags" | LogMe -display -progress
     $tests.Tags = "NEUTRAL", $Tags
   
-    $ProvisioningType = ""
+    # Column MCSImageOutOfDate
+    $ProvisioningType = $XAmachine | ForEach-Object{ $_.ProvisioningType }
+    # The Get-BrokerMachine cmdlet has a ProvisioningType property, but we can also get this from the Machine Catalogs we have already collected.
     # The Machine Catalogs should exist in the $Catalogs variable, so test this first before collecting them again using the Get-BrokerCatalog cmdlet.
-    $GetCatalogs = $True
-    If (($Catalogs | Measure-Object).Count -gt 0) {
-      $ProvisioningType = ($Catalogs | Where-Object {$_.Name -eq $CatalogName} | Select-Object -ExpandProperty ProvisioningType)
-      $GetCatalogs = $False
-    }
-    If ($GetCatalogs) {
-      If ($CitrixCloudCheck -ne 1) { 
-        $ProvisioningType = (Get-BrokerCatalog -AdminAddress $AdminAddress -Name $CatalogName | Select-Object -ExpandProperty ProvisioningType)
-      } Else {
-        $ProvisioningType = (Get-BrokerCatalog -Name $CatalogName | Select-Object -ExpandProperty ProvisioningType)
-      }
-    }
+    # Have left the next 13 lines of code in for future reference.
+    # $ProvisioningType = ""
+    # $GetCatalogs = $True
+    # If (($Catalogs | Measure-Object).Count -gt 0) {
+    #   $ProvisioningType = ($Catalogs | Where-Object {$_.Name -eq $CatalogName} | Select-Object -ExpandProperty ProvisioningType)
+    #   $GetCatalogs = $False
+    # }
+    # If ($GetCatalogs) {
+    #   If ($CitrixCloudCheck -ne 1) { 
+    #     $ProvisioningType = (Get-BrokerCatalog -AdminAddress $AdminAddress -Name $CatalogName | Select-Object -ExpandProperty ProvisioningType)
+    #   } Else {
+    #     $ProvisioningType = (Get-BrokerCatalog -Name $CatalogName | Select-Object -ExpandProperty ProvisioningType)
+    #   }
+    # }
     If ($ProvisioningType -eq "MCS") {
-      # Column MCSImageOutOfDate
       $MCSImageOutOfDate = $XAmachine | ForEach-Object{ $_.ImageOutOfDate }
-      "ImageOutOfDate: $MCSImageOutOfDate" | LogMe -display -progress
-      if ($MCSImageOutOfDate -eq $true) { $tests.MCSImageOutOfDate = "ERROR", $MCSImageOutOfDate }
-      elseif ($MCSImageOutOfDate -eq $false) { $tests.MCSImageOutOfDate = "SUCCESS", $MCSImageOutOfDate  }
-      else { $tests.MCSImageOutOfDate = "NEUTRAL", $MCSImageOutOfDate }
+      if ($MCSImageOutOfDate -eq $true) {
+        if ($Powered -eq "Off") {
+          "MCSImageOutOfDate: $MCSImageOutOfDate" | LogMe -display -progress
+          $tests.MCSImageOutOfDate = "NEUTRAL", $MCSImageOutOfDate
+        } else {
+          "MCSImageOutOfDate: $MCSImageOutOfDate" | LogMe -display -error
+          $tests.MCSImageOutOfDate = "ERROR", $MCSImageOutOfDate
+        }
+      } else {
+        "MCSImageOutOfDate: $MCSImageOutOfDate" | LogMe -display -progress
+        if ($Powered -eq "Off") {
+          $tests.MCSImageOutOfDate = "NEUTRAL", $MCSImageOutOfDate
+        } else {
+          $tests.MCSImageOutOfDate = "SUCCESS", $MCSImageOutOfDate
+        }
+      }
     }
 
     # Column ActiveSessions
@@ -4078,6 +4179,30 @@ if($ShowXenAppTable -eq 1 ) {
     $ConnectedUsers = $XAmachine | ForEach-Object{ $_.AssociatedUserNames }
     "Connected users: $ConnectedUsers" | LogMe -display -progress
     $tests.ConnectedUsers = "NEUTRAL", $ConnectedUsers
+
+    # Column LastConnectionTime
+    $yellow =((Get-Date).AddDays(-30).ToString('yyyy-MM-dd HH:mm:s'))
+    $red =((Get-Date).AddDays(-90).ToString('yyyy-MM-dd HH:mm:s'))
+    $machineLastConnectionTime = $XAmachine | ForEach-Object{ $_.LastConnectionTime }
+    if ([string]::IsNullOrWhiteSpace($machineLastConnectionTime))
+    {
+      $tests.LastConnectionTime = "NEUTRAL", "NO DATA"
+    }
+    elseif ($machineLastConnectionTime -lt $red)
+    {
+      "LastConnectionTime: $machineLastConnectionTime" | LogMe -display -ERROR
+      $tests.LastConnectionTime = "ERROR", $machineLastConnectionTime
+    } 	
+    elseif ($machineLastConnectionTime -lt $yellow)
+    {
+      "LastConnectionTime: $machineLastConnectionTime" | LogMe -display -WARNING
+      $tests.LastConnectionTime = "WARNING", $machineLastConnectionTime
+    }
+    else 
+    {
+      $tests.LastConnectionTime = "SUCCESS", $machineLastConnectionTime
+      "LastConnectionTime: $machineLastConnectionTime" | LogMe -display -progress
+    }
   
     # Fill $tests into array if error occured OR $ShowOnlyErrorXA = 0
     # Check if error exists on this vdi
@@ -4838,7 +4963,6 @@ If ($UseRunspace) {
 #          - Added the $ExcludedStuckSessionUserAccounts variable to the XML file. It is used to exclude certain sessions from the Stuck Sessions table. It supports wildcards. The purpose of
 #            this is to exclude kiosk accounts that may stay logged in for long periods of time.
 #          - Enhanced the Uptime VDI (single-session) and XenApp/RDSH (multi-session) tests so that they are marked as an error when Uptime is $maxUpTimeDays x 3.
-#
 # - 1.4.8, by Jeremy Saunders (jeremy@jhouseconsulting.com)
 #          - Replaced the CheckCpuUsage function with the Get-CpuConfigAndUsage function. This now gets the total logical processor count, as well as number of sockets and cores per socket,
 #            which helps identify misconfigurations. It will flag a warning if there is only 1 logical processor.
@@ -4865,6 +4989,26 @@ If ($UseRunspace) {
 #          - Cleaned up the outputs and error capturing as much as possible throughout the script.
 #          - Modified the writeTableHeader function to remove td width='6%', which helps better with the layout.
 #          - Updated all table widths to help fit all the extra data collected without looking too squashed.
+# - 1.4.9, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+#          - Uncommented a line in the writeData that I mistakenly left commented for testing under version 1.4.8.
+#          - Added an Enabled column for the Delivery Group table as requested under issue #67.
+#          - Added a DesktopsPowerStateUnknown column for the Delivery Group table as requested under issue #48.
+#            The output of Get-BrokerDesktopGroup cmdlet will not provide this, so we use the Get-BrokerMachine cmdlet with the DesktopGroupName property and further filtering using the
+#            PowerState property where it equals 'Unknown' and then piping that to the Measure-Object cmdlet to get the count. Anything above 0 is marked as an ERROR. The issue asked that the
+#            PowerState Unknown machines to not count as an available machine. However, that's false logic. Machines that are registered with a PowerState of Unknown will cause issues, because
+#            sessions will still attempt to be brokered to them. They do not reduce the available machines.
+#          - A PowerState of Unknown for machines in the VDI (single-session) or XenApp/RDSH (multi-session) tables will now be marked as ERROR.
+#          - If PowerState is Off, Unregistered and MCSImageOutOfDate are not marked as ERROR. Reduces unnecessary errors (red) in the report.
+#          - Tidied up some coding for the write cache drive detection so that it doesn't flag as an error if N/A.
+#          - Renamed the LastConnect test to LastConnectionTime in the VDI (single-session) section, so the name makes more sense, and added it to the XenApp/RDSH (multi-session) table too.
+#            Changed the warning from 1 month to 30 days, and error from 3 months to 90 days.
+#            This aligns with management reporting requirements helps to identify machines that haven't been used in a while that may be able to be decommissioned.
+#          - Added a DesktopsNotUsedLast90Days column for the Delivery Group table, which helps understand at a high level if we can decommision some machines from that Delivery Group.
+#            The output of Get-BrokerDesktopGroup cmdlet will not provide this, so we use the Get-BrokerMachine cmdlet with the DesktopGroupName property and further filtering using the
+#            LastConnectionTime less than '-90' days and then piping that to the Measure-Object cmdlet to get the count. Anything above 0 is marked as a WARNING.
+#          - Improved the IsWinRMAccessible function.
+#          - Piped the output of the Get-BrokerMachine cmdlet for the VDI (single-session) and XenApp/RDSH (multi-session) tests to Sort-Object via DNSName so that there is an order to the
+#            processing and logs for anyone that may be observing it.
 #
 # == FUTURE ==
 # #  1.5
@@ -4874,6 +5018,7 @@ If ($UseRunspace) {
 # - Look to merge the Singlesession and Multisession sections using a for loop to process, as there is quite a bit of code duplication in those two sections.
 # - Look to merge the Delivery Controllers, Cloud Connectors and Storefront Servers sections using a for loop to process, as there is quite a bit of code duplication in those three sections.
 # - Enhance the MCSIO tests, where possible.
+# - Consider adding the Get-BrokerMachine LastAssignmentTime property as a column, which was introduced from 2209.
 # - $displaymode section needs to be re-written so it uses WinRM.
 # - Combine functions where possible to collect data more efficiently.
 # - Implement DaaS APIs (from 2209 and above) to remove reliance on PowerShell SDK. It should be able to be slotted in quite easily with a variable to switch between them, which will allow
