@@ -1,5 +1,5 @@
 ﻿#==============================================================================================
-# Created on: 11.2014 modfied 06.2025 Version: 1.4.9
+# Created on: 11.2014 modfied 06.2025 Version: 1.5.0
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -66,6 +66,10 @@ if ($null -eq (Get-PSSnapin "Citrix.*" -EA silentlycontinue)) {
   try { Add-PSSnapin Citrix.* -ErrorAction Stop }
   catch { write-error "Error Get-PSSnapin Citrix.Broker.Admin.* Powershell snapin"; Return }
 }
+# Get all the loaded SnapIns that we pass into the scriptblock so that it's written to the log file.
+# We force the output into an array to ensure we have consistent behaviour.
+$SnapIns = @()
+$SnapIns += (Get-PSSnapin "Citrix.*" -EA silentlycontinue)
 
 #==============================================================================================
 
@@ -160,10 +164,31 @@ ForEach ($ParameterFile in $ParameterFiles) {
 
 $scriptBlockExecute = {
   param(
+        [PSObject[]]$paramBundle,
         [string]$ParameterFilePath,
         [string]$ParameterFile,
-        [string]$outputpath
+        [string]$outputpath,
+        [PSObject[]]$SnapIns
        )
+
+  If ($null -ne $paramBundle) {
+    ForEach ($obj in $paramBundle) {
+      $obj.PSObject.Properties | ForEach-Object {
+        If ($_.Name -eq "ParameterFilePath") {
+          [string]$ParameterFilePath = $_.Value
+        }
+        If ($_.Name -eq "ParameterFile") {
+          [string]$ParameterFile = $_.Value
+        }
+        If ($_.Name -eq "outputpath") {
+          [string]$outputpath = $_.Value
+        }
+        If ($_.Name -eq "SnapIns") {
+          [PSObject[]]$SnapIns = $_.Value
+        }
+      }
+    }
+  }
 
 # Import variables
 Function New-XMLVariables {
@@ -318,7 +343,12 @@ if ( $CitrixCloudCheck -eq "1" ) {
     Set-XDCredentials -CustomerId "$CustomerID" -APIKey "$APIKey" -SecretKey "$SecretKey" -ProfileType "$ProfileType" -StoreAs "$ProfileName"
   }
   Get-XDAuthentication -ProfileName "$ProfileName" -CustomerId "$CustomerID"
-  "- The XDSDKProxy address is: $($XDSDKProxy)" | LogMe -display -progress
+  Try {
+    "- The XDSDKProxy address is: $($XDSDKProxy)" | LogMe -display -progress
+  }
+  Catch {
+    "- The XDSDKProxy variable has not been set" | LogMe -display -warning
+  }
 } Else {
   $ProfileType = "OnPrem"
   Try {
@@ -382,37 +412,37 @@ If ($CitrixCloudCheck -ne 1) {
 If ($CitrixCloudCheck -ne 1) {
   #Header for Table "XD/XA Controllers" Get-BrokerController
   $XDControllerFirstheaderName = "ControllerServer"
-  $XDControllerHeaderNames = "Ping", "State", "DesktopsRegistered", "ActiveSiteServices"
+  $XDControllerHeaderNames = "IPv4Address", "Ping", "OSCaption", "OSBuild", "Uptime", "State", "DesktopsRegistered", "ActiveSiteServices"
   $XDControllerTableWidth= 1800
   foreach ($disk in $diskLettersControllers)
   {
     $XDControllerHeaderNames += "$($disk)Freespace"
   }
-  $XDControllerHeaderNames += "OSCaption", "OSBuild", "Uptime", "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg"
+  $XDControllerHeaderNames += "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg"
 }
 
 if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
   #Header for Table "Cloud Connector Servers"
   $CCFirstheaderName = "CloudConnectorServer"
-  $CCHeaderNames = "Ping",  "CitrixServices"
+  $CCHeaderNames = "IPv4Address", "Ping", "OSCaption", "OSBuild", "Uptime", "CitrixServices"
   $CCTableWidth= 1800
   foreach ($disk in $diskLettersControllers)
   {
     $CCHeaderNames += "$($disk)Freespace"
   }
-  $CCHeaderNames += "OSCaption", "OSBuild", "Uptime", "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg"
+  $CCHeaderNames += "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg"
 }
 
 If ($ShowStorefrontTable -eq 1) {
   #Header for Table "Storefront Servers"
   $SFFirstheaderName = "StorefrontServer"
-  $SFHeaderNames = "Ping",  "CitrixServices"
+  $SFHeaderNames = "IPv4Address", "Ping", "OSCaption", "OSBuild", "Uptime", "CitrixServices"
   $SFTableWidth= 1800
   foreach ($disk in $diskLettersControllers)
   {
     $SFHeaderNames += "$($disk)Freespace"
   }
-  $SFHeaderNames += "OSCaption", "OSBuild", "Uptime", "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg"
+  $SFHeaderNames += "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg"
 }
 
 #Header for Table "Fail Rates" FUTURE
@@ -447,22 +477,35 @@ $HypervisorConnectiontablewidth = 1200
 
 #Header for Table "VDI Singlesession Checks" Get-BrokerMachine
 $VDIfirstheaderName = "virtualDesktops"
-$VDIHeaderNames = "CatalogName", "DeliveryGroup", "Ping", "WinRM", "WMI", "UNC", "MaintMode", "Uptime", "RegState", "PowerState", "LastConnectionTime", "VDAVersion", "OSCaption", "OSBuild", "AssociatedUserNames", "displaymode", "EDT_MTU", "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace", "NvidiaLicense","NvidiaDriverVer", "LogicalProcessors", "Sockets", "CoresPerSocket", "TotalPhysicalMemoryinGB", "Tags", "HostedOn"
+$VDIHeaderNames = "IPv4Address", "CatalogName", "DeliveryGroup", "Ping", "WinRM", "WMI", "UNC", "MaintMode", "Uptime", "RegState", "PowerState", "LastConnectionTime", "VDAVersion", "OSCaption", "OSBuild"
+$VDIHeaderNames += "Spooler", "CitrixPrint", "UPMEnabled", "FSLogixEnabled", "WEMEnabled"
+$VDIHeaderNames += "AssociatedUserNames"
+$VDIHeaderNames += "displaymode", "EDT_MTU"
+$VDIHeaderNames += "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace"
+$VDIHeaderNames += "NvidiaLicense","NvidiaDriverVer"
+$VDIHeaderNames += "LogicalProcessors", "Sockets", "CoresPerSocket", "TotalPhysicalMemoryinGB"
+$VDIHeaderNames += "Tags", "HostedOn"
 $VDItablewidth = 2400
-  
+
 #Header for Table "XenApp/RDS/Multisession Checks" Get-BrokerMachine
 $XenAppfirstheaderName = "virtualApp-Servers"
-$XenAppHeaderNames = "CatalogName", "DeliveryGroup", "Ping", "WinRM", "WMI", "UNC", "Serverload", "MaintMode", "Uptime", "RegState", "PowerState", "LastConnectionTime", "VDAVersion", "Spooler", "CitrixPrint", "OSCaption", "OSBuild", "RDSGracePeriod", "TerminalServerMode", "LicensingName", "LicensingType", "LicenseServerList", "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace", "NvidiaLicense","NvidiaDriverVer"
+$XenAppHeaderNames = "IPv4Address", "CatalogName", "DeliveryGroup", "Ping", "WinRM", "WMI", "UNC", "Serverload", "MaintMode", "Uptime", "RegState", "PowerState", "LastConnectionTime", "VDAVersion", "OSCaption", "OSBuild"
+$XenAppHeaderNames += "Spooler", "CitrixPrint", "UPMEnabled", "FSLogixEnabled", "WEMEnabled"
+$XenAppHeaderNames += "RDSGracePeriod", "TerminalServerMode", "LicensingName", "LicensingType", "LicenseServerList"
+$XenAppHeaderNames += "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace"
 foreach ($disk in $diskLettersWorkers)
 {
   $XenAppHeaderNames += "$($disk)Freespace"
 }
 if ($ShowConnectedXenAppUsers -eq "1") { 
-  $XenAppHeaderNames += "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg", "ActiveSessions", "ConnectedUsers", "Tags", "HostedOn"
+  $XenAppHeaderNames += "ActiveSessions", "ConnectedUsers"
 }
 else {
-  $XenAppHeaderNames += "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg", "ActiveSessions", "Tags", "HostedOn"
+  $XenAppHeaderNames += "ActiveSessions"
 }
+$XenAppHeaderNames += "NvidiaLicense","NvidiaDriverVer"
+$XenAppHeaderNames += "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg"
+$XenAppHeaderNames += "Tags", "HostedOn"
 $XenApptablewidth = 2400
 
 #Header for Table "StuckSessions"  Get-BrokerSession
@@ -1440,6 +1483,237 @@ Function Get-WriteCacheDriveInfo {
 
 #==============================================================================================
 
+Function Get-ProfileAndUserEnvironmentManagementServiceStatus {
+  # This function gets the Profile Management and User Environment Management services and their configuration status.
+  # - Microsoft FSLogix
+  # - Citrix Profile Management
+  # - Citrix WEM
+  [CmdletBinding()]
+  param (
+         [string]$ComputerName,
+         [int]$WEMAgentRefresh = 15
+        )
+  $myArgs = @($WEMAgentRefresh)
+  Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+    param (
+           [int]$WEMAgentRefresh = 15
+          )
+    $result = [PSCustomObject]@{
+      ComputerName                   = $env:COMPUTERNAME
+      FSLogixInstalled               = $false
+      FSLogixServiceRunning          = $false
+      FSLogixProfileEnabled          = $null
+      FSLogixProfileType             = $null
+      FSLogixProfileTypeDescription  = $null
+      FSLogixOfficeEnabled           = $null
+      FSLogixCCDLocations            = $null
+      FSLogixVHDLocations            = $null
+      FSLogixLogFilePath             = $null
+      FSLogixRedirectionType         = $null
+      UPMInstalled                   = $false
+      UPMServiceRunning              = $false
+      UPMServiceActive               = $null
+      UPMPathToLogFile               = $null
+      UPMPathToUserStore             = $null
+      WEMInstalled                   = $false
+      WEMServiceRunning              = $false
+      WEMAgentRegistered             = $false
+      WEMAgentConfigurationSets      = $null
+      WEMAgentCacheSyncMode          = $null
+      WEMAgentCachePath              = $null
+    }
+
+    $frxsvcInstalled = $False
+    $frxsvcRunning = $False
+    $frxccdsInstalled = $False
+    $frxccdsRunning = $False
+    $WemAgentSvcInstalled = $False
+    $WemAgentSvcRunning = $False
+    $WemLogonSvcInstalled = $False
+    $WemLogonSvcRunning = $False
+
+    # Get-Service the services
+    # - FSLogix Apps Services (frxsvc)
+    # - FSLogix Cloud Caching Service (frxccds)
+    # - Citrix Profile Management (ctxProfile)
+    # - Citrix WEM Agent Host Service (WemAgentSvc)
+    # - Citrix WEM User Logon Service (WemLogonSvc)
+    try {
+      $services = Get-Service -ErrorAction Stop | where-object {$_.Name -eq 'frxsvc' -OR $_.Name -eq 'frxccds' -OR $_.Name -eq 'ctxProfile' -OR $_.Name -eq 'WemAgentSvc' -OR $_.Name -eq 'WemLogonSvc'}
+      $services | ForEach-Object {
+        if ($_.Name -eq "frxsvc") {
+          $frxsvcInstalled = $True
+          if ($_.Status -Match "Running") {
+            $frxsvcRunning = $True
+          }
+        }
+        if ($_.Name -eq "frxccds") {
+          $frxccdsInstalled = $True
+          if ($_.Status -Match "Running") {
+            $frxccdsRunning = $True
+          }
+        }
+        if ($_.Name -eq "ctxProfile") {
+          $result.UPMInstalled = $true
+          if ($_.Status -Match "Running") {
+            $result.UPMServiceRunning = ($_.Status -eq "Running")
+          }
+        }
+        if ($_.Name -eq "WemAgentSvc") {
+          $WemAgentSvcInstalled = $True
+          if ($_.Status -Match "Running") {
+            $WemAgentSvcRunning = $True
+          }
+        }
+        if ($_.Name -eq "WemLogonSvc") {
+          $WemLogonSvcInstalled = $True
+          if ($_.Status -Match "Running") {
+            $WemLogonSvcRunning = $True
+          }
+        }
+      }
+
+      If ($frxsvcInstalled -AND $frxccdsInstalled) {
+        $result.FSLogixInstalled = $true
+      }
+      If ($frxsvcRunning -AND $frxccdsRunning) {
+        $result.FSLogixServiceRunning = $true
+      }
+      If ($WemAgentSvcInstalled -AND $WemLogonSvcInstalled) {
+        $result.WEMInstalled = $true
+      }
+      If ($WemAgentSvcRunning -AND $WemLogonSvcRunning) {
+        $result.WEMServiceRunning = $true
+      }
+    }
+    catch {
+      #$_.Exception.Message
+      $result.FSLogixInstalled = $false
+      $result.FSLogixServiceRunning = $false
+      $result.UPMInstalled = $false
+      $result.UPMServiceRunning = $false
+      $result.WEMInstalled = $false
+      $result.WEMServiceRunning = $false
+    }
+
+    # Registry locations
+    $FSLogixprofileReg = "HKLM:\SOFTWARE\FSLogix\Profiles"
+    $FSLogixofficeReg  = "HKLM:\SOFTWARE\FSLogix\ODFC"
+    $FSLogixloggingReg = "HKLM:\SOFTWARE\FSLogix\Logging"
+    $UPMprofileReg = "HKLM:\SOFTWARE\Policies\Citrix\UserProfileManager"
+
+    $ErrorActionPreference = "stop"
+    If ($result.FSLogixInstalled -AND $result.FSLogixServiceRunning) {
+      # FSLogix Profile Container settings
+      try {
+        $FSLogixprofileProps = Get-ItemProperty -Path $FSLogixprofileReg
+        $result.FSLogixProfileEnabled = $FSLogixprofileProps.Enabled
+        $result.FSLogixProfileType = $FSLogixprofileProps.ProfileType
+        switch ($FSLogixprofileProps.ProfileType)
+        {
+             "0" {
+                  $result.FSLogixProfileTypeDescription = "Standard connections - Normal profile behavior"
+                  break
+                 }
+             "1" {
+                  $result.FSLogixProfileTypeDescription = "Machine should only be the RW profile instance"
+                  break
+                 }
+             "2" {
+                  $result.FSLogixProfileTypeDescription = "Machine should only be the RO profile instance"
+                  break
+                 }
+             "3" {
+                  $result.FSLogixProfileTypeDescription = "Multiple concurrent connections - Machine should try to take the RW role and if it can't, it should fall back to a RO role"
+                  break
+                 }
+         Default {
+                  $result.FSLogixProfileTypeDescription = "Unknown profile type"
+                 }
+        }
+        $result.FSLogixCCDLocations = ($FSLogixprofileProps.CCDLocations -join "; ")
+        $result.FSLogixVHDLocations = ($FSLogixprofileProps.VHDLocations -join "; ")
+        $result.FSLogixRedirectionType = $FSLogixprofileProps.VolumeType
+      }
+      catch {
+       #$_.Exception.Message
+      }
+      # FSLogix Office Container settings
+      try {
+        $FSLogixofficeProps = Get-ItemProperty -Path $FSLogixofficeReg
+        $result.FSLogixOfficeEnabled = $FSLogixofficeProps.Enabled
+      }
+      catch {
+        #$_.Exception.Message
+      }
+      # FSLogix Log file path
+      try {
+        $FSLogixlogProps = Get-ItemProperty -Path $FSLogixloggingReg
+        $result.FSLogixLogFilePath = $FSLogixlogProps.LogFile
+      }
+      catch {
+        #$_.Exception.Message
+      }
+    }
+    # UPM Config
+    If ($result.UPMInstalled -AND $result.UPMServiceRunning) {
+      try {
+        $UPMProps = Get-ItemProperty -Path $UPMprofileReg
+        If (![string]::IsNullOrEmpty($UPMProps.ServiceActive)) {
+          $result.UPMServiceActive = $UPMProps.ServiceActive
+        } Else {
+          $result.UPMServiceActive = 1
+        }
+        $result.UPMPathToLogFile = $UPMProps.PathToLogFile
+        $result.UPMPathToUserStore = $UPMProps.PathToUserStore
+      }
+      catch {
+        #$_.Exception.Message
+        $result.UPMServiceActive = 1
+      }
+    }
+    $ErrorActionPreference = "Continue"
+
+    If ($result.WEMInstalled -AND $result.WEMServiceRunning) {
+      # How to test to see if WEM is configured. Thanks to Nick Panaccio from the World of EUC Slack group for his assistance.
+      # The WEM Agent initiates a configuration settings refresh every 15 minutes by default, so we can check if it has successfully
+      # registered with its configuration sets within the last 15 minutes via the WEM Agent Service event log.
+      Try {
+        $Registered = Get-WinEvent -LogName "WEM Agent Service" -ErrorAction Stop | Where { $_.Message -like "Agent successfully registered with configuration set*" -and $_.TimeCreated -gt (Get-Date).AddMinutes(-$WEMAgentRefresh) } | Select TimeCreated, Message | Select-Object -First 1
+        # As the agent will refresh the cache (15 min default), we can also get the "Agent cache sync mode" and "Agent cache path".
+        $CacheInfo = Get-WinEvent -LogName "WEM Agent Service" -ErrorAction Stop | Where { $_.Message -like "Agent cache info*" -and $_.TimeCreated -gt (Get-Date).AddMinutes(-$WEMAgentRefresh) } | Select TimeCreated, Message | Select-Object -First 1
+
+        If ($null -ne $Registered) {
+          $result.WEMAgentRegistered = $True
+          $lines = ($Registered.Message) -split '\r?\n'
+          ForEach ($line in $lines) {
+            If ($line -like "Agent successfully registered*") {
+              $result.WEMAgentConfigurationSets = $line.split(':',2)[1].Trim()
+            } 
+          }
+        }
+        If ($null -ne $CacheInfo) {
+          $lines = ($CacheInfo.Message) -split '\r?\n'
+          ForEach ($line in $lines) {
+            If ($line -like "Agent cache sync mode*") {
+              $result.WEMAgentCacheSyncMode = $line.split(':',2)[1].Trim()
+            }
+            If ($line -like "Agent cache path*") {
+              $result.WEMAgentCachePath = $line.split(':',2)[1].Trim()
+            }
+          }
+        }
+      }
+      Catch {
+        #$_.Exception.Message
+      }
+    }
+    return $result
+  } -ArgumentList $myArgs
+}
+
+#==============================================================================================
+
 Function writeHtmlHeader
 {
 param($title, $fileName)
@@ -1692,8 +1966,10 @@ Function ToHumanReadable()
 " " | LogMe -display -progress
 
 # Log the loaded Citrix PS Snapins
-"Getting all the active and registered Citrix PowerShell snap-ins" | LogMe -display -progress
-(Get-PSSnapin "Citrix.*" -EA silentlycontinue).Name | ForEach-Object {"$($_)" | LogMe -display -progress}
+"Listing all the active and registered Citrix PowerShell snap-ins that are loaded" | LogMe -display -progress
+ForEach ($SnapIn in $SnapIns) {
+  "- $($SnapIn.Name)" | LogMe -display -progress
+}
 
 " " | LogMe -display -progress
 
@@ -1763,7 +2039,12 @@ If ($CitrixCloudCheck -ne 1) {
     #Name of $Controller
     $ControllerDNS = $Controller | ForEach-Object{ $_.DNSName }
     "Controller: $ControllerDNS" | LogMe -display -progress
-  
+
+    # Column IPv4Address
+    $IPv4Address = ([System.Net.Dns]::GetHostAddresses($ControllerDNS) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { $_.IPAddressToString }) -join ", "
+    "IPv4Address: $IPv4Address" | LogMe -display -progress
+    $tests.IPv4Address = "NEUTRAL", $IPv4Address
+ 
     #Test-Ping $Controller
     $result = Test-Ping -Target:$ControllerDNS -Timeout:200 -Count:3
     # Column Ping
@@ -1931,7 +2212,12 @@ if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
     #Name of $CloudConnectorServer
     $CloudConnectorServerDNS = $CloudConnectorServer
     "Cloud Connector Server: $CloudConnectorServerDNS" | LogMe -display -progress
-  
+
+    # Column IPv4Address
+    $IPv4Address = ([System.Net.Dns]::GetHostAddresses($CloudConnectorServerDNS) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { $_.IPAddressToString }) -join ", "
+    "IPv4Address: $IPv4Address" | LogMe -display -progress
+    $tests.IPv4Address = "NEUTRAL", $IPv4Address
+
     #Ping $CloudConnectorServer
     $result = Test-Ping -Target:$CloudConnectorServerDNS -Timeout:200 -Count:3
     # Column Ping
@@ -2110,7 +2396,12 @@ If ($ShowStorefrontTable -eq 1) {
     #Name of $StoreFrontServer
     $StoreFrontServerDNS = $StoreFrontServer
     "Storefront Server: $StoreFrontServerDNS" | LogMe -display -progress
-  
+
+    # Column IPv4Address
+    $IPv4Address = ([System.Net.Dns]::GetHostAddresses($StoreFrontServerDNS) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { $_.IPAddressToString }) -join ", "
+    "IPv4Address: $IPv4Address" | LogMe -display -progress
+    $tests.IPv4Address = "NEUTRAL", $IPv4Address
+
     #Ping $StoreFrontServer
     $result = Test-Ping -Target:$StoreFrontServerDNS -Timeout:200 -Count:3
     # Column Ping
@@ -2444,79 +2735,110 @@ foreach ($Catalog in $Catalogs) {
     $tests.AssignedToDG = "NEUTRAL", $CatalogUsedCountCount
 
     #MinimumFunctionalLevel
-	$MinimumFunctionalLevel = $Catalog | ForEach-Object{ $_.MinimumFunctionalLevel }
-	"MinimumFunctionalLevel: $MinimumFunctionalLevel" | LogMe -display -progress
+    $MinimumFunctionalLevel = $Catalog | ForEach-Object{ $_.MinimumFunctionalLevel }
+    "MinimumFunctionalLevel: $MinimumFunctionalLevel" | LogMe -display -progress
     $tests.MinimumFunctionalLevel = "NEUTRAL", $MinimumFunctionalLevel
   
-     #ProvisioningType
-     $CatalogProvisioningType = $Catalog | ForEach-Object{ $_.ProvisioningType }
-     "ProvisioningType: $CatalogProvisioningType" | LogMe -display -progress
-     $tests.ProvisioningType = "NEUTRAL", $CatalogProvisioningType
-  
-     #AllocationType
-     $CatalogAllocationType = $Catalog | ForEach-Object{ $_.AllocationType }
-     "AllocationType: $CatalogAllocationType" | LogMe -display -progress
-     $tests.AllocationType = "NEUTRAL", $CatalogAllocationType
+    #AllocationType
+    $CatalogAllocationType = $Catalog | ForEach-Object{ $_.AllocationType }
+    "AllocationType: $CatalogAllocationType" | LogMe -display -progress
+    $tests.AllocationType = "NEUTRAL", $CatalogAllocationType
 
-     $CatalogProvisioningSchemeId = $Catalog | ForEach-Object{ $_.ProvisioningSchemeId }
+    #ProvisioningType
+    $CatalogProvisioningType = $Catalog | ForEach-Object{ $_.ProvisioningType }
+    "ProvisioningType: $CatalogProvisioningType" | LogMe -display -progress
+    $tests.ProvisioningType = "NEUTRAL", $CatalogProvisioningType
 
-     #UsedMcsSnapshot 
-     $UsedMcsSnapshot = ""
-     $MCSInfo = $null
-     $MasterImageVMDate = ""
-     $UseFullDiskClone = ""
-     $UseWriteBackCache = ""
-     $WriteBackCacheMemSize = ""
+    # The GUID of the provisioning scheme associated with the catalog only applies if the provisioning type is MCS.
+    # This may change in the future as Citrix further integrate PVS into the stack.
+    If ($CatalogProvisioningType -eq "MCS") {
+      $CatalogProvisioningSchemeId = $Catalog | ForEach-Object{ $_.ProvisioningSchemeId }
 
-     "ProvisioningSchemeId: $CatalogProvisioningSchemeId " | LogMe -display -progress
-     Try {
-       If ($CitrixCloudCheck -ne 1) {
-         $MCSInfo = (Get-ProvScheme -AdminAddress $AdminAddress -ProvisioningSchemeUid $CatalogProvisioningSchemeId)
-       } Else {
-         $MCSInfo = (Get-ProvScheme -ProvisioningSchemeUid $CatalogProvisioningSchemeId)
+       #UsedMcsSnapshot 
+       $UsedMcsSnapshot = ""
+       $MCSInfo = $null
+       $MasterImageVMDate = ""
+       $UseFullDiskClone = ""
+       $UseWriteBackCache = ""
+       $WriteBackCacheMemSize = ""
+
+       "ProvisioningSchemeId: $CatalogProvisioningSchemeId " | LogMe -display -progress
+       Try {
+         If ($CitrixCloudCheck -ne 1) {
+           $MCSInfo = (Get-ProvScheme -AdminAddress $AdminAddress -ProvisioningSchemeUid $CatalogProvisioningSchemeId)
+         } Else {
+           $MCSInfo = (Get-ProvScheme -ProvisioningSchemeUid $CatalogProvisioningSchemeId)
+         }
+         "ProvisioningScheme Info:" | LogMe -display -progress
+         # MachineProfile can be null, so we just wrap it in a try/catch to manage errors.
+         Try {
+           "- MachineProfile: $($MCSInfo.MachineProfile)" | LogMe -display -progress
+         }
+         Catch [system.exception] {
+           #$_.Exception.Message
+         }
+         "- MasterImageVM: $($MCSInfo.MasterImageVM)" | LogMe -display -progress
+         "- MasterImageVMDate: $($MCSInfo.MasterImageVMDate)" | LogMe -display -progress
+         "- UseFullDiskCloneProvisioning: $($MCSInfo.UseFullDiskCloneProvisioning)" | LogMe -display -progress
+         "- UseWriteBackCache: $($MCSInfo.UseWriteBackCache)" | LogMe -display -progress
+         "- WriteBackCacheDiskSize: $($MCSInfo.WriteBackCacheDiskSize)" | LogMe -display -progress
+         "- WriteBackCacheMemorySize:$( $MCSInfo.WriteBackCacheMemorySize)" | LogMe -display -progress
+         "- WriteBackCacheDiskIndex: $($MCSInfo.WriteBackCacheDiskIndex)" | LogMe -display -progress
+         # Note that the Get-ProvScheme cmdlet may does not yet have a parameter for "WriteBackCacheDiskLetter", even though this
+         # was added for the New-ProvScheme cmdlet mid 2024 and supported from VDA version 2305 (CTX575525). This should not be
+         # needed as the drive letter of MCSIO WBC disk is determined by Windows OS and is typically either D or E drive (the next
+         # free drive letter after C). The Base Image Script Framework (BIS-F) should be used to help make this consistent as part
+         # of your imaging standards. So we just wrap it in a try/catch to manage errors.
+         Try {
+           "- WriteBackCacheDiskLetter: $($MCSInfo.WriteBackCacheDiskLetter)" | LogMe -display -progress
+         }
+         Catch [system.exception] {
+           #$_.Exception.Message
+         }
+         # WindowsActivationType is supported from 2303 and successive VDA versions. Any previous VDA version or if the vda is not
+         # of Windows Operating System Type, the field would be "UnsupportedVDA". However, as it can be null, we just wrap it in a
+         # try/catch to manage errors.
+         Try {
+           "- WindowsActivationType: $($MCSInfo.WindowsActivationType)" | LogMe -display -progress
+         }
+         Catch [system.exception] {
+           #$_.Exception.Message
+         }
+         $UsedMcsSnapshot = $MCSInfo.MasterImageVM
+         $UsedMcsSnapshot = $UsedMcsSnapshot.trimstart("XDHyp:\HostingUnits\")
+         $UsedMcsSnapshot = $UsedMcsSnapshot.trimend(".template")
+         $MasterImageVMDate = $MCSInfo.MasterImageVMDate
+         $UseFullDiskClone = $MCSInfo.UseFullDiskCloneProvisioning
+         $UseWriteBackCache = $MCSInfo.UseWriteBackCache
+         $WriteBackCacheMemorySize = $MCSInfo.WriteBackCacheMemorySize
        }
-       "ProvisioningScheme Info:" | LogMe -display -progress
-       "- MachineProfile: $($MCSInfo.MachineProfile)" | LogMe -display -progress
-       "- MasterImageVM: $($MCSInfo.MasterImageVM)" | LogMe -display -progress
-       "- MasterImageVMDate: $($MCSInfo.MasterImageVMDate)" | LogMe -display -progress
-       "- UseFullDiskCloneProvisioning: $($MCSInfo.UseFullDiskCloneProvisioning)" | LogMe -display -progress
-       "- UseWriteBackCache: $($MCSInfo.UseWriteBackCache)" | LogMe -display -progress
-       "- WriteBackCacheDiskSize: $($MCSInfo.WriteBackCacheDiskSize)" | LogMe -display -progress
-       "- WriteBackCacheMemorySize:$( $MCSInfo.WriteBackCacheMemorySize)" | LogMe -display -progress
-       "- WriteBackCacheDiskIndex: $($MCSInfo.WriteBackCacheDiskIndex)" | LogMe -display -progress
-       # "- WriteBackCacheDiskLetter: $($MCSInfo.WriteBackCacheDiskLetter)" | LogMe -display -progress
-       # Note that the Get-ProvScheme cmdlet does not yet have a parameter for "WriteBackCacheDiskLetter", even though this
-       # was added for the New-ProvScheme cmdlet mid 2024. This should not be needed as the drive letter of MCSIO WBC disk
-       # is determined by Windows OS and is typically either D or E drive (the next free drive letter after C). The Base
-       # Image Script Framework (BIS-F) should be used to help make this consistent as part of your imaging standards.
-       "- WindowsActivationType: $($MCSInfo.WindowsActivationType)" | LogMe -display -progress
-
-       $UsedMcsSnapshot = $MCSInfo.MasterImageVM
-       #"MasterImageVM: $MCSInfo.MasterImageVM"
-       $UsedMcsSnapshot = $UsedMcsSnapshot.trimstart("XDHyp:\HostingUnits\")
-       $UsedMcsSnapshot = $UsedMcsSnapshot.trimend(".template")
-       $MasterImageVMDate = $MCSInfo.MasterImageVMDate
-       $UseFullDiskClone = $MCSInfo.UseFullDiskCloneProvisioning
-       $UseWriteBackCache = $MCSInfo.UseWriteBackCache
-       $WriteBackCacheMemorySize = $MCSInfo.WriteBackCacheMemorySize
-     }
-     Catch [system.exception] {
-       #$_.Exception.Message
-     }
-     "UsedMcsSnapshot: = $UsedMcsSnapshot"
-     $tests.UsedMcsSnapshot  = "NEUTRAL", $UsedMcsSnapshot
-     If (!([String]::IsNullOrEmpty($MasterImageVMDate))) {
-       $dateToCheck = [datetime]::Parse($MasterImageVMDate)
-       $thresholdDate = (Get-Date).AddDays(-90)
-       if ($dateToCheck -lt $thresholdDate) {
-         $tests.MasterImageVMDate = "WARNING", $MasterImageVMDate
-       } else {
-         $tests.MasterImageVMDate = "NEUTRAL", $MasterImageVMDate
+       Catch [system.exception] {
+         #$_.Exception.Message
        }
+       "UsedMcsSnapshot: = $UsedMcsSnapshot"
+       $tests.UsedMcsSnapshot  = "NEUTRAL", $UsedMcsSnapshot
+       If (!([String]::IsNullOrEmpty($MasterImageVMDate))) {
+         # Date format will always be MM/dd/yyyy so we specify that so that PowerShell doesn't parse it incorrectly, interpreting the
+         # day and month around the opposite way.
+         $format = "MM/dd/yyyy HH:mm:ss"
+         $culture = [System.Globalization.CultureInfo]::InvariantCulture
+         $style = [System.Globalization.DateTimeStyles]::None
+         $parsedDate = [datetime]::MinValue
+         $success = [datetime]::TryParseExact($MasterImageVMDate, $format, $culture, $style, [ref]$parsedDate)
+         $thresholdDate = (Get-Date).AddDays(-90)
+         if ($parsedDate -lt $thresholdDate) {
+           "The MasterImageVMDate is more than 90 days old." | LogMe -display -warning
+           $tests.MasterImageVMDate = "WARNING", $MasterImageVMDate
+         } else {
+           $tests.MasterImageVMDate = "NEUTRAL", $MasterImageVMDate
+         }
+       }
+       $tests.UseFullDiskClone = "NEUTRAL", $UseFullDiskClone
+       $tests.UseWriteBackCache = "NEUTRAL", $UseWriteBackCache
+       $tests.WriteBackCacheMemSize = "NEUTRAL", $WriteBackCacheMemSize
+     } Else {
+       "This is not an MCS provisioned catalog." | LogMe -display -progress
      }
-     $tests.UseFullDiskClone = "NEUTRAL", $UseFullDiskClone
-     $tests.UseWriteBackCache = "NEUTRAL", $UseWriteBackCache
-     $tests.WriteBackCacheMemSize = "NEUTRAL", $WriteBackCacheMemSize
 
     "", ""
     $CatalogResults.$FullCatalogNameIncAdminFolder = $tests
@@ -2623,7 +2945,7 @@ foreach ($Assigment in $Assigments) {
       $tests.DesktopsFree = "NEUTRAL", "N/A"
       $tests.DesktopsInUse = "NEUTRAL", "N/A"
     }
-    else { 
+    else {
       #DesktopsInUse
       $AssigmentDesktopsInUse = $Assigment | ForEach-Object{ $_.DesktopsInUse }
       "DesktopsInUse: $AssigmentDesktopsInUse" | LogMe -display -progress
@@ -2632,24 +2954,22 @@ foreach ($Assigment in $Assigments) {
       #DesktopFree
       $AssigmentDesktopsFree = $AssigmentDesktopsAvailable - $AssigmentDesktopsInUse
       "DesktopsFree: $AssigmentDesktopsFree" | LogMe -display -progress
-  
-			if ($AssigmentDesktopsKind -eq "shared") {
-			if ($AssigmentDesktopsFree -gt 0 ) {
-				"DesktopsFree < 1 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
-				$tests.DesktopsFree = "SUCCESS", $AssigmentDesktopsFree
-			} elseif ($AssigmentDesktopsFree -lt 0 ) {
-				"DesktopsFree < 1 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
-				$tests.DesktopsFree = "SUCCESS", "N/A"
-			} else {
-				$tests.DesktopsFree = "WARNING", $AssigmentDesktopsFree
-				"DesktopsFree > 0 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
-			}
-			} else {
-			$tests.DesktopsFree = "NEUTRAL", "N/A"
-			}
-	
-	
-	}
+
+      if ($AssigmentDesktopsKind -eq "shared") {
+        if ($AssigmentDesktopsFree -gt 0 ) {
+          "DesktopsFree < 1 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
+          $tests.DesktopsFree = "SUCCESS", $AssigmentDesktopsFree
+        } elseif ($AssigmentDesktopsFree -lt 0 ) {
+          "DesktopsFree < 1 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
+          $tests.DesktopsFree = "SUCCESS", "N/A"
+        } else {
+          $tests.DesktopsFree = "WARNING", $AssigmentDesktopsFree
+          "DesktopsFree > 0 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
+        }
+      } else {
+        $tests.DesktopsFree = "NEUTRAL", "N/A"
+      }
+    }
 
     $AssigmentDesktopsenabled = $Assigment | ForEach-Object{ $_.enabled }
     "Enabled: $AssigmentDesktopsenabled" | LogMe -display -progress
@@ -2711,7 +3031,7 @@ foreach ($Assigment in $Assigments) {
 
     $DesktopsNotUsedLast90Days = 0
     If ($CitrixCloudCheck -ne 1) {
-      $DesktopsNotUsedLast90Days = (Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -DesktopGroupName $FullDeliveryGroupNameIncAdminFolder-Filter "LastConnectionTime -lt '-90'" | Measure-Object).Count
+      $DesktopsNotUsedLast90Days = (Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -DesktopGroupName $FullDeliveryGroupNameIncAdminFolder -Filter "LastConnectionTime -lt '-90'" | Measure-Object).Count
     } Else {
       $DesktopsNotUsedLast90Days = (Get-BrokerMachine -MaxRecordCount $maxmachines -DesktopGroupName $FullDeliveryGroupNameIncAdminFolder -Filter "LastConnectionTime -lt '-90'" | Measure-Object).Count
     }
@@ -3014,6 +3334,11 @@ if($ShowDesktopTable -eq 1 ) {
     $machineDNS = $machine | ForEach-Object{ $_.DNSName }
     "Machine: $machineDNS" | LogMe -display -progress
 
+    # Column IPv4Address
+    $IPv4Address = ([System.Net.Dns]::GetHostAddresses($machineDNS) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { $_.IPAddressToString }) -join ", "
+    "IPv4Address: $IPv4Address" | LogMe -display -progress
+    $tests.IPv4Address = "NEUTRAL", $IPv4Address
+
     # Column CatalogName
     $CatalogName = $machine | ForEach-Object{ $_.CatalogName }
     "Catalog: $CatalogName" | LogMe -display -progress
@@ -3296,6 +3621,133 @@ if($ShowDesktopTable -eq 1 ) {
         }
 
         ################ End Nvidia License Check SECTION ###############
+
+        # Check services
+        # The Get-Service command with -ComputerName parameter made use of DCOM and such functionality is
+        # removed from PowerShell 7. So we use the Invoke-Command, which uses WinRM to run a ScriptBlock
+        # instead.
+
+        $ServicesChecked = $False
+        If ($IsWinRMAccessible) {
+          $ServicesChecked = $True
+          Try {
+            $services = Invoke-Command -ComputerName $machineDNS -ErrorAction Stop -ScriptBlock {Get-Service | where-object {$_.Name -eq 'Spooler' -OR $_.Name -eq 'cpsvc'}}
+
+            if (($services | Where-Object {$_.Name -eq "Spooler"}).Status -Match "Running") {
+              "SPOOLER service running..." | LogMe
+              $tests.Spooler = "SUCCESS","Success"
+            }
+            else {
+              "SPOOLER service stopped" | LogMe -display -error
+              $tests.Spooler = "ERROR","Error"
+            }
+
+            if (($services | Where-Object {$_.Name -eq "cpsvc"}).Status -Match "Running") {
+              "Citrix Print Manager service running..." | LogMe
+              $tests.CitrixPrint = "SUCCESS","Success"
+            }
+            else {
+              "Citrix Print Manager service stopped" | LogMe -display -error
+              $tests.CitrixPrint = "ERROR","Error"
+            }
+          }
+          Catch {
+            #"Error returned while checking the services" | LogMe -error; return 101
+          }
+        } Else {
+          # Cannot connect via WinRM
+        }
+
+        If ($IsWMIAccessible -AND $ServicesChecked -eq $False) {
+          Try {
+            $services = Get-WmiObject -ComputerName $machineDNS -Class Win32_Service -ErrorAction Stop | where-object {$_.Name -eq 'Spooler' -OR $_.Name -eq 'cpsvc'}
+
+            if (($services | Where-Object {$_.Name -eq "Spooler"}).State -Match "Running") {
+              "SPOOLER service running..." | LogMe
+              $tests.Spooler = "SUCCESS","Success"
+            }
+            else {
+              "SPOOLER service stopped" | LogMe -display -error
+              $tests.Spooler = "ERROR","Error"
+            }
+
+            if (($services | Where-Object {$_.Name -eq "cpsvc"}).State -Match "Running") {
+              "Citrix Print Manager service running..." | LogMe
+              $tests.CitrixPrint = "SUCCESS","Success"
+            }
+            else {
+              "Citrix Print Manager service stopped" | LogMe -display -error
+              $tests.CitrixPrint = "ERROR","Error"
+            }
+          }
+          Catch {
+            #"Error returned while checking the services" | LogMe -error; return 101
+          }
+        } Else {
+          # Cannot connect via WMI
+        }
+
+        If ($IsWinRMAccessible) {
+          $ProfileStatus = Get-ProfileAndUserEnvironmentManagementServiceStatus -ComputerName:$machineDNS
+          "Profile Management and User Environment Management Status:" | LogMe -display -progress
+          $FSLogixEnabled = $False
+          If ($ProfileStatus.FSLogixInstalled) {
+            "- FSLogix Installed: $($ProfileStatus.FSLogixInstalled)" | LogMe -display -progress
+            "- FSLogix ServiceRunning: $($ProfileStatus.FSLogixServiceRunning)" | LogMe -display -progress
+            "- FSLogix ProfileEnabled: $($ProfileStatus.FSLogixProfileEnabled)" | LogMe -display -progress
+            "- FSLogix ProfileType: $($ProfileStatus.FSLogixProfileType)" | LogMe -display -progress
+            "- FSLogix ProfileTypeDescription: $($ProfileStatus.FSLogixProfileTypeDescription)" | LogMe -display -progress
+            "- FSLogix OfficeEnabled: $($ProfileStatus.FSLogixOfficeEnabled)" | LogMe -display -progress
+            "- FSLogix CCDLocations: $($ProfileStatus.FSLogixCCDLocations)" | LogMe -display -progress
+            "- FSLogix VHDLocations: $($ProfileStatus.FSLogixVHDLocations)" | LogMe -display -progress
+            "- FSLogix LogFilePath: $($ProfileStatus.FSLogixLogFilePath)" | LogMe -display -progress
+            "- FSLogix RedirectionType: $($ProfileStatus.FSLogixRedirectionType)" | LogMe -display -progress
+            If ($ProfileStatus.FSLogixInstalled -AND $ProfileStatus.FSLogixServiceRunning -AND $ProfileStatus.FSLogixProfileEnabled -eq 1) {
+              $FSLogixEnabled = $True
+            }
+          }
+          If ($FSLogixEnabled) {
+            $tests.FSLogixEnabled = "SUCCESS", $FSLogixEnabled
+          } Else {
+            $tests.FSLogixEnabled = "NORMAL", $FSLogixEnabled
+          }
+          $UPMEnabled = $False
+          If ($ProfileStatus.UPMInstalled) {
+            "- UPM Installed: $($ProfileStatus.UPMInstalled)" | LogMe -display -progress
+            "- UPM ServiceRunning: $($ProfileStatus.UPMServiceRunning)" | LogMe -display -progress
+            "- UPM ServiceActive: $($ProfileStatus.UPMServiceActive)" | LogMe -display -progress
+            "- UPM PathToLogFile: $($ProfileStatus.UPMPathToLogFile)" | LogMe -display -progress
+            "- UPM PathToUserStore: $($ProfileStatus.UPMPathToUserStore)" | LogMe -display -progress
+            If ($ProfileStatus.UPMInstalled -AND $ProfileStatus.UPMServiceRunning -AND $ProfileStatus.UPMServiceActive -eq 1) {
+              $UPMEnabled = $True
+            }
+          }
+          If ($UPMEnabled) {
+            $tests.UPMEnabled = "SUCCESS", $UPMEnabled
+          } Else {
+            $tests.UPMEnabled = "NORMAL", $UPMEnabled
+          }
+          $WEMEnabled = $False
+          If ($ProfileStatus.WEMInstalled) {
+            "- WEM Installed: $($ProfileStatus.WEMInstalled)" | LogMe -display -progress
+            "- WEM ServiceRunning: $($ProfileStatus.WEMServiceRunning)" | LogMe -display -progress
+            "- WEM ServiceRunning: $($ProfileStatus.WEMServiceRunning)" | LogMe -display -progress
+            "- WEM AgentRegistered: $($ProfileStatus.WEMAgentRegistered)" | LogMe -display -progress
+            "- WEM AgentConfigurationSets: $($ProfileStatus.WEMAgentConfigurationSets)" | LogMe -display -progress
+            "- WEM AgentCacheSyncMode: $($ProfileStatus.WEMAgentCacheSyncMode)" | LogMe -display -progress
+            "- WEM AgentCachePath: $($ProfileStatus.WEMAgentCachePath)" | LogMe -display -progress
+            If ($ProfileStatus.WEMInstalled -AND $ProfileStatus.WEMServiceRunning -AND $ProfileStatus.WEMAgentRegistered) {
+              $WEMEnabled = $True
+            }
+          }
+          If ($WEMEnabled) {
+            $tests.WEMEnabled = "SUCCESS", $WEMEnabled
+          } Else {
+            $tests.WEMEnabled = "NORMAL", $WEMEnabled
+          }
+        } Else {
+          # Cannot connect via WinRM
+        }
 
         If ($IsWMIAccessible) {
           $displaymode = "N/A"
@@ -3600,6 +4052,11 @@ if($ShowXenAppTable -eq 1 ) {
     # Column Name of Machine
     $machineDNS = $XAmachine | ForEach-Object{ $_.DNSName }
     "Machine: $machineDNS" | LogMe -display -progress
+
+    # Column IPv4Address
+    $IPv4Address = ([System.Net.Dns]::GetHostAddresses($machineDNS) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { $_.IPAddressToString }) -join ", "
+    "IPv4Address: $IPv4Address" | LogMe -display -progress
+    $tests.IPv4Address = "NEUTRAL", $IPv4Address
 
     # Column CatalogNameName
     $CatalogName = $XAmachine | ForEach-Object{ $_.CatalogName }
@@ -4046,6 +4503,68 @@ if($ShowXenAppTable -eq 1 ) {
           }
         } Else {
           # Cannot connect via WMI
+        }
+
+        If ($IsWinRMAccessible) {
+          $ProfileStatus = Get-ProfileAndUserEnvironmentManagementServiceStatus -ComputerName:$machineDNS
+          "Profile Management and User Environment Management Status:" | LogMe -display -progress
+          $FSLogixEnabled = $False
+          If ($ProfileStatus.FSLogixInstalled) {
+            "- FSLogix Installed: $($ProfileStatus.FSLogixInstalled)" | LogMe -display -progress
+            "- FSLogix ServiceRunning: $($ProfileStatus.FSLogixServiceRunning)" | LogMe -display -progress
+            "- FSLogix ProfileEnabled: $($ProfileStatus.FSLogixProfileEnabled)" | LogMe -display -progress
+            "- FSLogix ProfileType: $($ProfileStatus.FSLogixProfileType)" | LogMe -display -progress
+            "- FSLogix ProfileTypeDescription: $($ProfileStatus.FSLogixProfileTypeDescription)" | LogMe -display -progress
+            "- FSLogix OfficeEnabled: $($ProfileStatus.FSLogixOfficeEnabled)" | LogMe -display -progress
+            "- FSLogix CCDLocations: $($ProfileStatus.FSLogixCCDLocations)" | LogMe -display -progress
+            "- FSLogix VHDLocations: $($ProfileStatus.FSLogixVHDLocations)" | LogMe -display -progress
+            "- FSLogix LogFilePath: $($ProfileStatus.FSLogixLogFilePath)" | LogMe -display -progress
+            "- FSLogix RedirectionType: $($ProfileStatus.FSLogixRedirectionType)" | LogMe -display -progress
+            If ($ProfileStatus.FSLogixInstalled -AND $ProfileStatus.FSLogixServiceRunning -AND $ProfileStatus.FSLogixProfileEnabled -eq 1) {
+              $FSLogixEnabled = $True
+            }
+          }
+          If ($FSLogixEnabled) {
+            $tests.FSLogixEnabled = "SUCCESS", $FSLogixEnabled
+          } Else {
+            $tests.FSLogixEnabled = "NORMAL", $FSLogixEnabled
+          }
+          $UPMEnabled = $False
+          If ($ProfileStatus.UPMInstalled) {
+            "- UPM Installed: $($ProfileStatus.UPMInstalled)" | LogMe -display -progress
+            "- UPM ServiceRunning: $($ProfileStatus.UPMServiceRunning)" | LogMe -display -progress
+            "- UPM ServiceActive: $($ProfileStatus.UPMServiceActive)" | LogMe -display -progress
+            "- UPM PathToLogFile: $($ProfileStatus.UPMPathToLogFile)" | LogMe -display -progress
+            "- UPM PathToUserStore: $($ProfileStatus.UPMPathToUserStore)" | LogMe -display -progress
+            If ($ProfileStatus.UPMInstalled -AND $ProfileStatus.UPMServiceRunning -AND $ProfileStatus.UPMServiceActive -eq 1) {
+              $UPMEnabled = $True
+            }
+          }
+          If ($UPMEnabled) {
+            $tests.UPMEnabled = "SUCCESS", $UPMEnabled
+          } Else {
+            $tests.UPMEnabled = "NORMAL", $UPMEnabled
+          }
+          $WEMEnabled = $False
+          If ($ProfileStatus.WEMInstalled) {
+            "- WEM Installed: $($ProfileStatus.WEMInstalled)" | LogMe -display -progress
+            "- WEM ServiceRunning: $($ProfileStatus.WEMServiceRunning)" | LogMe -display -progress
+            "- WEM ServiceRunning: $($ProfileStatus.WEMServiceRunning)" | LogMe -display -progress
+            "- WEM AgentRegistered: $($ProfileStatus.WEMAgentRegistered)" | LogMe -display -progress
+            "- WEM AgentConfigurationSets: $($ProfileStatus.WEMAgentConfigurationSets)" | LogMe -display -progress
+            "- WEM AgentCacheSyncMode: $($ProfileStatus.WEMAgentCacheSyncMode)" | LogMe -display -progress
+            "- WEM AgentCachePath: $($ProfileStatus.WEMAgentCachePath)" | LogMe -display -progress
+            If ($ProfileStatus.WEMInstalled -AND $ProfileStatus.WEMServiceRunning -AND $ProfileStatus.WEMAgentRegistered) {
+              $WEMEnabled = $True
+            }
+          }
+          If ($WEMEnabled) {
+            $tests.WEMEnabled = "SUCCESS", $WEMEnabled
+          } Else {
+            $tests.WEMEnabled = "NORMAL", $WEMEnabled
+          }
+        } Else {
+          # Cannot connect via WinRM
         }
 
       }#If can connect via WinRM or WMI
@@ -4656,7 +5175,7 @@ else{
 } # Close off $scriptBlockExecute
 
 If ($UseRunspace) {
-  $PSinstance = [PowerShell]::Create().AddScript($scriptBlockExecute).AddParameter('ParameterFilePath', "$ParameterFilePath").AddParameter('ParameterFile', "$ParameterFile").AddParameter('outputpath', "$outputpath")
+  $PSinstance = [PowerShell]::Create().AddScript($scriptBlockExecute).AddParameter('ParameterFilePath', "$ParameterFilePath").AddParameter('ParameterFile', "$ParameterFile").AddParameter('outputpath', "$outputpath").AddParameter('snapins', $SnapIns)
   $PSinstance.RunspacePool = $RunspacePool
   $runspaces.Add(([pscustomobject]@{
         Id = $ParameterFile
@@ -4666,14 +5185,38 @@ If ($UseRunspace) {
   write-verbose "$(Get-Date): Runspace created: $ParameterFile" -verbose
 } Else {
   # It was super challenging to pass named parameters to Invoke-Command -ScriptBlock.
-  # Answer found here: https://stackoverflow.com/questions/27794898/powershell-pass-named-parameters-to-argumentlist
-  [hashtable]$hashArgs = @{ParameterFilePath=$ParameterFilePath; ParameterFile=$ParameterFile; outputpath=$outputpath }
-  $formattedParams = &{ $args } @hashArgs
-  # The following '.{}' statement could be replaced with '&{}' here, because we don't need to persist variables after
-  # script call.
-  $scriptBlockContent = ".{ $scriptBlockExecute } $formattedParams"
-  $sb = [scriptblock]::create($scriptBlockContent)
-  Invoke-Command -ScriptBlock $sb
+  # Whilst an answer can be found here, it is flawed, because it stringifies all parameters passed:
+  # - https://stackoverflow.com/questions/27794898/powershell-pass-named-parameters-to-argumentlist
+  # - $formattedParams = &{ $args } @hashArgs # this converts to strings and should not be used
+  #   This does not preserve the hashtable as-is. Instead, it expands it into an array of key/value pairs, effectively turning:
+  #   @{ snapins = $snapins }
+  #   into:
+  #   @("snapins", "<stringified snapins>")
+  $sb = [scriptblock]::Create($scriptBlockExecute)
+  # Use a hashtable with splatting — don't stringify anything
+  $hashArgs = @{
+    ParameterFilePath = $ParameterFilePath
+    ParameterFile     = $ParameterFile
+    OutputPath        = $OutputPath
+    Snapins           = $Snapins
+  }
+  # Use the following for local execution.
+  & $sb @hashArgs
+  # For remoting, we typically use ArgumentList with a param block like this:
+  # Invoke-Command -ScriptBlock $sb -ArgumentList @($ParameterFilePath, $ParameterFile, $OutputPath, $Snapins)
+  # However, Invoke-Command -ArgumentList does not support named parameters. It's possitional only. Therefore, it passes arguments
+  # by position to the param() block inside the scriptblock. To use named parameters here we need to pass an object of arguments to
+  # the -ArgumentList.
+  # Wrap all parameters in a single object (like a hashtable or PSCustomObject)
+  $paramBundle = [PSCustomObject]@{
+    ParameterFilePath = $ParameterFilePath
+    ParameterFile     = $ParameterFile
+    OutputPath        = $OutputPath
+    Snapins           = $Snapins
+  }
+  # Then we use -ArgumentList to pass it as one object, which passes it to the first parameter of the scriptblock that much be defined
+  # as a PSCustomObject.
+  #Invoke-Command -ScriptBlock $sb -ArgumentList $paramBundle
 }
 
 } # Close off ForEach $ParameterFile
@@ -5009,15 +5552,29 @@ If ($UseRunspace) {
 #          - Improved the IsWinRMAccessible function.
 #          - Piped the output of the Get-BrokerMachine cmdlet for the VDI (single-session) and XenApp/RDSH (multi-session) tests to Sort-Object via DNSName so that there is an order to the
 #            processing and logs for anyone that may be observing it.
+# - 1.5.0, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+#          - Added a new function called Get-ProfileAndUserEnvironmentManagementServiceStatus, which gets the status of the Citrix UPM, WEM and Microsoft FSLogix services. It checks if the
+#            services are installed, running and enabled.
+#          - Added the UPMEnabled, FSLogixEnabled and WEMEnabled columns and tests to the tables.
+#          - Added the Spooler and CitrixPrint columns and tests to the VDI (single-session) table.
+#          - Added an IPv4Address column to all tests to help easily identify which subnets machines are on, which also help locate common firewall and routing issues.
+#          - Fixed a bug with the date format for the MasterImageVMDate so that it compares accurately for the 90 day warning.
+#          - Found that he Get-ProvScheme MachineProfile and WindowsActivationType properties can return null and throw an error, so wrapped them in a try/catch to manage this.
+#          - Changed the way the scriptblock can be executed locally and via Invoke-Command so that we can pass an object as a named parameter in the arguments. This needed to be enhanced
+#            so that an object can be passed into the runspace as well.
+#          - Improved the order of the headers and grouped them so they can easily be excluded or commented out when not required. An enhancement can be to add more variables to the xml file.
 #
 # == FUTURE ==
-# #  1.5
+# #  1.5.x
 # Version changes by S.Thomet & J.Saunders
 # - CREATE Proper functions
 # - Change all functions to allow for Invoke-Command for PS Remoting where possible.
 # - Look to merge the Singlesession and Multisession sections using a for loop to process, as there is quite a bit of code duplication in those two sections.
 # - Look to merge the Delivery Controllers, Cloud Connectors and Storefront Servers sections using a for loop to process, as there is quite a bit of code duplication in those three sections.
 # - Enhance the MCSIO tests, where possible.
+#   It is standard practice in Citrix Consulting to set MCSIO drive cache to be the same size as the C drive of the image. This reduces the risk of introducing failures that can impact the
+#   business. They do this to error on the side of safety and reduce risk. Matching the disk cache size to image drive size ensures that isn't a problem. We could therefore do a further test
+#   for this, by comparing the size of the drives.
 # - Consider adding the Get-BrokerMachine LastAssignmentTime property as a column, which was introduced from 2209.
 # - $displaymode section needs to be re-written so it uses WinRM.
 # - Combine functions where possible to collect data more efficiently.
@@ -5025,7 +5582,7 @@ If ($UseRunspace) {
 #   new and legacy to work side-by-side.
 # - Convert the output for ingestion into tools like Splunk, Azure Monitor Logs, VMware Aria Operations for Logs (formerly VMware vRealize Log Insight), OpenSearch, Elasticsearch, Crible, etc.
 #
-# #  1.5.1
+# #  1.5.x
 # Version changes by S.Thomet
 # - Implement Idea #27 from GitHub: Fail-Rate in %
 #
