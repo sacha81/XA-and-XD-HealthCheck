@@ -1,5 +1,5 @@
 ﻿#==============================================================================================
-# Created on: 11.2014 modfied 06.2025 Version: 1.5.0
+# Created on: 11.2014 modfied 06.2025 Version: 1.5.1
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -20,17 +20,25 @@
 #               or your user has interactive persmission!
 #
 # IMPORTANT: For this script to function correctly it requires:
-#            If using on-prem Delivery Controllers, it requires TCP Ports 80 and 443 for the PowerShell SDK.
-#            For all other tests it is important to ensure WinRM is configured and enabled on all the Citrix
-#            Infrastructure servers and Session Hosts. This script requires WinRM, and will attempt to
-#            fallback to WMI (DCOM) if WinRM is not available. It also tries the UNC path for drive shares,
-#            such as C$ and D$. It also does a ping test, but that's not as important as the script has been
-#            changed from version 1.4.7 to proceed, even if ping times out or fails. This allows for complex
-#            environments where Session Hosts may be in different security zones. If you use the Windows
-#            host-based firewall, or a 3rd party product, add some rules to allow for this connectivity. As
-#            of version 1.4.7 the script now has 3 extra columns in the VDI and XenApp/RDSH tables labeled
-#            WinRM, WMI and UNC. These will either be flagged as True or False, which will help you to easily
-#            identify connectivity issues experienced by the script.
+#            If using on-prem Delivery Controllers, it requires TCP Ports 80 and 443 for the PowerShell SDK and XDPing test.
+#            If using Citrix Cloud and you have Cloud Connectors, it requires TCP Port 80 for the XDPing test.
+#            For all other tests it is important to ensure WinRM is configured and enabled on all the Citrix Infrastructure
+#            servers and Session Hosts. This script requires WinRM, and will attempt to fallback to WMI (DCOM) if WinRM is not
+#            available.
+#            It also tries the UNC path for drive shares, such as C$ and D$, the PVS/MCSIO write-cache drive you specify,
+#            and to read the Nvidia log file.
+#            Whilst it does a ping test, it's success is not as important as the script has been changed from version 1.4.7 to
+#            proceed, even if ping times out or fails. This allows for complex environments where Session Hosts may be in
+#            different security zones.
+#            If you use the Windows host-based firewall, or a 3rd party product, add some rules to allow for this connectivity.
+#            For example, the following Inbound Windows host-based firewall rules are requires across all session hosts:
+#            - Windows Remote Management (HTTP-In) (Domain/Private)
+#            - Windows Management Instrumentation (DCOM-In)
+#            - Windows Management Instrumentation (WMI-In)
+#            - File and Printer Sharing (SMB-In)
+#            As of version 1.4.7 the script now has 3 extra columns in the VDI and XenApp/RDSH tables labeled WinRM, WMI and
+#            UNC. These will either be flagged as True or False, which will help you to easily identify connectivity issues
+#            experienced by the script.
 #
 # Example Syntax:
 #   Default:
@@ -342,12 +350,27 @@ if ( $CitrixCloudCheck -eq "1" ) {
     "- Using the APIKey and SecretKey" | LogMe -display -progress
     Set-XDCredentials -CustomerId "$CustomerID" -APIKey "$APIKey" -SecretKey "$SecretKey" -ProfileType "$ProfileType" -StoreAs "$ProfileName"
   }
-  Get-XDAuthentication -ProfileName "$ProfileName" -CustomerId "$CustomerID"
   Try {
-    "- The XDSDKProxy address is: $($XDSDKProxy)" | LogMe -display -progress
+    Get-XDAuthentication -ProfileName $ProfileName
+    "- Successfully authenticated using the profile named $ProfileName" | LogMe -display -progress
+    $CCCreds = Get-XDCredentials -ProfileName $ProfileName
+    If($Null -ne $CCCreds) {
+      If ($CCCreds.CustomerId -eq "$CustomerID") {
+        "- Successfully retrieved the CustomerId from the stored credentials" | LogMe -display -progress
+      } Else {
+        "- Failed to retrieved the CustomerId from the stored credentials" | LogMe -display -error
+      }
+    }
+    Try {
+      "- The XDSDKProxy address is: $($Global:XDSDKProxy)" | LogMe -display -progress
+    }
+    Catch {
+      "- The Global XDSDKProxy variable cannot be retrieved" | LogMe -display -warning
+    }
   }
   Catch {
-    "- The XDSDKProxy variable has not been set" | LogMe -display -warning
+    "- Failed to authenticate using the profile named $ProfileName" | LogMe -display -error
+    Exit
   }
 } Else {
   $ProfileType = "OnPrem"
@@ -412,7 +435,7 @@ If ($CitrixCloudCheck -ne 1) {
 If ($CitrixCloudCheck -ne 1) {
   #Header for Table "XD/XA Controllers" Get-BrokerController
   $XDControllerFirstheaderName = "ControllerServer"
-  $XDControllerHeaderNames = "IPv4Address", "Ping", "OSCaption", "OSBuild", "Uptime", "State", "DesktopsRegistered", "ActiveSiteServices"
+  $XDControllerHeaderNames = "IPv4Address", "Ping", "OSCaption", "OSBuild", "Uptime", "XDPing", "State", "DesktopsRegistered", "ActiveSiteServices"
   $XDControllerTableWidth= 1800
   foreach ($disk in $diskLettersControllers)
   {
@@ -424,7 +447,7 @@ If ($CitrixCloudCheck -ne 1) {
 if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
   #Header for Table "Cloud Connector Servers"
   $CCFirstheaderName = "CloudConnectorServer"
-  $CCHeaderNames = "IPv4Address", "Ping", "OSCaption", "OSBuild", "Uptime", "CitrixServices"
+  $CCHeaderNames = "IPv4Address", "Ping", "OSCaption", "OSBuild", "Uptime", "XDPing", "CitrixServices"
   $CCTableWidth= 1800
   foreach ($disk in $diskLettersControllers)
   {
@@ -515,20 +538,27 @@ $StuckSessionstablewidth = 1800
 
 #==============================================================================================
 
-# These functions will complete the basic remote tests to ensure connectivity and firewall ports
-# are not blocking WinRM, WMI and UNC connectivity to speed up the processing and reliability of
-# each test against each machine it processes. Columns have been added to the output so you can
-# see when it fails and which firewall rules may need to be implemented.
-# Run this script from a server or Delivery Controller that has all required firewall rules open
-# to all the VDAs. The tests will be cascaded so we try WinRM before WMI(DCOM).
-# One of the benefits of WinRM is the ability to process tasks in parallel, rather than sequentially,
-# which will allow us to run these tests in parallel in a future release of this script.
-# But we need to allow for scenarios where WimRM either fails, or firewall rules are blocking access.
-# When WimRM isn't available, we try WMI(DCOM). If neither are available, it skips these health
-# checks altogether.
-# For all other functions that use WwinRM, WSMAN has a MaxRetryConnectionTime of 4 minutes. The
-# connection retry timeout is performed at the WinRM layer. There is an undocumented registry key
-# that let's you lower the retry timeout on the remote computers:
+# These functions will complete the basic remote tests to ensure connectivity and firewall ports are not
+# blocking WinRM, WMI and UNC connectivity to speed up the processing and reliability of each test against
+# each machine it processes. Columns have been added to the output so you can see when it fails and which
+# firewall rules may need to be implemented.
+# Run this script from a server or Delivery Controller that has all required firewall rules open to all the
+# VDAs. The tests will be cascaded so we try WinRM before WMI(DCOM).
+# One of the benefits of WinRM is the ability to process tasks in parallel, rather than sequentially, which
+# will allow us to run these tests in parallel in a future release of this script.
+# But we need to allow for scenarios where WimRM either fails, or firewall rules are blocking access. When
+# WimRM isn't available, we try WMI(DCOM). If neither are available, it skips these health checks altogether.
+# If WinRM is unhealthy or there are network connectivity issues, you can get the issue where it tells you
+# that it's "Attempting to reconnect for up to 4 minutes...". We do not want these types of delays introduced
+# into the tests. This issue us specific to PowerShell remoting over WinRM and typically happens when the
+# transport connection drops but the WinRM service doesn't immediately close the session. PowerShell then
+# enters a reconnect loop, trying to recover the session for up to 4 minutes. This behaviour is hardcoded in
+# PowerShell remoting, which uses a 4-minute reconnect timeout (240000 ms) when a session disconnects
+# unexpectedly. This reconnect loop is intended to support transient network issues. I have attempted to make
+# sure that the IsWinRMAccessible function validates the health of the service and also used the
+# OperationTimeoutSec parameter of the Get-CimInstance cmdlet. I have read that there is an undocumented
+# registry key that let's you lower the retry timeout on the remote computers, but I have been unable to
+# confirm this:
 # - Key: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Client
 # - Type: DWORD
 # - Value: max_retry_timeout_ms
@@ -1714,6 +1744,73 @@ Function Get-ProfileAndUserEnvironmentManagementServiceStatus {
 
 #==============================================================================================
 
+Function XDPing {
+  # To work out the best way to write this function I decompiled the VDAAssistant.Backend.dll from the
+  # Citrix Health Assistant tool using JetBrains decompiler.
+  # To test if the Broker service is reachable, listening and processing requests on its configured port,
+  # you can issue blank HTTP POST requests at the Broker's Registrar service, which is located at
+  # /Citrix/CdsController/IRegistrar. If the first line displayed/returned is "HTTP/1.1 100 Continue",
+  # then the Broker service responded and is deemed to be healthy.
+ 
+  param(
+    [Parameter(Mandatory=$True)][String]$ComputerName, 
+    [Parameter(Mandatory=$True)][Int32]$Port,
+    [String]$ProxyServer="", 
+    [Int32]$ProxyPort
+  )
+ 
+  $URI = "http://$ComputerName/Citrix/CdsController/IRegistrar"
+  $InitialDataToSend = "POST $URI HTTP/1.1`r`nContent-Type: application/soap+xml; charset=utf-8`r`nHost: ${ComputerName}:${Port}`r`nContent-Length: 1`r`nExpect: 100-continue`r`nConnection: Close`r`n`r`n"
+  $FinalDataToSend = "X"
+  $IsServiceListening = $False
+ 
+  If ($ProxyServer -eq "" -OR $ProxyServer -eq $NULL) {
+    $ConnectToHost = $ComputerName
+    [int]$ConnectOnPort = $Port
+  } Else {
+    $ConnectToHost = $ProxyServer
+    [int]$ConnectOnPort = $ProxyPort
+    #write-verbose "Connecting via a proxy" -verbose
+  }
+ 
+  $Saddrf   = [System.Net.Sockets.AddressFamily]::InterNetwork 
+  $Stype    = [System.Net.Sockets.SocketType]::Stream 
+  $Ptype    = [System.Net.Sockets.ProtocolType]::TCP
+  $socket    = New-Object System.Net.Sockets.Socket $saddrf, $stype, $ptype 
+ 
+  Try {
+    $socket.Connect($ConnectToHost,$ConnectOnPort)
+    #$socket.Connected
+    $initialbytes = [System.Text.Encoding]::ASCII.GetBytes($InitialDataToSend)
+    #write-verbose "Sending initial data..." -verbose
+    #$InitialDataToSend
+    $NumBytesSent = $socket.Send($initialbytes, $initialbytes.length,[net.sockets.socketflags]::None)
+    #write-verbose "Sent $NumBytesSent bytes" -verbose
+    $numArray = new-object byte[] 21
+    $socket.ReceiveTimeout = 5000
+    $NumBytesReceived = $socket.Receive($numArray)
+    #write-verbose "Received $NumBytesReceived bytes" -verbose
+    $output = [System.Text.Encoding]::ASCII.GetString($numArray)
+    $finalBytes = [System.Text.Encoding]::ASCII.GetBytes($FinalDataToSend)
+    #write-verbose "Sending final data..." -verbose
+    #$FinalDataToSend
+    $NumBytesSent = $socket.Send($finalBytes, $finalBytes.length,[net.sockets.socketflags]::None)
+    #write-verbose "Sent $NumBytesSent bytes" -verbose
+    $socket.Close() | out-null
+    #write-verbose "Received data..." -verbose
+    #$output
+    if ($output -eq "HTTP/1.1 100 Continue") {
+      $IsServiceListening = $True
+    }
+  }
+  Catch {
+    #
+  }
+  return $IsServiceListening
+}
+
+#==============================================================================================
+
 Function writeHtmlHeader
 {
 param($title, $fileName)
@@ -1988,7 +2085,7 @@ $lsport = $brokersiteinfos.LicenseServerPort
 $CLeasing = $brokersiteinfos.ConnectionLeasingEnabled
 $LHC = $brokersiteinfos.LocalHostCacheEnabled
 
-"Getting the Site maintenance information" | LogMe -display -progress
+"Getting the Site maintenance information for last $($MaintenanceModeActionsFromPastinDays) days" | LogMe -display -progress
 # Get the maintenance information from the Site using the Get-LogLowLevelOperation cmdlet
 # Original code written by Stefan Beckmann: http://www.beckmann.ch/blog/2016/11/01/get-user-who-set-maintenance-mode-for-a-server-or-client/
 # Enhanced by Jeremy Saunders (jeremy@jhouseconsulting.com) so we can also get information for who placed Delivery Groups and Hypervisor Connections
@@ -2041,10 +2138,20 @@ If ($CitrixCloudCheck -ne 1) {
     "Controller: $ControllerDNS" | LogMe -display -progress
 
     # Column IPv4Address
-    $IPv4Address = ([System.Net.Dns]::GetHostAddresses($ControllerDNS) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { $_.IPAddressToString }) -join ", "
-    "IPv4Address: $IPv4Address" | LogMe -display -progress
-    $tests.IPv4Address = "NEUTRAL", $IPv4Address
- 
+    if (!([string]::IsNullOrWhiteSpace($ControllerDNS))) {
+      Try {
+        $IPv4Address = ([System.Net.Dns]::GetHostAddresses($ControllerDNS) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { $_.IPAddressToString }) -join ", "
+        "IPv4Address: $IPv4Address" | LogMe -display -progress
+        $tests.IPv4Address = "NEUTRAL", $IPv4Address
+      }
+      Catch [System.Net.Sockets.SocketException] {
+        "Failed to lookup host in DNS: $($_.Exception.Message)" | LogMe -display -warning
+      }
+      Catch {
+        "An unexpected error occurred: $($_.Exception.Message)" | LogMe -display -warning
+      }
+    }
+
     #Test-Ping $Controller
     $result = Test-Ping -Target:$ControllerDNS -Timeout:200 -Count:3
     # Column Ping
@@ -2055,6 +2162,18 @@ If ($CitrixCloudCheck -ne 1) {
     }
     "Is Pingable: $result" | LogMe -display -progress
 
+    $XDPing = XDPing -ComputerName:$ControllerDNS -Port:80
+    If ($XDPing) {
+      $tests.XDPing = "SUCCESS", "SUCCESS"
+      "XDPing (health status of the CdsController Iregistrar service): SUCCESS" | LogMe -display -progress
+    } Else {
+      $tests.XDPing = "ERROR", "FAILED"
+      "XDPing (health status of the CdsController Iregistrar service): FAILED" | LogMe -display -error
+      # Check that the firewall is not dropping the traffic.
+      # - We send a blank HTTP POST requests to the Broker's Registrar service, including "Expect: 100-continue" in the body.
+      # - We receive a respose of "HTTP/1.1 100 Continue", which is what we use to verify that it's in a healthy state.
+    }
+
     $IsWinRMAccessible = IsWinRMAccessible -hostname:$ControllerDNS
 
     #State of this controller
@@ -2062,7 +2181,7 @@ If ($CitrixCloudCheck -ne 1) {
     "State: $ControllerState" | LogMe -display -progress
     if ($ControllerState -ne "Active") { $tests.State = "ERROR", $ControllerState }
     else { $tests.State = "SUCCESS", $ControllerState }
- 
+
     #DesktopsRegistered on this controller
     $ControllerDesktopsRegistered = $Controller | ForEach-Object{ $_.DesktopsRegistered }
     "Registered: $ControllerDesktopsRegistered" | LogMe -display -progress
@@ -2214,9 +2333,19 @@ if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
     "Cloud Connector Server: $CloudConnectorServerDNS" | LogMe -display -progress
 
     # Column IPv4Address
-    $IPv4Address = ([System.Net.Dns]::GetHostAddresses($CloudConnectorServerDNS) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { $_.IPAddressToString }) -join ", "
-    "IPv4Address: $IPv4Address" | LogMe -display -progress
-    $tests.IPv4Address = "NEUTRAL", $IPv4Address
+    if (!([string]::IsNullOrWhiteSpace($CloudConnectorServerDNS))) {
+      Try {
+        $IPv4Address = ([System.Net.Dns]::GetHostAddresses($CloudConnectorServerDNS) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { $_.IPAddressToString }) -join ", "
+        "IPv4Address: $IPv4Address" | LogMe -display -progress
+        $tests.IPv4Address = "NEUTRAL", $IPv4Address
+      }
+      Catch [System.Net.Sockets.SocketException] {
+        "Failed to lookup host in DNS: $($_.Exception.Message)" | LogMe -display -warning
+      }
+      Catch {
+        "An unexpected error occurred: $($_.Exception.Message)" | LogMe -display -warning
+      }
+    }
 
     #Ping $CloudConnectorServer
     $result = Test-Ping -Target:$CloudConnectorServerDNS -Timeout:200 -Count:3
@@ -2227,6 +2356,18 @@ if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
       $tests.Ping = "NORMAL", $result
     }
     "Is Pingable: $result" | LogMe -display -progress
+
+    $XDPing = XDPing -ComputerName:$CloudConnectorServerDNS -Port:80
+    If ($XDPing) {
+      $tests.XDPing = "SUCCESS", "SUCCESS"
+      "XDPing (health status of the CdsController Iregistrar service): SUCCESS" | LogMe -display -progress
+    } Else {
+      $tests.XDPing = "ERROR", "FAILED"
+      "XDPing (health status of the CdsController Iregistrar service): FAILED" | LogMe -display -error
+      # Check that the firewall is not dropping the traffic.
+      # - We send a blank HTTP POST requests to the Broker's Registrar service, including "Expect: 100-continue" in the body.
+      # - We receive a respose of "HTTP/1.1 100 Continue", which is what we use to verify that it's in a healthy state.
+    }
 
     $IsWinRMAccessible = IsWinRMAccessible -hostname:$CloudConnectorServerDNS
 
@@ -2398,9 +2539,19 @@ If ($ShowStorefrontTable -eq 1) {
     "Storefront Server: $StoreFrontServerDNS" | LogMe -display -progress
 
     # Column IPv4Address
-    $IPv4Address = ([System.Net.Dns]::GetHostAddresses($StoreFrontServerDNS) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { $_.IPAddressToString }) -join ", "
-    "IPv4Address: $IPv4Address" | LogMe -display -progress
-    $tests.IPv4Address = "NEUTRAL", $IPv4Address
+    if (!([string]::IsNullOrWhiteSpace($StoreFrontServerDNS))) {
+      Try {
+        $IPv4Address = ([System.Net.Dns]::GetHostAddresses($StoreFrontServerDNS) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { $_.IPAddressToString }) -join ", "
+        "IPv4Address: $IPv4Address" | LogMe -display -progress
+        $tests.IPv4Address = "NEUTRAL", $IPv4Address
+      }
+      Catch [System.Net.Sockets.SocketException] {
+        "Failed to lookup host in DNS: $($_.Exception.Message)" | LogMe -display -warning
+      }
+      Catch {
+        "An unexpected error occurred: $($_.Exception.Message)" | LogMe -display -warning
+      }
+    }
 
     #Ping $StoreFrontServer
     $result = Test-Ping -Target:$StoreFrontServerDNS -Timeout:200 -Count:3
@@ -3183,7 +3334,7 @@ $BrkrHvsCons = $null
 If ($CitrixCloudCheck -ne 1) {
   $BrkrHvsCons = Get-Brokerhypervisorconnection -AdminAddress $AdminAddress
 } Else {
-  $BrkrHvsCons = Get-Brokerhypervisorconnection | Select Name, State, IsReady, MachineCount, FaultState, FaultReason, TimeFaultStateEntered, FaultStateDuration, MetadataMap
+  $BrkrHvsCons = Get-Brokerhypervisorconnection
 }
 
 If ($null -ne $BrkrHvsCons) {
@@ -3335,9 +3486,19 @@ if($ShowDesktopTable -eq 1 ) {
     "Machine: $machineDNS" | LogMe -display -progress
 
     # Column IPv4Address
-    $IPv4Address = ([System.Net.Dns]::GetHostAddresses($machineDNS) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { $_.IPAddressToString }) -join ", "
-    "IPv4Address: $IPv4Address" | LogMe -display -progress
-    $tests.IPv4Address = "NEUTRAL", $IPv4Address
+    if (!([string]::IsNullOrWhiteSpace($machineDNS))) {
+      Try {
+        $IPv4Address = ([System.Net.Dns]::GetHostAddresses($machineDNS) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { $_.IPAddressToString }) -join ", "
+        "IPv4Address: $IPv4Address" | LogMe -display -progress
+        $tests.IPv4Address = "NEUTRAL", $IPv4Address
+      }
+      Catch [System.Net.Sockets.SocketException] {
+        "Failed to lookup host in DNS: $($_.Exception.Message)" | LogMe -display -warning
+      }
+      Catch {
+        "An unexpected error occurred: $($_.Exception.Message)" | LogMe -display -warning
+      }
+    }
 
     # Column CatalogName
     $CatalogName = $machine | ForEach-Object{ $_.CatalogName }
@@ -3535,7 +3696,7 @@ if($ShowDesktopTable -eq 1 ) {
             }
 
             If ($PersonalityInfo.IsMCS -AND $WriteCacheDriveInfo.Output_To_Log2 -Like "*Failed to connect") {
-              "It is assumed this is not using MCSIO" | LogMe -display -progress
+              "It is assumed this is not using MCSIO as the script failed to connect to the $wcdrive drive." | LogMe -display -progress
               # If this is an Azure VM, Machine Creation Services (MCS) supports using Azure Ephemeral OS disk for
               # non-persistent VMs. Ephemeral disks should be fast IO because it uses temp storage on the local host.
               # MCSIO is not compatible with Azure Ephemeral Disks, and is therefore not an available configuration.
@@ -3593,13 +3754,18 @@ if($ShowDesktopTable -eq 1 ) {
 
         ################ Start Nvidia License Check SECTION ###############
 
+        $NvidiaDriverFound = $False
         $NvidiaLicensedDriver = $False
         If ($IsWMIAccessible) {
           $return = Get-NvidiaDetails -computername:$machineDNS
 
-          If ($return.Display_Driver_Ver -ne "N/A" -AND $return.Licensable_Product -ne "N/A") {
+          If ($return.Display_Driver_Ver -ne "N/A") {
+            "Nvidia Driver Version: $($return.Display_Driver_Ver)" | LogMe -display -progress
             $tests.NvidiaDriverVer = "NEUTRAL", $return.Display_Driver_Ver
-            $NvidiaLicensedDriver = $True
+            $NvidiaDriverFound = $True
+            If ($return.Licensable_Product -ne "N/A") {
+              $NvidiaLicensedDriver = $True
+            }
           }
         } Else {
           # WMI is not accessible
@@ -3617,7 +3783,10 @@ if($ShowDesktopTable -eq 1 ) {
             # UNC Path is not accessible
           }
         } Else {
-          # This host does not contain an Nvidia licensable product
+          If ($NvidiaDriverFound) {
+            $tests.nvidiaLicense = "NEUTRAL", "N/A"
+            "This host does not contain an Nvidia licensable product" | LogMe -display -progress
+          }
         }
 
         ################ End Nvidia License Check SECTION ###############
@@ -3702,9 +3871,11 @@ if($ShowDesktopTable -eq 1 ) {
             "- FSLogix VHDLocations: $($ProfileStatus.FSLogixVHDLocations)" | LogMe -display -progress
             "- FSLogix LogFilePath: $($ProfileStatus.FSLogixLogFilePath)" | LogMe -display -progress
             "- FSLogix RedirectionType: $($ProfileStatus.FSLogixRedirectionType)" | LogMe -display -progress
-            If ($ProfileStatus.FSLogixInstalled -AND $ProfileStatus.FSLogixServiceRunning -AND $ProfileStatus.FSLogixProfileEnabled -eq 1) {
+            If ($ProfileStatus.FSLogixServiceRunning -AND $ProfileStatus.FSLogixProfileEnabled -eq 1) {
               $FSLogixEnabled = $True
             }
+          } Else {
+            "- FSLogix is not installed" | LogMe -display -progress
           }
           If ($FSLogixEnabled) {
             $tests.FSLogixEnabled = "SUCCESS", $FSLogixEnabled
@@ -3718,9 +3889,11 @@ if($ShowDesktopTable -eq 1 ) {
             "- UPM ServiceActive: $($ProfileStatus.UPMServiceActive)" | LogMe -display -progress
             "- UPM PathToLogFile: $($ProfileStatus.UPMPathToLogFile)" | LogMe -display -progress
             "- UPM PathToUserStore: $($ProfileStatus.UPMPathToUserStore)" | LogMe -display -progress
-            If ($ProfileStatus.UPMInstalled -AND $ProfileStatus.UPMServiceRunning -AND $ProfileStatus.UPMServiceActive -eq 1) {
+            If ($ProfileStatus.UPMServiceRunning -AND $ProfileStatus.UPMServiceActive -eq 1) {
               $UPMEnabled = $True
             }
+          } Else {
+            "- UPM is not installed" | LogMe -display -progress
           }
           If ($UPMEnabled) {
             $tests.UPMEnabled = "SUCCESS", $UPMEnabled
@@ -3736,9 +3909,11 @@ if($ShowDesktopTable -eq 1 ) {
             "- WEM AgentConfigurationSets: $($ProfileStatus.WEMAgentConfigurationSets)" | LogMe -display -progress
             "- WEM AgentCacheSyncMode: $($ProfileStatus.WEMAgentCacheSyncMode)" | LogMe -display -progress
             "- WEM AgentCachePath: $($ProfileStatus.WEMAgentCachePath)" | LogMe -display -progress
-            If ($ProfileStatus.WEMInstalled -AND $ProfileStatus.WEMServiceRunning -AND $ProfileStatus.WEMAgentRegistered) {
+            If ($ProfileStatus.WEMServiceRunning -AND $ProfileStatus.WEMAgentRegistered) {
               $WEMEnabled = $True
             }
+          } Else {
+            "- WEM is not installed" | LogMe -display -progress
           }
           If ($WEMEnabled) {
             $tests.WEMEnabled = "SUCCESS", $WEMEnabled
@@ -3828,13 +4003,22 @@ if($ShowDesktopTable -eq 1 ) {
         ## EDT MTU (set by default.ica or MTUDiscovery)
         If ($UseWinRM) {
           # Execute the "C:\Program Files (x86)\Citrix\HDX\bin\CtxSession.exe" in the remote session
+          $EDTMTU = ""
           Try {
-            $EDTMTU = Invoke-Command -ComputerName $machineDNS -ErrorAction Stop -ScriptBlock {(ctxsession -v | findstr "EDT MTU:" | select -Last 1).split(":")[1].trimstart()}
+            $ctxsession = Invoke-Command -ComputerName $machineDNS -ErrorAction Stop -ScriptBlock { ctxsession -v }
+            # ctxsession returns no data or null, such as for RDP sessions, so we check for that instead of failing the test.
+            If (($ctxsession | Measure-Object).Count -eq 0) {
+              $EDTMTU = ($ctxsession | findstr "EDT MTU:" | select -Last 1)
+              if (!([string]::IsNullOrWhiteSpace($EDTMTU))) {
+                $EDTMTU = ($ctxsession).split(":")[1].trimstart()
+              } else {
+                $EDTMTU = "Not set"
+              }
+            }
             $tests.EDT_MTU = "NEUTRAL", $EDTMTU
             "EDT MTU Size is set to $EDTMTU" | LogMe -display -progress
           }
           Catch {
-            # ctxsession returns null for RDP sessions
             $tests.EDT_MTU = "ERROR", "Failed"
             "EDT MTU Size failed to return data" | LogMe -display -progress
           }
@@ -4054,9 +4238,19 @@ if($ShowXenAppTable -eq 1 ) {
     "Machine: $machineDNS" | LogMe -display -progress
 
     # Column IPv4Address
-    $IPv4Address = ([System.Net.Dns]::GetHostAddresses($machineDNS) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { $_.IPAddressToString }) -join ", "
-    "IPv4Address: $IPv4Address" | LogMe -display -progress
-    $tests.IPv4Address = "NEUTRAL", $IPv4Address
+    if (!([string]::IsNullOrWhiteSpace($machineDNS))) {
+      Try {
+        $IPv4Address = ([System.Net.Dns]::GetHostAddresses($machineDNS) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | ForEach-Object { $_.IPAddressToString }) -join ", "
+        "IPv4Address: $IPv4Address" | LogMe -display -progress
+        $tests.IPv4Address = "NEUTRAL", $IPv4Address
+      }
+      Catch [System.Net.Sockets.SocketException] {
+        "Failed to lookup host in DNS: $($_.Exception.Message)" | LogMe -display -warning
+      }
+      Catch {
+        "An unexpected error occurred: $($_.Exception.Message)" | LogMe -display -warning
+      }
+    }
 
     # Column CatalogNameName
     $CatalogName = $XAmachine | ForEach-Object{ $_.CatalogName }
@@ -4352,13 +4546,18 @@ if($ShowXenAppTable -eq 1 ) {
 
         ################ Start Nvidia License Check SECTION ###############
 
+        $NvidiaDriverFound = $False
         $NvidiaLicensedDriver = $False
         If ($IsWMIAccessible) {
           $return = Get-NvidiaDetails -computername:$machineDNS
 
-          If ($return.Display_Driver_Ver -ne "N/A" -AND $returnLicensable_Product -ne "N/A") {
+          If ($return.Display_Driver_Ver -ne "N/A") {
+            "Nvidia Driver Version: $($return.Display_Driver_Ver)" | LogMe -display -progress
             $tests.NvidiaDriverVer = "NEUTRAL", $return.Display_Driver_Ver
-            $NvidiaLicensedDriver = $True
+            $NvidiaDriverFound = $True
+            If ($return.Licensable_Product -ne "N/A") {
+              $NvidiaLicensedDriver = $True
+            }
           }
         } Else {
           # WMI is not accessible
@@ -4376,7 +4575,10 @@ if($ShowXenAppTable -eq 1 ) {
             # UNC Path is not accessible
           }
         } Else {
-          # This host does not contain an Nvidia licensable product
+          If ($NvidiaDriverFound) {
+            $tests.nvidiaLicense = "NEUTRAL", "N/A"
+            "This host does not contain an Nvidia licensable product" | LogMe -display -progress
+          }
         }
 
         ################ End Nvidia License Check SECTION ###############
@@ -4520,9 +4722,11 @@ if($ShowXenAppTable -eq 1 ) {
             "- FSLogix VHDLocations: $($ProfileStatus.FSLogixVHDLocations)" | LogMe -display -progress
             "- FSLogix LogFilePath: $($ProfileStatus.FSLogixLogFilePath)" | LogMe -display -progress
             "- FSLogix RedirectionType: $($ProfileStatus.FSLogixRedirectionType)" | LogMe -display -progress
-            If ($ProfileStatus.FSLogixInstalled -AND $ProfileStatus.FSLogixServiceRunning -AND $ProfileStatus.FSLogixProfileEnabled -eq 1) {
+            If ($ProfileStatus.FSLogixServiceRunning -AND $ProfileStatus.FSLogixProfileEnabled -eq 1) {
               $FSLogixEnabled = $True
             }
+          } Else {
+            "- FSLogix is not installed" | LogMe -display -progress
           }
           If ($FSLogixEnabled) {
             $tests.FSLogixEnabled = "SUCCESS", $FSLogixEnabled
@@ -4536,9 +4740,11 @@ if($ShowXenAppTable -eq 1 ) {
             "- UPM ServiceActive: $($ProfileStatus.UPMServiceActive)" | LogMe -display -progress
             "- UPM PathToLogFile: $($ProfileStatus.UPMPathToLogFile)" | LogMe -display -progress
             "- UPM PathToUserStore: $($ProfileStatus.UPMPathToUserStore)" | LogMe -display -progress
-            If ($ProfileStatus.UPMInstalled -AND $ProfileStatus.UPMServiceRunning -AND $ProfileStatus.UPMServiceActive -eq 1) {
+            If ($ProfileStatus.UPMServiceRunning -AND $ProfileStatus.UPMServiceActive -eq 1) {
               $UPMEnabled = $True
             }
+          } Else {
+            "- UPM is not installed" | LogMe -display -progress
           }
           If ($UPMEnabled) {
             $tests.UPMEnabled = "SUCCESS", $UPMEnabled
@@ -4554,9 +4760,11 @@ if($ShowXenAppTable -eq 1 ) {
             "- WEM AgentConfigurationSets: $($ProfileStatus.WEMAgentConfigurationSets)" | LogMe -display -progress
             "- WEM AgentCacheSyncMode: $($ProfileStatus.WEMAgentCacheSyncMode)" | LogMe -display -progress
             "- WEM AgentCachePath: $($ProfileStatus.WEMAgentCachePath)" | LogMe -display -progress
-            If ($ProfileStatus.WEMInstalled -AND $ProfileStatus.WEMServiceRunning -AND $ProfileStatus.WEMAgentRegistered) {
+            If ($ProfileStatus.WEMServiceRunning -AND $ProfileStatus.WEMAgentRegistered) {
               $WEMEnabled = $True
             }
+          } Else {
+            "- WEM is not installed" | LogMe -display -progress
           }
           If ($WEMEnabled) {
             $tests.WEMEnabled = "SUCCESS", $WEMEnabled
@@ -5563,6 +5771,18 @@ If ($UseRunspace) {
 #          - Changed the way the scriptblock can be executed locally and via Invoke-Command so that we can pass an object as a named parameter in the arguments. This needed to be enhanced
 #            so that an object can be passed into the runspace as well.
 #          - Improved the order of the headers and grouped them so they can easily be excluded or commented out when not required. An enhancement can be to add more variables to the xml file.
+# - 1.5.1, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+#          - If the machine name is ghosted, don't lookup it's IP address. An empty variable passed to the Dns.GetHostAddresses method will lookup the IP Address of the host the script is
+#            running on, which is of course incorrect. Also wrapped some further error checking around the Dns.GetHostAddresses method.
+#          - Removed the pipe to Select-Object from the Get-Brokerhypervisorconnection cmdlet. This adds unnecessary processing.
+#          - Further improved the Citrix UPM, WEM and Microsoft FSLogix outout.
+#          - Further improved the Nvidia output and fixed a bug with the $returnLicensable_Product needed to be $return.Licensable_Product.
+#          - Improved the Citrix Cloud auth process and output.
+#          - Improved some documentation and log outputs.
+#          - Added an XDPing test for the Delivery Controller and Cloud Connector checks. It was an obvious test for Delivery Controllers. Even though Rendezvous V2 allows Cloud Connector-less
+#            direct VDA registration, standard AD domain joined machines still require Cloud Connectors for VDA registration and session brokering. Even ovcoming this, Cloud Connectors may
+#            continue to be required for legacy VDA registration. And therefore should still perform an XDPing to check the health status of the CdsController Iregistrar service.
+#          - Changed the EDT MTU test so that it doesn't flag as failed if no data is returned from the "C:\Program Files (x86)\Citrix\HDX\bin\CtxSession.exe" command. That is misleading.
 #
 # == FUTURE ==
 # #  1.5.x
