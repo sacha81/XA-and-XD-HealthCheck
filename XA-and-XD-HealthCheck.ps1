@@ -1,5 +1,5 @@
 ﻿#==============================================================================================
-# Created on: 11.2014 modfied 06.2025 Version: 1.5.1
+# Created on: 11.2014 modfied 06.2025 Version: 1.5.2
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -27,7 +27,7 @@
 #            available.
 #            It also tries the UNC path for drive shares, such as C$ and D$, the PVS/MCSIO write-cache drive you specify,
 #            and to read the Nvidia log file.
-#            Whilst it does a ping test, it's success is not as important as the script has been changed from version 1.4.7 to
+#            Whilst it does a ping test, its success is not as important as the script has been changed from version 1.4.7 to
 #            proceed, even if ping times out or fails. This allows for complex environments where Session Hosts may be in
 #            different security zones.
 #            If you use the Windows host-based firewall, or a 3rd party product, add some rules to allow for this connectivity.
@@ -340,40 +340,86 @@ param (
 # from https://hallspalmer.wordpress.com/2019/02/19/manage-citrix-cloud-using-powershell/
 $ProfileName = $OutputLog.Substring(0, $OutputLog.Length - 4)
 if ( $CitrixCloudCheck -eq "1" ) {
+  $CloudAuthSuccess = $True
+  $ProfileType = "CloudApi"
   "Connecting to Citrix Cloud" | LogMe -display -progress
   "- CustomerId: $CustomerID" | LogMe -display -progress
-  $ProfileType = "CloudApi"
+  "- ProfileName: $ProfileName" | LogMe -display -progress
+  "- ProfileType: $ProfileType" | LogMe -display -progress
   If (Test-Path -path "$SecureClientFile") {
     "- Using the SecureClientFile: $SecureClientFile" | LogMe -display -progress
+    "- Executing Set-XDCredentials..." | LogMe -display -progress
     Set-XDCredentials -CustomerId "$CustomerID" -SecureClientFile "$SecureClientFile" -ProfileType "$ProfileType" -StoreAs "$ProfileName"
   } Else {
     "- Using the APIKey and SecretKey" | LogMe -display -progress
+    "- Executing Set-XDCredentials..." | LogMe -display -progress
     Set-XDCredentials -CustomerId "$CustomerID" -APIKey "$APIKey" -SecretKey "$SecretKey" -ProfileType "$ProfileType" -StoreAs "$ProfileName"
   }
   Try {
+    "- Executing Get-XDAuthentication..." | LogMe -display -progress
     Get-XDAuthentication -ProfileName $ProfileName
-    "- Successfully authenticated using the profile named $ProfileName" | LogMe -display -progress
+    "  - Successfully authenticated using the profile named $ProfileName" | LogMe -display -progress
+    "- Executing Get-XDCredentials..." | LogMe -display -progress
     $CCCreds = Get-XDCredentials -ProfileName $ProfileName
+    # Get-XDCredentials returns an object of Citrix.Sdk.Proxy.Cmdlets.Base.XDCredentials type from the Citrix.SdkProxy.PowerShellSnapIn.dll module.
     If($Null -ne $CCCreds) {
       If ($CCCreds.CustomerId -eq "$CustomerID") {
-        "- Successfully retrieved the CustomerId from the stored credentials" | LogMe -display -progress
+        "  - Successfully retrieved the CustomerId from the stored credentials" | LogMe -display -progress
       } Else {
-        "- Failed to retrieved the CustomerId from the stored credentials" | LogMe -display -error
+        $CloudAuthSuccess = $False
+        "  - Failed to retrieved the CustomerId from the stored credentials" | LogMe -display -error
       }
-    }
-    Try {
-      "- The XDSDKProxy address is: $($Global:XDSDKProxy)" | LogMe -display -progress
-    }
-    Catch {
-      "- The Global XDSDKProxy variable cannot be retrieved" | LogMe -display -warning
+      "- Getting Global variables set that start with XD..." | LogMe -display -progress
+      $XDGlobalVariables = Get-Variable -Name "XD*" -Scope Global
+      If (($XDGlobalVariables | Measure-Object).Count -gt 0) {
+        $XDGlobalVariables | ForEach-Object {
+          "  - $($_.Name) = $($_.Value)" | LogMe -display -progress
+        }
+      } Else {
+        "  - There are no Global variables set that start with XD" | LogMe -display -progress
+      }
+      $AdminAddress = ""
+      If ($CCCreds.NonPersistentMetadata.AdminAddress -ne $null) {
+        "- The NonPersistentMetadata property exists with the AdminAddress value" | LogMe -display -progress
+        $AdminAddress = $CCCreds.NonPersistentMetadata.AdminAddress
+      }
+      If ([string]::IsNullOrEmpty($AdminAddress)) {
+        $IsVariableSet = $False
+        Try {
+          Get-Variable -Name "XDSDKProxy" -Scope Global -ErrorAction Stop | out-null
+          "- The Global XDSDKProxy variable is set"
+          $AdminAddress = $Global:XDSDKProxy
+          $IsVariableSet = $True
+        }
+        Catch {
+          "- The Global XDSDKProxy variable cannot be retrieved" | LogMe -display -error
+        }
+      }
+      If (![string]::IsNullOrEmpty($AdminAddress)) {
+        "- AdminAddress (AKA XDSDKProxy) is: $AdminAddress" | LogMe -display -progress
+      } Else {
+        $CloudAuthSuccess = $False
+        "- The AdminAddress (AKA XDSDKProxy) cannot be determined" | LogMe -display -error
+      }
+    } Else {
+      $CloudAuthSuccess = $False
+      "- Get-XDCredentials returned no data" | LogMe -display -error
     }
   }
   Catch {
+    $CloudAuthSuccess = $False
+  }
+  If ($CloudAuthSuccess) {
+    "- Successfully authenticated to Citrix Cloud (DaaS)" | LogMe -display -progress
+  } Else {
     "- Failed to authenticate using the profile named $ProfileName" | LogMe -display -error
     Exit
   }
 } Else {
   $ProfileType = "OnPrem"
+  "Using OnPrem" | LogMe -display -progress
+  "- ProfileName: $ProfileName" | LogMe -display -progress
+  "- ProfileType: $ProfileType" | LogMe -display -progress
   Try {
     Set-XDCredentials -ProfileType "$ProfileType" -StoreAs "$ProfileName"
     "Connecting to $ProfileType" | LogMe -display -progress
@@ -443,6 +489,9 @@ If ($CitrixCloudCheck -ne 1) {
   }
   $XDControllerHeaderNames += "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg"
 }
+If ($ShowCrowdStrikeTests -eq 1) {
+  $XDControllerHeaderNames += "CSEnabled", "CSGroupTags"
+}
 
 if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
   #Header for Table "Cloud Connector Servers"
@@ -455,6 +504,9 @@ if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
   }
   $CCHeaderNames += "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg"
 }
+If ($ShowCrowdStrikeTests -eq 1) {
+  $CCHeaderNames += "CSEnabled", "CSGroupTags"
+}
 
 If ($ShowStorefrontTable -eq 1) {
   #Header for Table "Storefront Servers"
@@ -466,6 +518,9 @@ If ($ShowStorefrontTable -eq 1) {
     $SFHeaderNames += "$($disk)Freespace"
   }
   $SFHeaderNames += "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg"
+}
+If ($ShowCrowdStrikeTests -eq 1) {
+  $SFHeaderNames += "CSEnabled", "CSGroupTags"
 }
 
 #Header for Table "Fail Rates" FUTURE
@@ -502,6 +557,9 @@ $HypervisorConnectiontablewidth = 1200
 $VDIfirstheaderName = "virtualDesktops"
 $VDIHeaderNames = "IPv4Address", "CatalogName", "DeliveryGroup", "Ping", "WinRM", "WMI", "UNC", "MaintMode", "Uptime", "RegState", "PowerState", "LastConnectionTime", "VDAVersion", "OSCaption", "OSBuild"
 $VDIHeaderNames += "Spooler", "CitrixPrint", "UPMEnabled", "FSLogixEnabled", "WEMEnabled"
+If ($ShowCrowdStrikeTests -eq 1) {
+  $VDIHeaderNames += "CSEnabled", "CSGroupTags"
+}
 $VDIHeaderNames += "AssociatedUserNames"
 $VDIHeaderNames += "displaymode", "EDT_MTU"
 $VDIHeaderNames += "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace"
@@ -514,6 +572,9 @@ $VDItablewidth = 2400
 $XenAppfirstheaderName = "virtualApp-Servers"
 $XenAppHeaderNames = "IPv4Address", "CatalogName", "DeliveryGroup", "Ping", "WinRM", "WMI", "UNC", "Serverload", "MaintMode", "Uptime", "RegState", "PowerState", "LastConnectionTime", "VDAVersion", "OSCaption", "OSBuild"
 $XenAppHeaderNames += "Spooler", "CitrixPrint", "UPMEnabled", "FSLogixEnabled", "WEMEnabled"
+If ($ShowCrowdStrikeTests -eq 1) {
+  $XenAppHeaderNames += "CSEnabled", "CSGroupTags"
+}
 $XenAppHeaderNames += "RDSGracePeriod", "TerminalServerMode", "LicensingName", "LicensingType", "LicenseServerList"
 $XenAppHeaderNames += "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace"
 foreach ($disk in $diskLettersWorkers)
@@ -1095,6 +1156,13 @@ Function Get-NvidiaDetails {
 
 Function Check-NvidiaLicenseStatus {
   # This function gets the last update from the "C:\Users\Public\Documents\NvidiaLogging\Log.NVDisplay.Container.exe.log" log file to verify the current license status.
+  # Examples of significant licensing events that are logged are as follows:
+  # - Acquisition of a license
+  # - Return of a license
+  # - Expiration of a license
+  # - Failure to acquire a license
+  # - License state changes between the unlicensed restricted state (20 mins), unlicensed state (24 hours), and licensed state
+  # Reference: https://docs.nvidia.com/vgpu/latest/grid-licensing-user-guide/index.html
   # Written by Jeremy Saunders
   param (
          [string]$computername = "$env:computername"
@@ -1111,24 +1179,59 @@ Function Check-NvidiaLicenseStatus {
       If (Test-Path "filesystem::\\$computername\c$\Users\Public\Documents\NvidiaLogging\Log.NVDisplay.Container.exe.log") {
         $Array = Get-Content -Path "\\$computername\c$\Users\Public\Documents\NvidiaLogging\Log.NVDisplay.Container.exe.log"
         $Length = $Array.count
-        If ($Array[$Length -1] -Like "*License renewed successfully*" -OR $Array[$Length -1] -Like "*License acquired successfully*") {
-          If ($Array[$Length -1] -Like "*License renewed successfully*") {
-            $ResultProps.Output_To_Log = "nvidiaLicense: License renewed successfully"
-            $ResultProps.Licensed = "Renewed"
-            $ResultProps.Output_For_HTML = "SUCCESS"
-          }
-          If ($Array[$Length -1] -Like "*License acquired successfully*") {
-            $ResultProps.Output_To_Log = "nvidiaLicense: License acquired successfully"
-            $ResultProps.Licensed = "Acquired"
-            $ResultProps.Output_For_HTML = "SUCCESS"
-          }
-          If ($Array[$Length -1] -Like "*Failed server communication*") {
-            $ResultProps.Output_To_Log = "nvidiaLicense: Failed server communication"
-            $ResultProps.Licensed = "Failed"
-            $ResultProps.Output_For_HTML = "ERROR"
+        If ($Length -gt 0) {
+          switch ($Array[$Length -1])
+          {
+            {$Array[$Length -1] -Like "*License renewed successfully*"} {
+                    $ResultProps.Output_To_Log = "nvidiaLicense: License renewed successfully"
+                    $ResultProps.Licensed = "Renewed"
+                    $ResultProps.Output_For_HTML = "SUCCESS"
+                    break
+                   }
+            {$Array[$Length -1] -Like "*License acquired successfully*"} {
+                    $ResultProps.Output_To_Log = "nvidiaLicense: License acquired successfully"
+                    $ResultProps.Licensed = "Acquired"
+                    $ResultProps.Output_For_HTML = "SUCCESS"
+                    break
+                   }
+            {$Array[$Length -1] -Like "*Failed to acquire license*"} {
+                    $ResultProps.Output_To_Log = "nvidiaLicense: Failed to acquire license"
+                    $ResultProps.Licensed = "Failed"
+                    $ResultProps.Output_For_HTML = "ERROR"
+                    break
+                   }
+            {$Array[$Length -1] -Like "*Failed to renew license*"} {
+                    $ResultProps.Output_To_Log = "nvidiaLicense: Failed to renew license"
+                    $ResultProps.Licensed = "Failed"
+                    $ResultProps.Output_For_HTML = "ERROR"
+                    break
+                   }
+            {$Array[$Length -1] -Like "*Failed server communication*"} {
+                    $ResultProps.Output_To_Log = "nvidiaLicense: Failed server communication"
+                    $ResultProps.Licensed = "Failed"
+                    $ResultProps.Output_For_HTML = "ERROR"
+                    break
+                   }
+            {$Array[$Length -1] -Like "*License has expired*"} {
+                    $ResultProps.Output_To_Log = "nvidiaLicense: License has expired"
+                    $ResultProps.Licensed = "Expired"
+                    $ResultProps.Output_For_HTML = "ERROR"
+                    break
+                   }
+            {$Array[$Length -1] -Like "*No active license found for the client on license server*"} {
+                    $ResultProps.Output_To_Log = "nvidiaLicense: No active license found for the client on license server"
+                    $ResultProps.Licensed = "Failed"
+                    $ResultProps.Output_For_HTML = "ERROR"
+                    break
+                   }
+           Default {
+                    $ResultProps.Output_To_Log = "nvidiaLicense: License not found"
+                    $ResultProps.Licensed = "Not Found"
+                    $ResultProps.Output_For_HTML = "ERROR"
+                   }
           }
         } Else {
-          $ResultProps.Output_To_Log = "nvidiaLicense: License not found"
+          $ResultProps.Output_To_Log = "nvidiaLicense: The Log.NVDisplay.Container.exe.log is invalid"
           $ResultProps.Licensed = "Not Found"
           $ResultProps.Output_For_HTML = "ERROR"
         }
@@ -1518,6 +1621,7 @@ Function Get-ProfileAndUserEnvironmentManagementServiceStatus {
   # - Microsoft FSLogix
   # - Citrix Profile Management
   # - Citrix WEM
+  # Written by Jeremy Saunders
   [CmdletBinding()]
   param (
          [string]$ComputerName,
@@ -1744,69 +1848,244 @@ Function Get-ProfileAndUserEnvironmentManagementServiceStatus {
 
 #==============================================================================================
 
+Function Get-CrowdStrikeServiceStatus {
+  # This function gets the CrowdStrike service, System Driver, configuration data and installed version.
+  # - We get the installation settings from the following registry key, which is created as as part of the install:
+  #   - HKLM\SYSTEM\CrowdStrike\{9b03c1d9-3138-44ed-9fae-d9f4c034b88d}\{16e0423f-7058-48c9-a204-725362b67639}\Default
+  #   - Company ID (CID) from the CI registry value.
+  #   - VDI installation switch, which is used to prevent duplicate host names when using imaging technologies.
+  #   - SensorGroupingTags - Assigned on each device either during installation or using CsSensorSettings.exe
+  #                          Tags are case sensitive
+  #                          To use multiple tags, separate with commas
+  #   - Once the agent has registered with the server, we can also get the Device ID or Agent ID (AID) from the AG 
+  #     registry value.
+  # - Once the system driver starts the following key may be populated with more data:
+  #   - HKLM\SYSTEM\CurrentControlSet\Services\CSAgent\Sim
+  # We cannot get FalconGroupingTags from the agents. These are assigned in the UI or via API. They can be assigned
+  # to devices in groups. To apply a FalconGroupingTag, use the Host Management screen and multi-select the target
+  # devices, then use Actions > Add Falcon Grouping Tags
+  # References:
+  # - https://www.powershellgallery.com/packages/PSFalcon/2.1.9/Content/Public%5Cpsf-sensors.ps1
+  # - https://community.automox.com/find-share-worklets-12/retaining-registry-key-with-hostname-2066
+  # - https://www.reddit.com/r/crowdstrike/comments/186rw57/how_to_retrieve_crowdstrike_agent_idhost_id_from/?tl=fi
+  # - https://blog.1password.com/how-to-tell-if-crowdstrike-falcon-sensor-is-running/
+  # Written by Jeremy Saunders
+  [CmdletBinding()]
+  param (
+         [string]$ComputerName
+        )
+  Invoke-Command -ComputerName $ComputerName -ScriptBlock {
+    $result = [PSCustomObject]@{
+      ComputerName           = $env:COMPUTERNAME
+      CSFalconInstalled      = $false
+      CSFalconServiceRunning = $false
+      CSAgentInstalled       = $false
+      CSAgentServiceRunning  = $false
+      CID                    = $null
+      AID                    = $null
+      SensorGroupingTags     = $null
+      VDI                    = $false
+      InstalledVersion       = $null
+    }
+
+    $CSFalconInstalled = $False
+    $CSFalconRunning = $False
+    $CSAgentInstalled = $False
+    $CSAgentRunning = $False
+
+    # Get-Services and the Win32_SystemDriver:
+    # - CrowdStrike Falcon Sensor Service (CSFalconService)
+    # - CrowdStrike Falcon (CSAgent) is a driver with startup type of 1 (System).
+    #   - We cannot use the Get-Service or Get-WmiObject/Get-CIMInstance Win32_Service class to see if it's running.
+    #   - We need to use the Get-WmiObject/Get-CIMInstance Win32_SystemDriver class instead.
+    #   Whilst we may not need to do this, or it could be seen as excessive, it may be a good way to pick up broken
+    #   installs. So I do it anyway.
+    try {
+      $services = Get-Service -ErrorAction Stop | where-object {$_.Name -eq 'CSFalconService'}
+      $services | ForEach-Object {
+        if ($_.Name -eq "CSFalconService") {
+          $CSFalconInstalled = $True
+          if ($_.Status -Match "Running") {
+            $CSFalconRunning = $True
+          }
+        }
+      }
+      If ($CSFalconInstalled) {
+        $result.CSFalconInstalled = $true
+      }
+      If ($CSFalconRunning) {
+        $result.CSFalconServiceRunning = $true
+      }
+    }
+    catch {
+      #$($Error[0].Exception.Message)
+      $result.CSFalconInstalled = $false
+      $result.CSFalconServiceRunning = $false
+    }
+    Try {
+      $VerbosePreference = 'SilentlyContinue'
+      $SystemDrivers = Get-CimInstance -ClassName Win32_SystemDriver -ErrorAction Stop | where-object {$_.Name -eq 'CSAgent'}
+      $VerbosePreference = 'Continue'
+      $SystemDrivers | ForEach-Object {
+        if ($_.Name -eq "CSAgent") {
+          $CSAgentInstalled = $True
+          if ($_.State -Match "Running") {
+            $CSAgentRunning = $True
+          }
+        }
+      }
+      If ($CSAgentInstalled) {
+        $result.CSAgentInstalled = $true
+      }
+      If ($CSAgentRunning) {
+        $result.CSAgentServiceRunning = $true
+      }
+    }
+    Catch [System.Exception]{
+     # $($Error[0].Exception.Message)
+      $result.CSAgentInstalled = $false
+      $result.CSAgentServiceRunning = $false
+    }
+
+    # Registry locations
+    $CSFalconReg = "HKLM:\SYSTEM\CrowdStrike\{9b03c1d9-3138-44ed-9fae-d9f4c034b88d}\{16e0423f-7058-48c9-a204-725362b67639}\Default"
+
+    $ErrorActionPreference = "stop"
+    If ($result.CSFalconInstalled -AND $result.CSFalconServiceRunning -AND $result.CSAgentInstalled -AND $result.CSAgentServiceRunning) {
+      try {
+        $CSFalconProps = Get-ItemProperty -Path $CSFalconReg
+        If ($CSFalconProps.AG -ne $null) {
+          $result.AID = ([System.BitConverter]::ToString($CSFalconProps.AG) -replace '-','')
+        }
+        $result.CID = ([System.BitConverter]::ToString($CSFalconProps.CU) -replace '-','')
+        $SensorGroupingTagsData = $CSFalconProps.GroupingTags
+        if ($SensorGroupingTagsData) {
+          if ($SensorGroupingTagsData.GetType().FullName -eq "System.String") {
+            $result.SensorGroupingTags = $SensorGroupingTagsData
+          } Else {
+            # $CSFalconProps.GroupingTags.GetType().FullName -eq "System.Byte[]"
+            $filteredBytes = $SensorGroupingTagsData | Where-Object { $_ -ne 0 }
+            $i = 0
+            $asciiLine = ""
+            foreach ($byte in $filteredBytes) {
+              $hex = '{0:X2}' -f $byte
+              $char = if ($byte -ge 32 -and $byte -le 126) { [char]$byte } else { '.' }
+              if ($i % 16 -eq 0) {
+                $asciiLine = ""
+              }
+              $asciiLine += $char
+              $i++
+            }
+            if ($asciiLine) {
+              $result.SensorGroupingTags = $asciiLine
+            }
+          }
+        }
+        # Check if the first byte (as an integer) is 1
+        If ($CSFalconProps.VDI -ne $null) {
+          If ($CSFalconProps.VDI[0] -eq 1) {
+            $result.VDI = $True
+          }
+        }
+      }
+      catch {
+        #$($Error[0].Exception.Message)
+      }
+    }
+    $ErrorActionPreference = "Continue"
+
+    $softwareDisplayName = "CrowdStrike Windows Sensor"
+    $InstalledSoftware = @()
+    $UninstallKeys=@("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+                   "HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+                  )
+    ForEach($UninstallKey in $UninstallKeys) {
+      $ErrorActionPreference = "stop"
+      Try {
+        $InstalledSoftware += Get-ItemProperty $uninstallKey | Where-Object {$_.DisplayName -match $softwareDisplayName}
+      }
+      Catch {
+        #$($Error[0].Exception.Message)
+      }
+    }
+    If (($InstalledSoftware | Measure-Object).Count -eq 1) {
+      If ($InstalledSoftware.DisplayVersion -ne $null) {
+        $result.InstalledVersion = $InstalledSoftware.DisplayVersion
+      }
+    }
+    $ErrorActionPreference = "Continue"
+    return $result
+  }
+}
+
+#==============================================================================================
+
 Function XDPing {
+  # This function performs an XDPing to make sure the Delivery Controller or Cloud Connector is in a healthy state.
+  # It tests whether the Broker service is reachable, listening and processing requests on its configured port.
+  # We do this by issuing a blank HTTP POST requests to the Broker's Registrar service. Including "Expect: 100-continue"
+  # in the body will ensure we receive a respose of "HTTP/1.1 100 Continue", which is what we use to verify that it's in
+  # a healthy state.
   # To work out the best way to write this function I decompiled the VDAAssistant.Backend.dll from the
   # Citrix Health Assistant tool using JetBrains decompiler.
-  # To test if the Broker service is reachable, listening and processing requests on its configured port,
-  # you can issue blank HTTP POST requests at the Broker's Registrar service, which is located at
-  # /Citrix/CdsController/IRegistrar. If the first line displayed/returned is "HTTP/1.1 100 Continue",
-  # then the Broker service responded and is deemed to be healthy.
- 
+  # Written by Jeremy Saunders
   param(
     [Parameter(Mandatory=$True)][String]$ComputerName, 
-    [Parameter(Mandatory=$True)][Int32]$Port,
-    [String]$ProxyServer="", 
-    [Int32]$ProxyPort
+    [Parameter(Mandatory=$True)][Int32]$Port
   )
- 
-  $URI = "http://$ComputerName/Citrix/CdsController/IRegistrar"
-  $InitialDataToSend = "POST $URI HTTP/1.1`r`nContent-Type: application/soap+xml; charset=utf-8`r`nHost: ${ComputerName}:${Port}`r`nContent-Length: 1`r`nExpect: 100-continue`r`nConnection: Close`r`n`r`n"
-  $FinalDataToSend = "X"
-  $IsServiceListening = $False
- 
-  If ($ProxyServer -eq "" -OR $ProxyServer -eq $NULL) {
-    $ConnectToHost = $ComputerName
-    [int]$ConnectOnPort = $Port
-  } Else {
-    $ConnectToHost = $ProxyServer
-    [int]$ConnectOnPort = $ProxyPort
-    #write-verbose "Connecting via a proxy" -verbose
-  }
- 
-  $Saddrf   = [System.Net.Sockets.AddressFamily]::InterNetwork 
-  $Stype    = [System.Net.Sockets.SocketType]::Stream 
-  $Ptype    = [System.Net.Sockets.ProtocolType]::TCP
-  $socket    = New-Object System.Net.Sockets.Socket $saddrf, $stype, $ptype 
- 
-  Try {
-    $socket.Connect($ConnectToHost,$ConnectOnPort)
-    #$socket.Connected
-    $initialbytes = [System.Text.Encoding]::ASCII.GetBytes($InitialDataToSend)
-    #write-verbose "Sending initial data..." -verbose
-    #$InitialDataToSend
-    $NumBytesSent = $socket.Send($initialbytes, $initialbytes.length,[net.sockets.socketflags]::None)
-    #write-verbose "Sent $NumBytesSent bytes" -verbose
-    $numArray = new-object byte[] 21
-    $socket.ReceiveTimeout = 5000
-    $NumBytesReceived = $socket.Receive($numArray)
-    #write-verbose "Received $NumBytesReceived bytes" -verbose
-    $output = [System.Text.Encoding]::ASCII.GetString($numArray)
-    $finalBytes = [System.Text.Encoding]::ASCII.GetBytes($FinalDataToSend)
-    #write-verbose "Sending final data..." -verbose
-    #$FinalDataToSend
-    $NumBytesSent = $socket.Send($finalBytes, $finalBytes.length,[net.sockets.socketflags]::None)
-    #write-verbose "Sent $NumBytesSent bytes" -verbose
-    $socket.Close() | out-null
-    #write-verbose "Received data..." -verbose
-    #$output
-    if ($output -eq "HTTP/1.1 100 Continue") {
-      $IsServiceListening = $True
+  $service = "http://${ComputerName}:${Port}/Citrix/CdsController/IRegistrar"
+  $s = "POST $service HTTP/1.1`r`nContent-Type: application/soap+xml; charset=utf-8`r`nHost: ${ComputerName}:${Port}`r`nContent-Length: 1`r`nExpect: 100-continue`r`nConnection: Close`r`n`r`n"
+  $log = New-Object System.Text.StringBuilder
+  $log.AppendLine("Attempting an XDPing against $ComputerName on TCP port number $port") | Out-Null
+  $listening = $false
+  try {
+    $socket = New-Object System.Net.Sockets.Socket ([System.Net.Sockets.AddressFamily]::InterNetwork, [System.Net.Sockets.SocketType]::Stream, [System.Net.Sockets.ProtocolType]::Tcp)
+    try {
+      $socket.Connect($ComputerName, $port)
+      if ($socket.Connected) {
+        $log.AppendLine("- Socket connected") | Out-Null
+        $bytes = [System.Text.Encoding]::ASCII.GetBytes($s)
+        $socket.Send($bytes) | Out-Null
+        $log.AppendLine("- Sent the data") | Out-Null
+        $numArray = New-Object byte[] 21
+        $socket.ReceiveTimeout = 5000
+        $socket.Receive($numArray) | Out-Null
+        $log.AppendLine("- Received the following 21 byte array: " + [BitConverter]::ToString($numArray)) | Out-Null
+        $strASCII = [System.Text.Encoding]::ASCII.GetString($numArray)
+        $strUTF8 = [System.Text.Encoding]::UTF8.GetString($numArray)
+        $log.AppendLine("- Converting to ASCII: `"$strASCII`"") | Out-Null
+        $log.AppendLine("- Converting to UTF8: `"$strUTF8`"") | Out-Null
+        $socket.Send([byte[]](32)) | Out-Null
+        $log.AppendLine("- Sent a single byte with the value 32 (which represents the ASCII space character) to the connected socket.") | Out-Null
+        $log.AppendLine("- This is done to gracefully signal the end of the communication.") | Out-Null
+        $log.AppendLine("- This ensures it does not block/consume unnecessary requests needed by VDAs.") | Out-Null
+        if ($strASCII.Trim().StartsWith("HTTP/1.1 100 Continue", [System.StringComparison]::CurrentCultureIgnoreCase)) {
+          $listening = $true
+          $log.AppendLine("- The service is listening and healthy") | Out-Null
+        } else {
+          $log.AppendLine("- The service is not listening") | Out-Null
+        }
+        try {
+          $socket.Close()
+          $log.AppendLine("- Socket closed") | Out-Null
+        } catch {
+          $log.AppendLine("- Failed to close socket") | Out-Null
+          $log.AppendLine("- ERROR: $_") | Out-Null
+        }
+        $socket.Dispose()
+      } else {
+        $log.AppendLine("- Socket failed to connect") | Out-Null
+      }
+    } catch {
+      $log.AppendLine("- Failed to connect to service") | Out-Null
+      $log.AppendLine("- ERROR: $_") | Out-Null
     }
+  } catch {
+    $log.AppendLine("- Failed to create socket") | Out-Null
+    $log.AppendLine("- ERROR: $_") | Out-Null
   }
-  Catch {
-    #
-  }
-  return $IsServiceListening
+  #Write-Host $log.ToString().TrimEnd()
+  return $listening
 }
 
 #==============================================================================================
@@ -2169,9 +2448,9 @@ If ($CitrixCloudCheck -ne 1) {
     } Else {
       $tests.XDPing = "ERROR", "FAILED"
       "XDPing (health status of the CdsController Iregistrar service): FAILED" | LogMe -display -error
-      # Check that the firewall is not dropping the traffic.
-      # - We send a blank HTTP POST requests to the Broker's Registrar service, including "Expect: 100-continue" in the body.
-      # - We receive a respose of "HTTP/1.1 100 Continue", which is what we use to verify that it's in a healthy state.
+      "- If this fails and machines are still registering okay to $ControllerDNS, check that the firewall is not dropping the traffic" | LogMe -display -error
+      "  - This test sends a blank HTTP POST requests to the Broker's Registrar service, including 'Expect: 100-continue' in the body" | LogMe -display -error
+      "  - A response of 'HTTP/1.1 100 Continue' should be returned, which is what we use to verify that it's in a healthy state" | LogMe -display -error
     }
 
     $IsWinRMAccessible = IsWinRMAccessible -hostname:$ControllerDNS
@@ -2191,6 +2470,33 @@ If ($CitrixCloudCheck -ne 1) {
     $ActiveSiteServices = $Controller | ForEach-Object{ $_.ActiveSiteServices }
     "ActiveSiteServices $ActiveSiteServices" | LogMe -display -progress
     $tests.ActiveSiteServices = "NEUTRAL", $ActiveSiteServices
+
+    # Check CrowdStrike State
+    If ($ShowCrowdStrikeTests -eq 1) {
+      If ($IsWinRMAccessible) {
+        $return = Get-CrowdStrikeServiceStatus -ComputerName:$ControllerDNS
+        If ($null -ne $return) {
+          If ($return.CSFalconInstalled -AND $return.CSAgentInstalled) {
+            "CrowdStrike Installed: True" | LogMe -display -progress
+            "- CrowdStrike Windows Sensor Version: $($return.InstalledVersion)" | LogMe -display -progress
+            "- CrowdStrike Company ID (CID): $($return.CID)" | LogMe -display -progress
+            "- CrowdStrike Sensor Grouping Tags: $($return.SensorGroupingTags)" | LogMe -display -progress
+            $tests.CSGroupTags = "NORMAL", $return.SensorGroupingTags
+            "- CrowdStrike VDI switch: $($return.VDI)" | LogMe -display -progress
+            If ($return.CSFalconServiceRunning -AND $return.CSAgentServiceRunning -AND (![string]::IsNullOrEmpty($return.AID))) {
+              $tests.CSEnabled = "SUCCESS", $True
+              "- CrowdStrike Agent ID (AID): $($return.AID)" | LogMe -display -progress
+            } Else {
+              $tests.CSEnabled = "WARNING", $False
+            }
+          } else {
+            "CrowdStrike Installed: False" | LogMe -display -progress
+          }
+        } else {
+          "Unable to get the CrowdStrike Service Status" | LogMe -display -error
+        }
+      }
+    }
 
     #==============================================================================================
     #               CHECK CPU AND MEMORY USAGE
@@ -2364,9 +2670,9 @@ if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
     } Else {
       $tests.XDPing = "ERROR", "FAILED"
       "XDPing (health status of the CdsController Iregistrar service): FAILED" | LogMe -display -error
-      # Check that the firewall is not dropping the traffic.
-      # - We send a blank HTTP POST requests to the Broker's Registrar service, including "Expect: 100-continue" in the body.
-      # - We receive a respose of "HTTP/1.1 100 Continue", which is what we use to verify that it's in a healthy state.
+      "- If this fails and machines are still registering okay to $ControllerDNS, check that the firewall is not dropping the traffic" | LogMe -display -error
+      "  - This test sends a blank HTTP POST requests to the Broker's Registrar service, including 'Expect: 100-continue' in the body" | LogMe -display -error
+      "  - A response of 'HTTP/1.1 100 Continue' should be returned, which is what we use to verify that it's in a healthy state" | LogMe -display -error
     }
 
     $IsWinRMAccessible = IsWinRMAccessible -hostname:$CloudConnectorServerDNS
@@ -2396,6 +2702,33 @@ if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
     } Else {
       $tests.CitrixServices = "WARNING","Cannot connect via WinRM"
       "Cannot connect via WinRM" | LogMe -display -warning
+    }
+
+    # Check CrowdStrike State
+    If ($ShowCrowdStrikeTests -eq 1) {
+      If ($IsWinRMAccessible) {
+        $return = Get-CrowdStrikeServiceStatus -ComputerName:$CloudConnectorServerDNS
+        If ($null -ne $return) {
+          If ($return.CSFalconInstalled -AND $return.CSAgentInstalled) {
+            "CrowdStrike Installed: True" | LogMe -display -progress
+            "- CrowdStrike Windows Sensor Version: $($return.InstalledVersion)" | LogMe -display -progress
+            "- CrowdStrike Company ID (CID): $($return.CID)" | LogMe -display -progress
+            "- CrowdStrike Sensor Grouping Tags: $($return.SensorGroupingTags)" | LogMe -display -progress
+            $tests.CSGroupTags = "NORMAL", $return.SensorGroupingTags
+            "- CrowdStrike VDI switch: $($return.VDI)" | LogMe -display -progress
+            If ($return.CSFalconServiceRunning -AND $return.CSAgentServiceRunning -AND (![string]::IsNullOrEmpty($return.AID))) {
+              $tests.CSEnabled = "SUCCESS", $True
+              "- CrowdStrike Agent ID (AID): $($return.AID)" | LogMe -display -progress
+            } Else {
+              $tests.CSEnabled = "WARNING", $False
+            }
+          } else {
+            "CrowdStrike Installed: False" | LogMe -display -progress
+          }
+        } else {
+          "Unable to get the CrowdStrike Service Status" | LogMe -display -error
+        }
+      }
     }
 
     #==============================================================================================
@@ -2590,6 +2923,33 @@ If ($ShowStorefrontTable -eq 1) {
     } Else {
       $tests.CitrixServices = "WARNING","Cannot connect via WinRM"
       "Cannot connect via WinRM" | LogMe -display -warning
+    }
+
+    # Check CrowdStrike State
+    If ($ShowCrowdStrikeTests -eq 1) {
+      If ($IsWinRMAccessible) {
+        $return = Get-CrowdStrikeServiceStatus -ComputerName:$StoreFrontServerDNS
+        If ($null -ne $return) {
+          If ($return.CSFalconInstalled -AND $return.CSAgentInstalled) {
+            "CrowdStrike Installed: True" | LogMe -display -progress
+            "- CrowdStrike Windows Sensor Version: $($return.InstalledVersion)" | LogMe -display -progress
+            "- CrowdStrike Company ID (CID): $($return.CID)" | LogMe -display -progress
+            "- CrowdStrike Sensor Grouping Tags: $($return.SensorGroupingTags)" | LogMe -display -progress
+            $tests.CSGroupTags = "NORMAL", $return.SensorGroupingTags
+            "- CrowdStrike VDI switch: $($return.VDI)" | LogMe -display -progress
+            If ($return.CSFalconServiceRunning -AND $return.CSAgentServiceRunning -AND (![string]::IsNullOrEmpty($return.AID))) {
+              $tests.CSEnabled = "SUCCESS", $True
+              "- CrowdStrike Agent ID (AID): $($return.AID)" | LogMe -display -progress
+            } Else {
+              $tests.CSEnabled = "WARNING", $False
+            }
+          } else {
+            "CrowdStrike Installed: False" | LogMe -display -progress
+          }
+        } else {
+          "Unable to get the CrowdStrike Service Status" | LogMe -display -error
+        }
+      }
     }
 
     #==============================================================================================
@@ -4026,6 +4386,33 @@ if($ShowDesktopTable -eq 1 ) {
           "EDT MTU Size cannot be checked" | LogMe -display -progress
         }
 
+        # Check CrowdStrike State
+        If ($ShowCrowdStrikeTests -eq 1) {
+          If ($UseWinRM) {
+            $return = Get-CrowdStrikeServiceStatus -ComputerName:$machineDNS
+            If ($null -ne $return) {
+              If ($return.CSFalconInstalled -AND $return.CSAgentInstalled) {
+                "CrowdStrike Installed: True" | LogMe -display -progress
+                "- CrowdStrike Windows Sensor Version: $($return.InstalledVersion)" | LogMe -display -progress
+                "- CrowdStrike Company ID (CID): $($return.CID)" | LogMe -display -progress
+                "- CrowdStrike Sensor Grouping Tags: $($return.SensorGroupingTags)" | LogMe -display -progress
+                $tests.CSGroupTags = "NORMAL", $return.SensorGroupingTags
+                "- CrowdStrike VDI switch: $($return.VDI)" | LogMe -display -progress
+                If ($return.CSFalconServiceRunning -AND $return.CSAgentServiceRunning -AND (![string]::IsNullOrEmpty($return.AID))) {
+                  $tests.CSEnabled = "SUCCESS", $True
+                  "- CrowdStrike Agent ID (AID): $($return.AID)" | LogMe -display -progress
+                } Else {
+                  $tests.CSEnabled = "WARNING", $False
+                }
+              } else {
+                "CrowdStrike Installed: False" | LogMe -display -progress
+              }
+            } else {
+              "Unable to get the CrowdStrike Service Status" | LogMe -display -error
+            }
+          }
+        }
+
       }#If can connect via WinRM or WMI
       else {
         $ErrorVDI = $ErrorVDI + 0 # No WinRM or WMI connectivity
@@ -4773,6 +5160,33 @@ if($ShowXenAppTable -eq 1 ) {
           }
         } Else {
           # Cannot connect via WinRM
+        }
+
+        # Check CrowdStrike State
+        If ($ShowCrowdStrikeTests -eq 1) {
+          If ($UseWinRM) {
+            $return = Get-CrowdStrikeServiceStatus -ComputerName:$machineDNS
+            If ($null -ne $return) {
+              If ($return.CSFalconInstalled -AND $return.CSAgentInstalled) {
+                "CrowdStrike Installed: True" | LogMe -display -progress
+                "- CrowdStrike Windows Sensor Version: $($return.InstalledVersion)" | LogMe -display -progress
+                "- CrowdStrike Company ID (CID): $($return.CID)" | LogMe -display -progress
+                "- CrowdStrike Sensor Grouping Tags: $($return.SensorGroupingTags)" | LogMe -display -progress
+                $tests.CSGroupTags = "NORMAL", $return.SensorGroupingTags
+                "- CrowdStrike VDI switch: $($return.VDI)" | LogMe -display -progress
+                If ($return.CSFalconServiceRunning -AND $return.CSAgentServiceRunning -AND (![string]::IsNullOrEmpty($return.AID))) {
+                  $tests.CSEnabled = "SUCCESS", $True
+                  "- CrowdStrike Agent ID (AID): $($return.AID)" | LogMe -display -progress
+                } Else {
+                  $tests.CSEnabled = "WARNING", $False
+                }
+              } else {
+                "CrowdStrike Installed: False" | LogMe -display -progress
+              }
+            } else {
+              "Unable to get the CrowdStrike Service Status" | LogMe -display -error
+            }
+          }
         }
 
       }#If can connect via WinRM or WMI
@@ -5783,6 +6197,16 @@ If ($UseRunspace) {
 #            direct VDA registration, standard AD domain joined machines still require Cloud Connectors for VDA registration and session brokering. Even ovcoming this, Cloud Connectors may
 #            continue to be required for legacy VDA registration. And therefore should still perform an XDPing to check the health status of the CdsController Iregistrar service.
 #          - Changed the EDT MTU test so that it doesn't flag as failed if no data is returned from the "C:\Program Files (x86)\Citrix\HDX\bin\CtxSession.exe" command. That is misleading.
+# - 1.5.2, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+#          - Updated the Citrix Cloud (DaaS) authentication process allowing for the change in the way the AdminAddress (AKA XDSDKProxy) has been removed as a Global variable and now stored
+#            in as a key/value pair under the NonPersistentMetadata property of the Get-XDCredentials cmdlet output.
+#          - Updated the Check-NvidiaLicenseStatus to use a switch statement instead of an if/else block. Improved the logic and outputs to help track common issues when licensing fails.
+#          - Added the Get-CrowdStrikeServiceStatus function to check and audit CrowdStrike Windows Sensor information.
+#          - Added the CSEnabled and CSGroupTags columns to the tables. CSEnabled means that CrowdStrike is installed and running with an Agent ID. CSGroupTags are the Sensor group tags used
+#            when installed. This gives us a nice way to audit where it's missing and which tags have been used to ensure we have consistency. This relies on WinRM being enabled across all
+#            hosts.
+#          - Added the $ShowCrowdStrikeTests variable to the XML file.
+#          - Updated the XDPing function.
 #
 # == FUTURE ==
 # #  1.5.x
