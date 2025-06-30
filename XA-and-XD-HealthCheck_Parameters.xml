@@ -170,6 +170,13 @@
 			<Type>[int]</Type>
 			<Scope>Script</Scope>
 		</Variable>
+		<Variable>
+			<!-- # Set to 1 if you want to Show and Check the CrowdStrike Tests in all tables -->
+			<Name>ShowCrowdStrikeTests</Name>
+			<Value>1</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
 <!-- XenDesktop Options -->
 		<Variable>
 			<!-- # Set to 1 if you want to Check a Environment with XenDesktop (V 5.x and higher) -->
