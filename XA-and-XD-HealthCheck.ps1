@@ -1,5 +1,5 @@
 ﻿#==============================================================================================
-# Created on: 11.2014 modfied 06.2025 Version: 1.5.2
+# Created on: 11.2014 modfied 06.2025 Version: 1.5.3
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -535,7 +535,7 @@ $CTXLicTableWidth= 1200
   
 #Header for Table "MachineCatalogs" Get-BrokerCatalog
 $CatalogHeaderName = "CatalogName"
-$CatalogHeaderNames = "AssignedToUser", "AssignedToDG", "NotToUserAssigned", "ProvisioningType", "AllocationType", "MinimumFunctionalLevel", "UsedMCSSnapshot", "MasterImageVMDate", "UseFullDiskClone", "UseWriteBackCache", "WriteBackCacheMemSize"
+$CatalogHeaderNames = "AssignedToUser", "AssignedToDG", "NotToUserAssigned", "Unassigned", "ProvisioningType", "AllocationType", "MinimumFunctionalLevel", "UsedMCSSnapshot", "MasterImageVMDate", "UseFullDiskClone", "UseWriteBackCache", "WriteBackCacheMemSize"
 $CatalogTablewidth = 1200
 
 #Header for Table "DeliveryGroups" Get-BrokerDesktopGroup
@@ -666,13 +666,15 @@ Function Test-Ping {
 }
 
 Function IsWinRMAccessible {
-  # Get-CimInstance and Invoke-Command uses WinRM, so we test to see if WinRM is enabled and responding correctly.
+  # The Get-CimInstance and Invoke-Command cmdlets uses WinRM, so we test to see if WinRM is enabled and responding correctly.
   # The Test-WSMan cmdlet submits an identification request that determines whether the WinRM service is running on a local or remote computer.
   # If the tested computer is running the service, the cmdlet displays the WS-Management identity schema, the protocol version, the product
   # vendor, and the product version of the tested service. By default the request is sent to the remote computer anonymously, without using
   # authentication. So we include the Authentication parameter and with the Default value, which will use the authentication method
-  # implemented by the WS-Management protocol. This will fail on kerberos issues, for example. This can happen when there is a missing SPN,
-  # the computer account has lost its domain trust, etc.
+  # implemented by the WS-Management protocol. When a client computer and a server are both part of the same Active Directory domain (or
+  # trusted domains), WinRM defaults to using Kerberos for authentication. This will fail on Kerberos issues, for example. This can happen
+  # when there is a missing SPN (Service Principal Name), the computer account has lost its domain trust, etc. Therefore, this test is only
+  # successful if the Test-WSMan cmdlet hasn't returned a null (0.0.0) value for the operating system version.
   param ([string]$hostname)
   $success = $False
   try {
@@ -1971,7 +1973,7 @@ Function Get-CrowdStrikeServiceStatus {
               $hex = '{0:X2}' -f $byte
               $char = if ($byte -ge 32 -and $byte -le 126) { [char]$byte } else { '.' }
               if ($i % 16 -eq 0) {
-                $asciiLine = ""
+                $asciiLine += ""
               }
               $asciiLine += $char
               $i++
@@ -1981,10 +1983,17 @@ Function Get-CrowdStrikeServiceStatus {
             }
           }
         }
-        # Check if the first byte (as an integer) is 1
         If ($CSFalconProps.VDI -ne $null) {
-          If ($CSFalconProps.VDI[0] -eq 1) {
-            $result.VDI = $True
+          If ($CSFalconProps.VDI.GetType().FullName -eq "System.Int32") {
+            If ($CSFalconProps.VDI[0] -eq 1) {
+              $result.VDI = $True
+            }
+          } Else {
+            $CSFalconProps.VDI.GetType().FullName -eq "System.Byte[]"
+            # Check if the first byte (as an integer) is 1
+            If ($CSFalconProps.VDI[0] -eq 1) {
+              $result.VDI = $True
+            }
           }
         }
       }
@@ -2026,22 +2035,36 @@ Function XDPing {
   # We do this by issuing a blank HTTP POST requests to the Broker's Registrar service. Including "Expect: 100-continue"
   # in the body will ensure we receive a respose of "HTTP/1.1 100 Continue", which is what we use to verify that it's in
   # a healthy state.
-  # To work out the best way to write this function I decompiled the VDAAssistant.Backend.dll from the
-  # Citrix Health Assistant tool using JetBrains decompiler.
+  # You will notice that you can also pass proxy parameters to the function. This is for test and development ONLY. I
+  # added this as I was using Fiddler to test the functionality and make sure the raw data sent was correctly formatted.
+  # I decided to leave these parameters in the function so that others can learn and understand how this works.
+  # To work out the best way to write this function I decompiled the VDAAssistant.Backend.dll from the Citrix Health
+  # Assistant tool using JetBrains decompiler.
   # Written by Jeremy Saunders
   param(
     [Parameter(Mandatory=$True)][String]$ComputerName, 
-    [Parameter(Mandatory=$True)][Int32]$Port
+    [Parameter(Mandatory=$True)][Int32]$Port,
+    [String]$ProxyServer="", 
+    [Int32]$ProxyPort,
+    [Switch]$ConsoleOutput
   )
   $service = "http://${ComputerName}:${Port}/Citrix/CdsController/IRegistrar"
   $s = "POST $service HTTP/1.1`r`nContent-Type: application/soap+xml; charset=utf-8`r`nHost: ${ComputerName}:${Port}`r`nContent-Length: 1`r`nExpect: 100-continue`r`nConnection: Close`r`n`r`n"
   $log = New-Object System.Text.StringBuilder
   $log.AppendLine("Attempting an XDPing against $ComputerName on TCP port number $port") | Out-Null
   $listening = $false
+  If ([string]::IsNullOrEmpty($ProxyServer)) {
+    $ConnectToHost = $ComputerName
+    [int]$ConnectOnPort = $Port
+  } Else {
+    $ConnectToHost = $ProxyServer
+    [int]$ConnectOnPort = $ProxyPort
+    $log.AppendLine("- Connecting via a proxy: ${ProxyServer}:${ProxyPort}") | Out-Null
+  }
   try {
     $socket = New-Object System.Net.Sockets.Socket ([System.Net.Sockets.AddressFamily]::InterNetwork, [System.Net.Sockets.SocketType]::Stream, [System.Net.Sockets.ProtocolType]::Tcp)
     try {
-      $socket.Connect($ComputerName, $port)
+      $socket.Connect($ConnectToHost,$ConnectOnPort)
       if ($socket.Connected) {
         $log.AppendLine("- Socket connected") | Out-Null
         $bytes = [System.Text.Encoding]::ASCII.GetBytes($s)
@@ -2084,7 +2107,9 @@ Function XDPing {
     $log.AppendLine("- Failed to create socket") | Out-Null
     $log.AppendLine("- ERROR: $_") | Out-Null
   }
-  #Write-Host $log.ToString().TrimEnd()
+  If ($ConsoleOutput) {
+    Write-Host $log.ToString().TrimEnd()
+  }
   return $listening
 }
 
@@ -3231,19 +3256,33 @@ foreach ($Catalog in $Catalogs) {
      $ActualIncludedCatalogs += $Catalog.Name
 
     #CatalogAssignedCount
+    # The number of assigned machines (machines that have been assigned to a user/users or a client name/address).
     $CatalogAssignedCount = $Catalog | ForEach-Object{ $_.AssignedCount }
     "Assigned: $CatalogAssignedCount" | LogMe -display -progress
     $tests.AssignedToUser = "NEUTRAL", $CatalogAssignedCount
   
     #CatalogUnassignedCount
+    # The number of unassigned machines (machines not assigned to users).
     $CatalogUnAssignedCount = $Catalog | ForEach-Object{ $_.UnassignedCount }
     "Unassigned: $CatalogUnAssignedCount" | LogMe -display -progress
     $tests.NotToUserAssigned = "NEUTRAL", $CatalogUnAssignedCount
   
     # Assigned to DeliveryGroup
+    # The number of machines in the catalog that are in a desktop group.
     $CatalogUsedCountCount = $Catalog | ForEach-Object{ $_.UsedCount }
     "Used: $CatalogUsedCountCount" | LogMe -display -progress
     $tests.AssignedToDG = "NEUTRAL", $CatalogUsedCountCount
+
+    # Unassigned Machines
+    # The number of available machines (those not in any desktop group) that are not assigned to users.
+    $CatalogAvailableUnassignedCount = $Catalog | ForEach-Object{ $_.AvailableUnassignedCount }
+    If ($CatalogAvailableUnassignedCount -eq 0) {
+      "AvailableUnassignedCount: $CatalogAvailableUnassignedCount" | LogMe -display -progress
+      $tests.Unassigned = "NEUTRAL", $CatalogAvailableUnassignedCount
+    } Else {
+      "AvailableUnassignedCount: $CatalogAvailableUnassignedCount" | LogMe -display -warning
+      $tests.Unassigned = "WARNING", $CatalogAvailableUnassignedCount
+    }
 
     #MinimumFunctionalLevel
     $MinimumFunctionalLevel = $Catalog | ForEach-Object{ $_.MinimumFunctionalLevel }
@@ -3843,7 +3882,11 @@ if($ShowDesktopTable -eq 1 ) {
   
     # Column Name of VDI
     $machineDNS = $machine | ForEach-Object{ $_.DNSName }
-    "Machine: $machineDNS" | LogMe -display -progress
+    If (![string]::IsNullOrWhiteSpace($machineDNS)) {
+      "Machine: $machineDNS" | LogMe -display -progress
+    } Else {
+      "Machine: This is an invalid computer object" | LogMe -display -error
+    }
 
     # Column IPv4Address
     if (!([string]::IsNullOrWhiteSpace($machineDNS))) {
@@ -4622,7 +4665,11 @@ if($ShowXenAppTable -eq 1 ) {
 
     # Column Name of Machine
     $machineDNS = $XAmachine | ForEach-Object{ $_.DNSName }
-    "Machine: $machineDNS" | LogMe -display -progress
+    If (![string]::IsNullOrWhiteSpace($machineDNS)) {
+      "Machine: $machineDNS" | LogMe -display -progress
+    } Else {
+      "Machine: This is an invalid computer object" | LogMe -display -error
+    }
 
     # Column IPv4Address
     if (!([string]::IsNullOrWhiteSpace($machineDNS))) {
@@ -6207,6 +6254,14 @@ If ($UseRunspace) {
 #            hosts.
 #          - Added the $ShowCrowdStrikeTests variable to the XML file.
 #          - Updated the XDPing function.
+# - 1.5.3, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+#          - Updated the documentation in the IsWinRMAccessible function. This can be used to demonstrate to the Cyber team that WinRM will use Kerberos authentication and is encrypted, despite
+#            using the default HTTP port of TCP 5985. The WinRM tests will only proceed if this function returns true.
+#          - Further enhanced the XDPing function.
+#          - Added an Unassigned column to the MachineCatalogs table, and a test for the AvailableUnassignedCount, which is the number of available machines (those not in any desktop group)
+#            that are not assigned to users. It is marked as a warning if great than 0.
+#          - Fixed 2 bugs with the Get-CrowdStrikeServiceStatus function.
+#          - More coding tidy-ups to provide improved output.
 #
 # == FUTURE ==
 # #  1.5.x
