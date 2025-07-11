@@ -1,5 +1,5 @@
 ﻿#==============================================================================================
-# Created on: 11.2014 modfied 06.2025 Version: 1.5.3
+# Created on: 11.2014 modfied 06.2025 Version: 1.5.4
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -1627,225 +1627,246 @@ Function Get-ProfileAndUserEnvironmentManagementServiceStatus {
   [CmdletBinding()]
   param (
          [string]$ComputerName,
-         [int]$WEMAgentRefresh = 15
+         [int]$WEMAgentRefresh = 30
         )
-  $myArgs = @($WEMAgentRefresh)
-  Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-    param (
-           [int]$WEMAgentRefresh = 15
-          )
-    $result = [PSCustomObject]@{
-      ComputerName                   = $env:COMPUTERNAME
-      FSLogixInstalled               = $false
-      FSLogixServiceRunning          = $false
-      FSLogixProfileEnabled          = $null
-      FSLogixProfileType             = $null
-      FSLogixProfileTypeDescription  = $null
-      FSLogixOfficeEnabled           = $null
-      FSLogixCCDLocations            = $null
-      FSLogixVHDLocations            = $null
-      FSLogixLogFilePath             = $null
-      FSLogixRedirectionType         = $null
-      UPMInstalled                   = $false
-      UPMServiceRunning              = $false
-      UPMServiceActive               = $null
-      UPMPathToLogFile               = $null
-      UPMPathToUserStore             = $null
-      WEMInstalled                   = $false
-      WEMServiceRunning              = $false
-      WEMAgentRegistered             = $false
-      WEMAgentConfigurationSets      = $null
-      WEMAgentCacheSyncMode          = $null
-      WEMAgentCachePath              = $null
-    }
-
-    $frxsvcInstalled = $False
-    $frxsvcRunning = $False
-    $frxccdsInstalled = $False
-    $frxccdsRunning = $False
-    $WemAgentSvcInstalled = $False
-    $WemAgentSvcRunning = $False
-    $WemLogonSvcInstalled = $False
-    $WemLogonSvcRunning = $False
-
-    # Get-Service the services
-    # - FSLogix Apps Services (frxsvc)
-    # - FSLogix Cloud Caching Service (frxccds)
-    # - Citrix Profile Management (ctxProfile)
-    # - Citrix WEM Agent Host Service (WemAgentSvc)
-    # - Citrix WEM User Logon Service (WemLogonSvc)
-    try {
-      $services = Get-Service -ErrorAction Stop | where-object {$_.Name -eq 'frxsvc' -OR $_.Name -eq 'frxccds' -OR $_.Name -eq 'ctxProfile' -OR $_.Name -eq 'WemAgentSvc' -OR $_.Name -eq 'WemLogonSvc'}
-      $services | ForEach-Object {
-        if ($_.Name -eq "frxsvc") {
-          $frxsvcInstalled = $True
-          if ($_.Status -Match "Running") {
-            $frxsvcRunning = $True
-          }
-        }
-        if ($_.Name -eq "frxccds") {
-          $frxccdsInstalled = $True
-          if ($_.Status -Match "Running") {
-            $frxccdsRunning = $True
-          }
-        }
-        if ($_.Name -eq "ctxProfile") {
-          $result.UPMInstalled = $true
-          if ($_.Status -Match "Running") {
-            $result.UPMServiceRunning = ($_.Status -eq "Running")
-          }
-        }
-        if ($_.Name -eq "WemAgentSvc") {
-          $WemAgentSvcInstalled = $True
-          if ($_.Status -Match "Running") {
-            $WemAgentSvcRunning = $True
-          }
-        }
-        if ($_.Name -eq "WemLogonSvc") {
-          $WemLogonSvcInstalled = $True
-          if ($_.Status -Match "Running") {
-            $WemLogonSvcRunning = $True
-          }
-        }
+  $result = [PSCustomObject]@{
+    ComputerName                   = $env:COMPUTERNAME
+    FSLogixInstalled               = $false
+    FSLogixServiceRunning          = $false
+    FSLogixProfileEnabled          = $null
+    FSLogixProfileType             = $null
+    FSLogixProfileTypeDescription  = $null
+    FSLogixOfficeEnabled           = $null
+    FSLogixCCDLocations            = $null
+    FSLogixVHDLocations            = $null
+    FSLogixLogFilePath             = $null
+    FSLogixRedirectionType         = $null
+    UPMInstalled                   = $false
+    UPMServiceRunning              = $false
+    UPMServiceActive               = $null
+    UPMPathToLogFile               = $null
+    UPMPathToUserStore             = $null
+    WEMInstalled                   = $false
+    WEMServiceRunning              = $false
+    WEMAgentRegistered             = $false
+    WEMAgentConfigurationSets      = $null
+    WEMAgentCacheSyncMode          = $null
+    WEMAgentCachePath              = $null
+  }
+  $paramBundle = [PSCustomObject]@{
+    result           =  $result
+    WEMAgentRefresh  =  $WEMAgentRefresh
+  }
+  Try {
+    Invoke-Command -ComputerName $ComputerName -ErrorAction Stop -ScriptBlock {
+      param (
+             $paramBundle
+            )
+      If ($null -ne $paramBundle) {
+        $result = $paramBundle.result
+        $WEMAgentRefresh = $paramBundle.WEMAgentRefresh
       }
+      $frxsvcInstalled = $False
+      $frxsvcRunning = $False
+      $frxccdsInstalled = $False
+      $frxccdsRunning = $False
+      $WemAgentSvcInstalled = $False
+      $WemAgentSvcRunning = $False
+      $WemLogonSvcInstalled = $False
+      $WemLogonSvcRunning = $False
 
-      If ($frxsvcInstalled -AND $frxccdsInstalled) {
-        $result.FSLogixInstalled = $true
-      }
-      If ($frxsvcRunning -AND $frxccdsRunning) {
-        $result.FSLogixServiceRunning = $true
-      }
-      If ($WemAgentSvcInstalled -AND $WemLogonSvcInstalled) {
-        $result.WEMInstalled = $true
-      }
-      If ($WemAgentSvcRunning -AND $WemLogonSvcRunning) {
-        $result.WEMServiceRunning = $true
-      }
-    }
-    catch {
-      #$_.Exception.Message
-      $result.FSLogixInstalled = $false
-      $result.FSLogixServiceRunning = $false
-      $result.UPMInstalled = $false
-      $result.UPMServiceRunning = $false
-      $result.WEMInstalled = $false
-      $result.WEMServiceRunning = $false
-    }
-
-    # Registry locations
-    $FSLogixprofileReg = "HKLM:\SOFTWARE\FSLogix\Profiles"
-    $FSLogixofficeReg  = "HKLM:\SOFTWARE\FSLogix\ODFC"
-    $FSLogixloggingReg = "HKLM:\SOFTWARE\FSLogix\Logging"
-    $UPMprofileReg = "HKLM:\SOFTWARE\Policies\Citrix\UserProfileManager"
-
-    $ErrorActionPreference = "stop"
-    If ($result.FSLogixInstalled -AND $result.FSLogixServiceRunning) {
-      # FSLogix Profile Container settings
+      # Get-Service the services
+      # - FSLogix Apps Services (frxsvc)
+      # - FSLogix Cloud Caching Service (frxccds)
+      # - Citrix Profile Management (ctxProfile)
+      # - Citrix WEM Agent Host Service (WemAgentSvc)
+      # - Citrix WEM User Logon Service (WemLogonSvc)
       try {
-        $FSLogixprofileProps = Get-ItemProperty -Path $FSLogixprofileReg
-        $result.FSLogixProfileEnabled = $FSLogixprofileProps.Enabled
-        $result.FSLogixProfileType = $FSLogixprofileProps.ProfileType
-        switch ($FSLogixprofileProps.ProfileType)
-        {
-             "0" {
-                  $result.FSLogixProfileTypeDescription = "Standard connections - Normal profile behavior"
-                  break
-                 }
-             "1" {
-                  $result.FSLogixProfileTypeDescription = "Machine should only be the RW profile instance"
-                  break
-                 }
-             "2" {
-                  $result.FSLogixProfileTypeDescription = "Machine should only be the RO profile instance"
-                  break
-                 }
-             "3" {
-                  $result.FSLogixProfileTypeDescription = "Multiple concurrent connections - Machine should try to take the RW role and if it can't, it should fall back to a RO role"
-                  break
-                 }
-         Default {
-                  $result.FSLogixProfileTypeDescription = "Unknown profile type"
-                 }
+        $services = Get-Service -ErrorAction Stop | where-object {$_.Name -eq 'frxsvc' -OR $_.Name -eq 'frxccds' -OR $_.Name -eq 'ctxProfile' -OR $_.Name -eq 'WemAgentSvc' -OR $_.Name -eq 'WemLogonSvc'}
+        $services | ForEach-Object {
+          if ($_.Name -eq "frxsvc") {
+            $frxsvcInstalled = $True
+            if ($_.Status -Match "Running") {
+              $frxsvcRunning = $True
+            }
+          }
+          if ($_.Name -eq "frxccds") {
+            $frxccdsInstalled = $True
+            if ($_.Status -Match "Running") {
+              $frxccdsRunning = $True
+            }
+          }
+          if ($_.Name -eq "ctxProfile") {
+            $result.UPMInstalled = $true
+            if ($_.Status -Match "Running") {
+              $result.UPMServiceRunning = ($_.Status -eq "Running")
+            }
+          }
+          if ($_.Name -eq "WemAgentSvc") {
+            $WemAgentSvcInstalled = $True
+            if ($_.Status -Match "Running") {
+              $WemAgentSvcRunning = $True
+            }
+          }
+          if ($_.Name -eq "WemLogonSvc") {
+            $WemLogonSvcInstalled = $True
+            if ($_.Status -Match "Running") {
+              $WemLogonSvcRunning = $True
+            }
+          }
         }
-        $result.FSLogixCCDLocations = ($FSLogixprofileProps.CCDLocations -join "; ")
-        $result.FSLogixVHDLocations = ($FSLogixprofileProps.VHDLocations -join "; ")
-        $result.FSLogixRedirectionType = $FSLogixprofileProps.VolumeType
-      }
-      catch {
-       #$_.Exception.Message
-      }
-      # FSLogix Office Container settings
-      try {
-        $FSLogixofficeProps = Get-ItemProperty -Path $FSLogixofficeReg
-        $result.FSLogixOfficeEnabled = $FSLogixofficeProps.Enabled
+
+        If ($frxsvcInstalled -AND $frxccdsInstalled) {
+          $result.FSLogixInstalled = $true
+        }
+        If ($frxsvcRunning -AND $frxccdsRunning) {
+          $result.FSLogixServiceRunning = $true
+        }
+        If ($WemAgentSvcInstalled -AND $WemLogonSvcInstalled) {
+          $result.WEMInstalled = $true
+        }
+        If ($WemAgentSvcRunning -AND $WemLogonSvcRunning) {
+          $result.WEMServiceRunning = $true
+        }
       }
       catch {
         #$_.Exception.Message
+        $result.FSLogixInstalled = $false
+        $result.FSLogixServiceRunning = $false
+        $result.UPMInstalled = $false
+        $result.UPMServiceRunning = $false
+        $result.WEMInstalled = $false
+        $result.WEMServiceRunning = $false
       }
-      # FSLogix Log file path
-      try {
-        $FSLogixlogProps = Get-ItemProperty -Path $FSLogixloggingReg
-        $result.FSLogixLogFilePath = $FSLogixlogProps.LogFile
+
+      # Registry locations
+      $FSLogixprofileReg = "HKLM:\SOFTWARE\FSLogix\Profiles"
+      $FSLogixofficeReg  = "HKLM:\SOFTWARE\FSLogix\ODFC"
+      $FSLogixloggingReg = "HKLM:\SOFTWARE\FSLogix\Logging"
+      $UPMprofileReg = "HKLM:\SOFTWARE\Policies\Citrix\UserProfileManager"
+
+      $ErrorActionPreference = "stop"
+      If ($result.FSLogixInstalled -AND $result.FSLogixServiceRunning) {
+        # FSLogix Profile Container settings
+        try {
+          $FSLogixprofileProps = Get-ItemProperty -Path $FSLogixprofileReg
+          $result.FSLogixProfileEnabled = $FSLogixprofileProps.Enabled
+          $result.FSLogixProfileType = $FSLogixprofileProps.ProfileType
+          switch ($FSLogixprofileProps.ProfileType)
+          {
+               "0" {
+                    $result.FSLogixProfileTypeDescription = "Standard connections - Normal profile behavior"
+                    break
+                   }
+               "1" {
+                    $result.FSLogixProfileTypeDescription = "Machine should only be the RW profile instance"
+                    break
+                   }
+               "2" {
+                    $result.FSLogixProfileTypeDescription = "Machine should only be the RO profile instance"
+                    break
+                   }
+               "3" {
+                    $result.FSLogixProfileTypeDescription = "Multiple concurrent connections - Machine should try to take the RW role and if it can't, it should fall back to a RO role"
+                    break
+                   }
+           Default {
+                    $result.FSLogixProfileTypeDescription = "Unknown profile type"
+                   }
+          }
+          $result.FSLogixCCDLocations = ($FSLogixprofileProps.CCDLocations -join "; ")
+          $result.FSLogixVHDLocations = ($FSLogixprofileProps.VHDLocations -join "; ")
+          $result.FSLogixRedirectionType = $FSLogixprofileProps.VolumeType
+        }
+        catch {
+         #$_.Exception.Message
+        }
+        # FSLogix Office Container settings
+        try {
+          $FSLogixofficeProps = Get-ItemProperty -Path $FSLogixofficeReg
+          $result.FSLogixOfficeEnabled = $FSLogixofficeProps.Enabled
+        }
+        catch {
+          #$_.Exception.Message
+        }
+        # FSLogix Log file path
+        try {
+          $FSLogixlogProps = Get-ItemProperty -Path $FSLogixloggingReg
+          $result.FSLogixLogFilePath = $FSLogixlogProps.LogFile
+        }
+        catch {
+          #$_.Exception.Message
+        }
       }
-      catch {
-        #$_.Exception.Message
-      }
-    }
-    # UPM Config
-    If ($result.UPMInstalled -AND $result.UPMServiceRunning) {
-      try {
-        $UPMProps = Get-ItemProperty -Path $UPMprofileReg
-        If (![string]::IsNullOrEmpty($UPMProps.ServiceActive)) {
-          $result.UPMServiceActive = $UPMProps.ServiceActive
-        } Else {
+      # UPM Config
+      If ($result.UPMInstalled -AND $result.UPMServiceRunning) {
+        try {
+          $UPMProps = Get-ItemProperty -Path $UPMprofileReg
+          If (![string]::IsNullOrEmpty($UPMProps.ServiceActive)) {
+            $result.UPMServiceActive = $UPMProps.ServiceActive
+          } Else {
+            $result.UPMServiceActive = 1
+          }
+          $result.UPMPathToLogFile = $UPMProps.PathToLogFile
+          $result.UPMPathToUserStore = $UPMProps.PathToUserStore
+        }
+        catch {
+          #$_.Exception.Message
           $result.UPMServiceActive = 1
         }
-        $result.UPMPathToLogFile = $UPMProps.PathToLogFile
-        $result.UPMPathToUserStore = $UPMProps.PathToUserStore
       }
-      catch {
-        #$_.Exception.Message
-        $result.UPMServiceActive = 1
-      }
-    }
-    $ErrorActionPreference = "Continue"
+      $ErrorActionPreference = "Continue"
 
-    If ($result.WEMInstalled -AND $result.WEMServiceRunning) {
-      # How to test to see if WEM is configured. Thanks to Nick Panaccio from the World of EUC Slack group for his assistance.
-      # The WEM Agent initiates a configuration settings refresh every 15 minutes by default, so we can check if it has successfully
-      # registered with its configuration sets within the last 15 minutes via the WEM Agent Service event log.
-      Try {
-        $Registered = Get-WinEvent -LogName "WEM Agent Service" -ErrorAction Stop | Where { $_.Message -like "Agent successfully registered with configuration set*" -and $_.TimeCreated -gt (Get-Date).AddMinutes(-$WEMAgentRefresh) } | Select TimeCreated, Message | Select-Object -First 1
-        # As the agent will refresh the cache (15 min default), we can also get the "Agent cache sync mode" and "Agent cache path".
-        $CacheInfo = Get-WinEvent -LogName "WEM Agent Service" -ErrorAction Stop | Where { $_.Message -like "Agent cache info*" -and $_.TimeCreated -gt (Get-Date).AddMinutes(-$WEMAgentRefresh) } | Select TimeCreated, Message | Select-Object -First 1
+      If ($result.WEMInstalled -AND $result.WEMServiceRunning) {
+        # How to test to see if WEM is configured. Thanks to Nick Panaccio from the World of EUC Slack group for his assistance.
+        # The WEM Agent initiates a configuration settings refresh every 15 minutes by default, so we can check if it has successfully
+        # registered with its configuration sets within the last 30 minutes via the WEM Agent Service event log. There are two failure
+        # scenarios to be aware of for the WEMAgentRegistered property to remain as false:
+        # 1) If the uptime of the machine is less than 30 minutes where the Agent hasn't yet registered, and therefore the event cannot
+        #    be found. Hence why we look back 30 minutes instead of 15 to avoid missing a registration event due to a busy boot process
+        #    and timing.
+        # 2) The agent must be successfully registered with a "configuration set". If it's not registered with any configuration set,
+        #    it will not be set to true.
+        Try {
+          $Registered = Get-WinEvent -LogName "WEM Agent Service" -ErrorAction Stop | Where { $_.Message -like "Agent successfully registered with configuration set*" -and $_.TimeCreated -gt (Get-Date).AddMinutes(-$WEMAgentRefresh) } | Select TimeCreated, Message | Select-Object -First 1
+          # As the agent will refresh the cache (15 min default), we can also get the "Agent cache sync mode" and "Agent cache path".
+          $CacheInfo = Get-WinEvent -LogName "WEM Agent Service" -ErrorAction Stop | Where { $_.Message -like "Agent cache info*" -and $_.TimeCreated -gt (Get-Date).AddMinutes(-$WEMAgentRefresh) } | Select TimeCreated, Message | Select-Object -First 1
 
-        If ($null -ne $Registered) {
-          $result.WEMAgentRegistered = $True
-          $lines = ($Registered.Message) -split '\r?\n'
-          ForEach ($line in $lines) {
-            If ($line -like "Agent successfully registered*") {
-              $result.WEMAgentConfigurationSets = $line.split(':',2)[1].Trim()
-            } 
-          }
-        }
-        If ($null -ne $CacheInfo) {
-          $lines = ($CacheInfo.Message) -split '\r?\n'
-          ForEach ($line in $lines) {
-            If ($line -like "Agent cache sync mode*") {
-              $result.WEMAgentCacheSyncMode = $line.split(':',2)[1].Trim()
-            }
-            If ($line -like "Agent cache path*") {
-              $result.WEMAgentCachePath = $line.split(':',2)[1].Trim()
+          If ($null -ne $Registered) {
+            $result.WEMAgentRegistered = $True
+            $lines = ($Registered.Message) -split '\r?\n'
+            ForEach ($line in $lines) {
+              If ($line -like "Agent successfully registered*") {
+                $result.WEMAgentConfigurationSets = $line.split(':',2)[1].Trim()
+              } 
             }
           }
+          If ($null -ne $CacheInfo) {
+            $lines = ($CacheInfo.Message) -split '\r?\n'
+            ForEach ($line in $lines) {
+              If ($line -like "Agent cache sync mode*") {
+                $result.WEMAgentCacheSyncMode = $line.split(':',2)[1].Trim()
+              }
+              If ($line -like "Agent cache path*") {
+                $result.WEMAgentCachePath = $line.split(':',2)[1].Trim()
+              }
+            }
+          }
+        }
+        Catch {
+          #$_.Exception.Message
         }
       }
-      Catch {
-        #$_.Exception.Message
-      }
-    }
+      return $result
+    } -ArgumentList $paramBundle
+  }
+  Catch {
+    #$_.Exception.Message
+    # I have wrapped this in a try/catch because you may, on very rare occasions, get errors like "The WSMan service could not launch a host process
+    # to process the given request. Make sure the WSMan provider host server and proxy are properly registered". I suspect it happens only when a
+    # machine is interrogated whilst it's still starting up after a reboot.
     return $result
-  } -ArgumentList $myArgs
+  }
 }
 
 #==============================================================================================
@@ -1876,153 +1897,170 @@ Function Get-CrowdStrikeServiceStatus {
   param (
          [string]$ComputerName
         )
-  Invoke-Command -ComputerName $ComputerName -ScriptBlock {
-    $result = [PSCustomObject]@{
-      ComputerName           = $env:COMPUTERNAME
-      CSFalconInstalled      = $false
-      CSFalconServiceRunning = $false
-      CSAgentInstalled       = $false
-      CSAgentServiceRunning  = $false
-      CID                    = $null
-      AID                    = $null
-      SensorGroupingTags     = $null
-      VDI                    = $false
-      InstalledVersion       = $null
-    }
+  $result = [PSCustomObject]@{
+    ComputerName           = $env:COMPUTERNAME
+    CSFalconInstalled      = $false
+    CSFalconServiceRunning = $false
+    CSAgentInstalled       = $false
+    CSAgentServiceRunning  = $false
+    CID                    = $null
+    AID                    = $null
+    SensorGroupingTags     = $null
+    VDI                    = $false
+    InstalledVersion       = $null
+  }
+  $paramBundle = [PSCustomObject]@{
+    result           =  $result
+  }
+  Try {
+    Invoke-Command -ComputerName $ComputerName -ErrorAction Stop -ScriptBlock {
+      param(
+            $paramBundle
+           )
+      If ($null -ne $paramBundle) {
+        $result = $paramBundle.result
+      }
+      $CSFalconInstalled = $False
+      $CSFalconRunning = $False
+      $CSAgentInstalled = $False
+      $CSAgentRunning = $False
 
-    $CSFalconInstalled = $False
-    $CSFalconRunning = $False
-    $CSAgentInstalled = $False
-    $CSAgentRunning = $False
-
-    # Get-Services and the Win32_SystemDriver:
-    # - CrowdStrike Falcon Sensor Service (CSFalconService)
-    # - CrowdStrike Falcon (CSAgent) is a driver with startup type of 1 (System).
-    #   - We cannot use the Get-Service or Get-WmiObject/Get-CIMInstance Win32_Service class to see if it's running.
-    #   - We need to use the Get-WmiObject/Get-CIMInstance Win32_SystemDriver class instead.
-    #   Whilst we may not need to do this, or it could be seen as excessive, it may be a good way to pick up broken
-    #   installs. So I do it anyway.
-    try {
-      $services = Get-Service -ErrorAction Stop | where-object {$_.Name -eq 'CSFalconService'}
-      $services | ForEach-Object {
-        if ($_.Name -eq "CSFalconService") {
-          $CSFalconInstalled = $True
-          if ($_.Status -Match "Running") {
-            $CSFalconRunning = $True
-          }
-        }
-      }
-      If ($CSFalconInstalled) {
-        $result.CSFalconInstalled = $true
-      }
-      If ($CSFalconRunning) {
-        $result.CSFalconServiceRunning = $true
-      }
-    }
-    catch {
-      #$($Error[0].Exception.Message)
-      $result.CSFalconInstalled = $false
-      $result.CSFalconServiceRunning = $false
-    }
-    Try {
-      $VerbosePreference = 'SilentlyContinue'
-      $SystemDrivers = Get-CimInstance -ClassName Win32_SystemDriver -ErrorAction Stop | where-object {$_.Name -eq 'CSAgent'}
-      $VerbosePreference = 'Continue'
-      $SystemDrivers | ForEach-Object {
-        if ($_.Name -eq "CSAgent") {
-          $CSAgentInstalled = $True
-          if ($_.State -Match "Running") {
-            $CSAgentRunning = $True
-          }
-        }
-      }
-      If ($CSAgentInstalled) {
-        $result.CSAgentInstalled = $true
-      }
-      If ($CSAgentRunning) {
-        $result.CSAgentServiceRunning = $true
-      }
-    }
-    Catch [System.Exception]{
-     # $($Error[0].Exception.Message)
-      $result.CSAgentInstalled = $false
-      $result.CSAgentServiceRunning = $false
-    }
-
-    # Registry locations
-    $CSFalconReg = "HKLM:\SYSTEM\CrowdStrike\{9b03c1d9-3138-44ed-9fae-d9f4c034b88d}\{16e0423f-7058-48c9-a204-725362b67639}\Default"
-
-    $ErrorActionPreference = "stop"
-    If ($result.CSFalconInstalled -AND $result.CSFalconServiceRunning -AND $result.CSAgentInstalled -AND $result.CSAgentServiceRunning) {
+      # Get-Services and the Win32_SystemDriver:
+      # - CrowdStrike Falcon Sensor Service (CSFalconService)
+      # - CrowdStrike Falcon (CSAgent) is a driver with startup type of 1 (System).
+      #   - We cannot use the Get-Service or Get-WmiObject/Get-CIMInstance Win32_Service class to see if it's running.
+      #   - We need to use the Get-WmiObject/Get-CIMInstance Win32_SystemDriver class instead.
+      #   Whilst we may not need to do this, or it could be seen as excessive, it may be a good way to pick up broken
+      #   installs. So I do it anyway.
       try {
-        $CSFalconProps = Get-ItemProperty -Path $CSFalconReg
-        If ($CSFalconProps.AG -ne $null) {
-          $result.AID = ([System.BitConverter]::ToString($CSFalconProps.AG) -replace '-','')
-        }
-        $result.CID = ([System.BitConverter]::ToString($CSFalconProps.CU) -replace '-','')
-        $SensorGroupingTagsData = $CSFalconProps.GroupingTags
-        if ($SensorGroupingTagsData) {
-          if ($SensorGroupingTagsData.GetType().FullName -eq "System.String") {
-            $result.SensorGroupingTags = $SensorGroupingTagsData
-          } Else {
-            # $CSFalconProps.GroupingTags.GetType().FullName -eq "System.Byte[]"
-            $filteredBytes = $SensorGroupingTagsData | Where-Object { $_ -ne 0 }
-            $i = 0
-            $asciiLine = ""
-            foreach ($byte in $filteredBytes) {
-              $hex = '{0:X2}' -f $byte
-              $char = if ($byte -ge 32 -and $byte -le 126) { [char]$byte } else { '.' }
-              if ($i % 16 -eq 0) {
-                $asciiLine += ""
-              }
-              $asciiLine += $char
-              $i++
-            }
-            if ($asciiLine) {
-              $result.SensorGroupingTags = $asciiLine
+        $services = Get-Service -ErrorAction Stop | where-object {$_.Name -eq 'CSFalconService'}
+        $services | ForEach-Object {
+          if ($_.Name -eq "CSFalconService") {
+            $CSFalconInstalled = $True
+            if ($_.Status -Match "Running") {
+              $CSFalconRunning = $True
             }
           }
         }
-        If ($CSFalconProps.VDI -ne $null) {
-          If ($CSFalconProps.VDI.GetType().FullName -eq "System.Int32") {
-            If ($CSFalconProps.VDI[0] -eq 1) {
-              $result.VDI = $True
-            }
-          } Else {
-            $CSFalconProps.VDI.GetType().FullName -eq "System.Byte[]"
-            # Check if the first byte (as an integer) is 1
-            If ($CSFalconProps.VDI[0] -eq 1) {
-              $result.VDI = $True
-            }
-          }
+        If ($CSFalconInstalled) {
+          $result.CSFalconInstalled = $true
+        }
+        If ($CSFalconRunning) {
+          $result.CSFalconServiceRunning = $true
         }
       }
       catch {
         #$($Error[0].Exception.Message)
+        $result.CSFalconInstalled = $false
+        $result.CSFalconServiceRunning = $false
       }
-    }
-    $ErrorActionPreference = "Continue"
-
-    $softwareDisplayName = "CrowdStrike Windows Sensor"
-    $InstalledSoftware = @()
-    $UninstallKeys=@("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
-                   "HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
-                  )
-    ForEach($UninstallKey in $UninstallKeys) {
-      $ErrorActionPreference = "stop"
       Try {
-        $InstalledSoftware += Get-ItemProperty $uninstallKey | Where-Object {$_.DisplayName -match $softwareDisplayName}
+        $VerbosePreference = 'SilentlyContinue'
+        $SystemDrivers = Get-CimInstance -ClassName Win32_SystemDriver -ErrorAction Stop | where-object {$_.Name -eq 'CSAgent'}
+        $VerbosePreference = 'Continue'
+        $SystemDrivers | ForEach-Object {
+          if ($_.Name -eq "CSAgent") {
+            $CSAgentInstalled = $True
+            if ($_.State -Match "Running") {
+              $CSAgentRunning = $True
+            }
+          }
+        }
+        If ($CSAgentInstalled) {
+          $result.CSAgentInstalled = $true
+        }
+        If ($CSAgentRunning) {
+          $result.CSAgentServiceRunning = $true
+        }
       }
-      Catch {
+      Catch [System.Exception]{
         #$($Error[0].Exception.Message)
+        $result.CSAgentInstalled = $false
+        $result.CSAgentServiceRunning = $false
       }
-    }
-    If (($InstalledSoftware | Measure-Object).Count -eq 1) {
-      If ($InstalledSoftware.DisplayVersion -ne $null) {
-        $result.InstalledVersion = $InstalledSoftware.DisplayVersion
+
+      # Registry locations
+      $CSFalconReg = "HKLM:\SYSTEM\CrowdStrike\{9b03c1d9-3138-44ed-9fae-d9f4c034b88d}\{16e0423f-7058-48c9-a204-725362b67639}\Default"
+
+      $ErrorActionPreference = "stop"
+      If ($result.CSFalconInstalled -AND $result.CSFalconServiceRunning -AND $result.CSAgentInstalled -AND $result.CSAgentServiceRunning) {
+        try {
+          $CSFalconProps = Get-ItemProperty -Path $CSFalconReg
+          If ($CSFalconProps.AG -ne $null) {
+            $result.AID = ([System.BitConverter]::ToString($CSFalconProps.AG) -replace '-','')
+          }
+          $result.CID = ([System.BitConverter]::ToString($CSFalconProps.CU) -replace '-','')
+          $SensorGroupingTagsData = $CSFalconProps.GroupingTags
+          if ($SensorGroupingTagsData) {
+            if ($SensorGroupingTagsData.GetType().FullName -eq "System.String") {
+              $result.SensorGroupingTags = $SensorGroupingTagsData
+            } Else {
+              # $CSFalconProps.GroupingTags.GetType().FullName -eq "System.Byte[]"
+              $filteredBytes = $SensorGroupingTagsData | Where-Object { $_ -ne 0 }
+              $i = 0
+              $asciiLine = ""
+              foreach ($byte in $filteredBytes) {
+                $hex = '{0:X2}' -f $byte
+                $char = if ($byte -ge 32 -and $byte -le 126) { [char]$byte } else { '.' }
+                if ($i % 16 -eq 0) {
+                  $asciiLine += ""
+                }
+                $asciiLine += $char
+                $i++
+              }
+              if ($asciiLine) {
+                $result.SensorGroupingTags = $asciiLine
+              }
+            }
+          }
+          If ($CSFalconProps.VDI -ne $null) {
+            If ($CSFalconProps.VDI.GetType().FullName -eq "System.Int32") {
+              If ($CSFalconProps.VDI[0] -eq 1) {
+                $result.VDI = $True
+              }
+            } Else {
+              $CSFalconProps.VDI.GetType().FullName -eq "System.Byte[]"
+              # Check if the first byte (as an integer) is 1
+              If ($CSFalconProps.VDI[0] -eq 1) {
+                $result.VDI = $True
+              }
+            }
+          }
+        }
+        catch {
+          #$($Error[0].Exception.Message)
+        }
       }
-    }
-    $ErrorActionPreference = "Continue"
+      $ErrorActionPreference = "Continue"
+
+      $softwareDisplayName = "CrowdStrike Windows Sensor"
+      $InstalledSoftware = @()
+      $UninstallKeys=@("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+                       "HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+                      )
+      ForEach($UninstallKey in $UninstallKeys) {
+        $ErrorActionPreference = "stop"
+        Try {
+          $InstalledSoftware += Get-ItemProperty $uninstallKey | Where-Object {$_.DisplayName -match $softwareDisplayName}
+        }
+        Catch {
+          #$($Error[0].Exception.Message)
+        }
+      }
+      If (($InstalledSoftware | Measure-Object).Count -eq 1) {
+        If ($InstalledSoftware.DisplayVersion -ne $null) {
+          $result.InstalledVersion = $InstalledSoftware.DisplayVersion
+        }
+      }
+      $ErrorActionPreference = "Continue"
+      return $result
+    } -ArgumentList $paramBundle
+  }
+  Catch {
+    #$_.Exception.Message
+    # I have wrapped this in a try/catch because you may, on very rare occasions, get errors like "The WSMan service could not launch a host process
+    # to process the given request. Make sure the WSMan provider host server and proxy are properly registered". I suspect it happens only when a
+    # machine is interrogated whilst it's still starting up after a reboot.
     return $result
   }
 }
@@ -2337,7 +2375,11 @@ Function ToHumanReadable()
   param($timespan)
   
   If ($timespan.TotalHours -lt 1) {
-    return $timespan.Minutes + "minutes"
+    If ($timespan.Minutes -gt 0) {
+      return $timespan.Minutes.ToString() + " minutes"
+    } Else {
+      return $timespan.Seconds.ToString() + " seconds"
+    }
   }
 
   $sb = New-Object System.Text.StringBuilder
@@ -3994,7 +4036,11 @@ if($ShowDesktopTable -eq 1 ) {
             $tests.Uptime = "WARNING", $hostUptime.TimeSpan.days
             $ErrorVDI = $ErrorVDI + 1
           } else { 
-            "Uptime: $($hostUptime.TimeSpan.days)"  | LogMe -display -progress
+            If ($hostUptime.TimeSpan.days -gt 0) {
+              "Uptime: $($hostUptime.TimeSpan.days)"  | LogMe -display -progress
+            } Else {
+              "Uptime: $(ToHumanReadable($hostUptime.TimeSpan))" | LogMe -display -progress
+            }
             $tests.Uptime = "SUCCESS", $hostUptime.TimeSpan.days
           }
         } else {
@@ -4773,7 +4819,11 @@ if($ShowXenAppTable -eq 1 ) {
             $tests.Uptime = "WARNING", $hostUptime.TimeSpan.days
             $ErrorXA = $ErrorXA + 1
           } else {
-            "Uptime: $($hostUptime.TimeSpan.days)"  | LogMe -display -progress
+            If ($hostUptime.TimeSpan.days -gt 0) {
+              "Uptime: $($hostUptime.TimeSpan.days)"  | LogMe -display -progress
+            } Else {
+              "Uptime: $(ToHumanReadable($hostUptime.TimeSpan))" | LogMe -display -progress
+            }
             $tests.Uptime = "SUCCESS", $hostUptime.TimeSpan.days
           }
         } else {
@@ -6262,12 +6312,19 @@ If ($UseRunspace) {
 #            that are not assigned to users. It is marked as a warning if great than 0.
 #          - Fixed 2 bugs with the Get-CrowdStrikeServiceStatus function.
 #          - More coding tidy-ups to provide improved output.
+# - 1.5.4, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+#          - Improved both the Get-ProfileAndUserEnvironmentManagementServiceStatus and Get-CrowdStrikeServiceStatus functions by making them more resilient.
+#          - Fixed a bug with the ToHumanReadable function where it would error if uptime was less than 1 hour.
+#          - If the multisession or singlesession host uptime is less than 1 day, output to the log in human readable format. This makes it easier to find how many hours or minutes ago it last
+#            rebooted.
 #
 # == FUTURE ==
 # #  1.5.x
 # Version changes by S.Thomet & J.Saunders
 # - CREATE Proper functions
 # - Change all functions to allow for Invoke-Command for PS Remoting where possible.
+# - The Invoke-Command cmdlet doesn't have a -Timeout parameter. To force a timeout for the Invoke-Command cmdlet we can put it in a ScriptBlock and run it as background job using Start-Job.
+#   Then use Wait-Job on it with -Timeout specified. It will wait the amount of time we specify and then terminate the job.
 # - Look to merge the Singlesession and Multisession sections using a for loop to process, as there is quite a bit of code duplication in those two sections.
 # - Look to merge the Delivery Controllers, Cloud Connectors and Storefront Servers sections using a for loop to process, as there is quite a bit of code duplication in those three sections.
 # - Enhance the MCSIO tests, where possible.
