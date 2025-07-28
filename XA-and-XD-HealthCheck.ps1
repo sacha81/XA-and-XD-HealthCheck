@@ -1,5 +1,5 @@
 ﻿#==============================================================================================
-# Created on: 11.2014 modfied 06.2025 Version: 1.5.4
+# Created on: 11.2014 modfied 06.2025 Version: 1.5.5
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -379,20 +379,25 @@ if ( $CitrixCloudCheck -eq "1" ) {
         "  - There are no Global variables set that start with XD" | LogMe -display -progress
       }
       $AdminAddress = ""
-      If ($CCCreds.NonPersistentMetadata.AdminAddress -ne $null) {
-        "- The NonPersistentMetadata property exists with the AdminAddress value" | LogMe -display -progress
-        $AdminAddress = $CCCreds.NonPersistentMetadata.AdminAddress
+      Try {
+        If ($CCCreds.NonPersistentMetadata.AdminAddress -ne $null) {
+          "- The NonPersistentMetadata property exists with the AdminAddress value" | LogMe -display -progress
+          $AdminAddress = $CCCreds.NonPersistentMetadata.AdminAddress
+        }
+      }
+      Catch {
+        "- The property 'NonPersistentMetadata' cannot be found on this object. Will try the Global XDSDKProxy variable next." | LogMe -display -warning
       }
       If ([string]::IsNullOrEmpty($AdminAddress)) {
         $IsVariableSet = $False
         Try {
           Get-Variable -Name "XDSDKProxy" -Scope Global -ErrorAction Stop | out-null
-          "- The Global XDSDKProxy variable is set"
+          "- The Global XDSDKProxy variable is set" | LogMe -display -progress
           $AdminAddress = $Global:XDSDKProxy
           $IsVariableSet = $True
         }
         Catch {
-          "- The Global XDSDKProxy variable cannot be retrieved" | LogMe -display -error
+          "- The Global XDSDKProxy variable cannot be retrieved" | LogMe -display -warning
         }
       }
       If (![string]::IsNullOrEmpty($AdminAddress)) {
@@ -407,6 +412,7 @@ if ( $CitrixCloudCheck -eq "1" ) {
     }
   }
   Catch {
+    "- $($_.Exception.Message)" | LogMe -display -error
     $CloudAuthSuccess = $False
   }
   If ($CloudAuthSuccess) {
@@ -6317,6 +6323,9 @@ If ($UseRunspace) {
 #          - Fixed a bug with the ToHumanReadable function where it would error if uptime was less than 1 hour.
 #          - If the multisession or singlesession host uptime is less than 1 day, output to the log in human readable format. This makes it easier to find how many hours or minutes ago it last
 #            rebooted.
+# - 1.5.5, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+#          - Fixed a bug in the Citrix Cloud Auth related to the NonPersistentMetadata property not existing with older PowerShell modules. Basically just wrapped some more error checking
+#            around it using a Try/Catch.
 #
 # == FUTURE ==
 # #  1.5.x
