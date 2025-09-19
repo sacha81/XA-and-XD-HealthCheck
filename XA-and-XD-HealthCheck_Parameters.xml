@@ -58,7 +58,44 @@
 			<Scope>Script</Scope> <!-- global ? -->
 		</Variable>
 		<Variable>
-			<!-- Define the hostnames of delivery controllers, you can use localhost if you run localy
+			<!-- Set the correct Citrix Cloud API Region for Enviornments that use Citrix Cloud.
+			  - US region: api-us.cloud.com
+			  - EU region: api-eu.cloud.com
+			  - AP-S region: api-ap-s.cloud.com
+			  - Japan region: api.citrixcloud.jp
+			 Important:
+			 - You must use the region where your Citrix Cloud account is set to.
+			 - If you use the incorrect region, you will get the error: "The remote server returned an error: (404) Not Found."
+			 I feel that Citrix could use more intelligence here to automatically proxy/redirect a request to the correct region. -->
+			<Name>CCRegion</Name>
+			<Value>api-ap-s.cloud.com</Value>
+			<Type>[string]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Set to true to append the SiteId GUID to the Citrix Cloud Site Name or "cloudxdsite". This allows for uniqueness when running checks against multiple Citrix Cloud sites. -->
+			<Name>AppendCCSiteIdToName</Name>
+			<Value>true</Value>
+			<Type>[bool]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Set to true to bypass the default system proxy when using the Invoke-RestMethod and Invoke-WebRequest cmdlets.
+			This is important for on-prem connectivity to avoid getting "The remote server returned an error: (503) Server Unavailable." error. -->
+			<Name>NoProxy</Name>
+			<Value>true</Value>
+			<Type>[bool]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Set to true to bypass certificate validation. Not recommended for production platforms. -->
+			<Name>SkipCertificateCheck</Name>
+			<Value>false</Value>
+			<Type>[bool]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Define the hostnames of delivery controllers, you can use localhost if you run this script localy
 			     Example: CXDC01.domain.tld,CXDC02.domain.tld -->
 			<Name>DeliveryControllers</Name>
 			<Value>localhost</Value> <!-- Add Server separated by comma -->
@@ -87,7 +124,7 @@
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
-			<!-- Define the hostnames of Cloud Connector Servers, you can use localhost if you run localy
+			<!-- Define the hostnames of Cloud Connector Servers
 			     Example: CCS01.domain.tld,CCS02.domain.tld -->
 			<Name>CloudConnectorServers</Name>
 			<Value></Value> <!-- Add Server separated by comma -->
@@ -102,7 +139,7 @@
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
-			<!-- Define the hostnames of Storefront Servers, you can use localhost if you run localy
+			<!-- Define the hostnames of Storefront Servers
 			     Example: CXS01.domain.tld,CXS02.domain.tld -->
 			<Name>StoreFrontServers</Name>
 			<Value></Value> <!-- Add Server separated by comma -->
@@ -171,9 +208,27 @@
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
+			<!-- Set a list of supported VDA versions. Any versions that do not match will be marked
+				  as a warning. Leave blank to ignore this.
+				  Supports wildcards -->
+			<Name>SupportedVDAVersions</Name>
+			<Value>2203.*,2402.*,2507.*</Value>
+			<Type>[array]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
 			<!-- # Set to 1 if you want to Show and Check the CrowdStrike Tests in all tables -->
 			<Name>ShowCrowdStrikeTests</Name>
 			<Value>1</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Mark failed Spooler and CitrixPrint services as warning only.
+				 It reduces the red (errors) in the reports in environments where these services are
+				 not required for normal operation -->
+			<Name>MarkSpoolerAsWarningOnly</Name>
+			<Value>0</Value>
 			<Type>[int]</Type>
 			<Scope>Script</Scope>
 		</Variable>
@@ -297,7 +352,7 @@
 				 Example: 8
 				 This will help to evaluate stuck or stale sessions -->
 			<Name>MaxDisconnectTimeInHours</Name>
-			<Value>96</Value>
+			<Value>8</Value>
 			<Type>[int]</Type>
 			<Scope>Script</Scope>
 		</Variable>
@@ -306,7 +361,7 @@
 			      Example: kiosk
 				  Supports wildcards -->
 			<Name>ExcludedStuckSessionUserAccounts</Name>
-			<Value>*kiosk*</Value>
+			<Value></Value>
 			<Type>[array]</Type>
 			<Scope>Script</Scope>
 		</Variable>
@@ -330,6 +385,110 @@
 			<Name>WriteCacheMaxSizeInGB</Name>
 			<Value>15</Value> <!-- size in GB -->
 			<Type>[long]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+<!-- Logon Duration Params -->
+		<Variable>
+			<!-- Define a EnvironmentName for the LogonDuration e.g. Integration/Production etc. - this will be used in HTML & Email Subject -->
+			<Name>EnvironmentNameLogonDuration</Name>
+			<Value>Citrix Logon Duration</Value>
+			<Type>[string]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Define an Output log file for Citrix Logon Durations e.g CTXLogonDurations.log -->
+			<Name>OutputLogLogonDurations</Name>
+			<Value>CTXLogonDurations.log</Value>
+			<Type>[string]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- The script will get the sessions that have a LogonDuration greater than the number of seconds you set here.
+			Your aim should always be 30, but that may not always be practical. -->
+			<Name>LogonDurationInSeconds</Name>
+			<Value>30</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Set this to how many hours in time you want to look back into the logs from script runtime. -->
+			<Name>HoursToLookBack</Name>
+			<Value>24</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Set this to the number of records you want to output. The script sorts all records collected in descending
+			order and and then returns the top x records. Setting this to 0 will output all records -->
+			<Name>NumberOfRecordsToOutput</Name>
+			<Value>0</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Only set this to True if your on-prem version supports of the LogonMetrics entity values for
+			AppxAssociationStartDate,AppxAssociationEndDate,AppxLoadPackageStartDate and AppxLoadPackageEndDate.
+			This is for future versions as this is yet to be ported to on-prem versions. -->
+			<Name>OnPremAppxSupport</Name>
+			<Value>false</Value>
+			<Type>[bool]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+<!-- Syslog Configuration -->
+		<Variable>
+			<!-- Set to true if you want to send to Syslog -->
+			<Name>CheckOutputSyslog</Name>
+			<Value>true</Value>
+			<Type>[bool]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Define an Output Syslog file for the Citrix Health Check e.g CTXXDHealthCheckSyslog.log -->
+			<Name>OutputSyslog</Name>
+			<Value>CTXXDHealthCheckSyslog.log</Value>
+			<Type>[string]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Define an Output Syslog file for Citrix Logon Durations e.g CTXLogonDurationsSyslog.log -->
+			<Name>OutputSyslogLogonDurations</Name>
+			<Value>CTXLogonDurationsSyslog.log</Value>
+			<Type>[string]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<!--
+		The STRUCTURED-DATA part of an RFC 5424 syslog message is enclosed in square brackets ([]). Within these brackets, each SD-ELEMENT begins
+		with its unique SD-ID, followed by its associated parameters.
+		- The prefix for the Structured Data ID, which is the bit that comes before the @ symbol. This is a constant within the script and does not
+		need to be in this params file.
+		- The Private Enterprise Number (PEN) comes after the @ symbol to make up the Structured Data ID (SD-ID). This is set here.
+		The MSGID field provides a unique identifier for the type of message being sent. This field helps in categorizing and filtering log messages.
+		- The MSGID (Message Identifier) is also a constant within the script and does not need to be in this params file.
+		-->
+		<Variable>
+			<!-- Private Enterprise Number (PEN). For these reports we are using the Private Enterprise Number (PEN) registered to Citrix of 3845.
+			- Registered Private Enterprise Numbers (PENs) can be found here:
+			  - https://www.iana.org/assignments/enterprise-numbers/
+			- If you don't have a Private Enterprise Number (PEN), and you do not want to use the one registered to Citrix, you can request
+			a new assignment for free here:
+			  - https://www.iana.org/assignments/enterprise-numbers/assignment/apply/ -->
+			<Name>PrivateEnterpriseNumber</Name>
+			<Value>3845</Value>
+			<Type>[string]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Set to true to output to file only or false to also send to the Syslog server. -->
+			<Name>SyslogFileOnly</Name>
+			<Value>true</Value>
+			<Type>[bool]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Address of the Syslog Server. It will use UDP 514 as the port -->
+			<Name>SyslogServer</Name>
+			<Value>192.168.1.15</Value>
+			<Type>[string]</Type>
 			<Scope>Script</Scope>
 		</Variable>
 <!-- E-Mail Configuration -->
