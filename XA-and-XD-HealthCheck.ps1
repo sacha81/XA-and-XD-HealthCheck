@@ -1,5 +1,5 @@
 ﻿#==============================================================================================
-# Created on: 11.2014 modfied 06.2025 Version: 1.5.5
+# Created on: 11.2014 modfied 09.2025 Version: 1.5.6
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -9,7 +9,7 @@
 # Initial versions tested on XenApp/XenDesktop 7.6 and XenDesktop 5.6 
 # Newest version tested on CVAD 2203 and above, including Citrix Cloud.
 #
-# Prerequisite: Config file, a XenDesktop Controller with according privileges necessary 
+# Prerequisite: Config file, a Delivery Controller for on-prem with according privileges necessary 
 # Config file:  In order for the script to work properly, it needs a configuration file.
 #               This has the same name as the script, with extension _Parameters.
 #               The script name can't contain any another point, even with a version.
@@ -41,7 +41,7 @@
 #            experienced by the script.
 #
 # Example Syntax:
-#   Default:
+#   Default (assumes the XA-and-XD-HealthCheck_Parameters.xml file is present):
 #     powershell -executionpolicy bypass .\XA-and-XD-HealthCheck.ps1
 #   Specify a different Parameters file:
 #     powershell -executionpolicy bypass .\XA-and-XD-HealthCheck.ps1 -ParamsFile:"IOC-OPS_Params.xml"
@@ -55,7 +55,7 @@
 # Don't change below here if you don't know what you are doing ... 
 #==============================================================================================
 Param (
-       [String]$ParamsFile,
+       [String]$ParamsFile="XA-and-XD-HealthCheck_Parameters.xml",
        [Switch]$All,
        [Switch]$UseRunspace
       )
@@ -198,6 +198,8 @@ $scriptBlockExecute = {
     }
   }
 
+#==============================================================================================
+
 # Import variables
 Function New-XMLVariables {
   param(
@@ -239,6 +241,26 @@ New-XMLVariables -cfg:$cfg
 
 #==============================================================================================
 
+# These variables should remain constant, so they do not need to be in the XML params file.
+
+# The prefix for the Structured Data ID (SD-ID), which is the bit that comes before the @ symbol. The Private Enterprise Number (PEN) comes
+# after the @ symbol to make up the Structured Data ID.
+$StructuredDataIDPrefix = "citrixhealthcheck"
+
+# The MSGID field provides a unique identifier for the type of message being sent. This field helps in categorizing and filtering log messages.
+$SyslogMsgId = "citrix-health-check"
+
+#==============================================================================================
+
+# These variables are derived from either the XML or constant variables.
+
+$citrixCloudRegionBaseUrl = "https://" + $CCRegion
+$SyslogMessageStart = "$LogonDurationInSeconds second logon duration exceeded"
+$SyslogAppName = ($EnvironmentName -replace ' ','')
+$StructuredDataID = $StructuredDataIDPrefix + "@" + $PrivateEnterpriseNumber
+
+#==============================================================================================
+
 $ReportDate = (Get-Date -UFormat "%A, %d. %B %Y %R")
 
 $logfile = Join-Path $outputpath ("CTXXDHealthCheck.log")
@@ -250,8 +272,14 @@ If (![string]::IsNullOrEmpty($OutputHTML)) {
   $resultsHTM = Join-Path $outputpath ($OutputHTML) #add $outputdate in filename if you like
 }
 
+$resultsSyslog = Join-Path $outputpath ("CTXXDHealthCheckSyslog.log") #add $outputdate in filename if you like
+If (![string]::IsNullOrEmpty($OutputSyslog)) {
+  $resultsSyslog = Join-Path $outputpath ($OutputSyslog) #add $outputdate in filename if you like
+}
+
 Remove-Item $logfile -force -EA SilentlyContinue
 Remove-Item $resultsHTM -force -EA SilentlyContinue
+Remove-Item $resultsSyslog -force -EA SilentlyContinue
 
 #==============================================================================================
 
@@ -335,6 +363,96 @@ param (
 
 # ==============================================================================================
 
+Function Get-BearerToken {
+  param (
+         [Parameter(Mandatory=$true)][string]
+         $clientId,
+         [Parameter(Mandatory=$true)][string]
+         $clientSecret
+        )
+  [string]$bearerToken = $null
+  [bool]$success = $false
+  [hashtable]$body = @{
+    'grant_type' = 'client_credentials'
+    'client_id' = $clientId
+    'client_secret' = $clientSecret
+  }
+  $response = $null
+  $tokenUrl  = 'https://api.cloud.com/cctrustoauth2/root/tokens/clients'
+  Try {
+    $response = Invoke-RestMethod -Uri $tokenUrl -Method POST -Body $body -UseBasicParsing
+    if( $null -ne $response ) {
+      $bearerToken = "CwsAuth Bearer=$($response | Select-Object -expandproperty access_token)"
+      $success = $true
+    }
+  }
+  Catch {
+    $bearerToken = "$_.Exception.Message"
+  }
+  return [PSCustomObject]@{
+    bearerToken = $bearerToken
+    success = $success
+  }
+}
+
+Function Get-CCSiteId {
+  param (
+         [Parameter(Mandatory=$true)]
+         [string] $bearerToken,
+         [Parameter(Mandatory=$true)]
+         [string] $customerId
+  )
+  $requestUri = "https://api.cloud.com/cvad/manage/me"
+  $headers = @{
+    "Accept" = "application/json";
+    "Authorization" = "$bearerToken";
+    "Citrix-CustomerId" = $customerid;
+  }
+  $response = Invoke-RestMethod -Uri $requestUri -Method GET -Headers $headers 
+  return $response.Customers.Sites.Id
+}
+
+Function Get-CCSiteDetails {
+  param (
+        [Parameter(Mandatory=$true)]
+        [string] $customerid,
+        [Parameter(Mandatory=$true)]
+        [string] $sitenameorid,
+        [Parameter(Mandatory=$true)]
+        [string] $bearerToken
+  )
+  $requestUri = [string]::Format("https://api.cloud.com/cvad/manage/Sites/{0}", $sitenameorid)
+  $headers = @{
+        "Accept" = "application/json";
+        "Authorization" = "$bearerToken";
+        "Citrix-CustomerId" = $customerid;
+  }
+  $response = Invoke-RestMethod -Uri $requestUri -Method GET -Headers $headers 
+  return $response
+}
+
+# ==============================================================================================
+
+# The Invoke-RestMethod and Invoke-WebRequest cmdlets will use the default system proxy if configured.
+# Setting this variable to True will bypass the proxy, which is certainly important for on-prem connectivity to avoid
+# getting "The remote server returned an error: (503) Server Unavailable." error.
+If ($NoProxy) {
+  # Ensure there is no proxy
+  [System.Net.HttpWebRequest]::DefaultWebProxy = New-Object System.Net.WebProxy($null)
+}
+If ($SkipCertificateCheck) {
+  add-type @"
+using System.Net;
+using System.Security.Cryptography.X509Certificates;
+public class TrustAllCertsPolicy : ICertificatePolicy {
+  public bool CheckValidationResult(
+      ServicePoint srvPoint, X509Certificate certificate,
+      WebRequest request, int certificateProblem) { return true; }
+}
+"@
+  [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
+}
+
 # if enabled for Citrix Cloud set the credential profile: 
 # Help from https://www.citrix.com/blogs/2016/07/01/introducing-remote-powershell-sdk-v2-for-citrix-cloud/ and 
 # from https://hallspalmer.wordpress.com/2019/02/19/manage-citrix-cloud-using-powershell/
@@ -357,6 +475,11 @@ if ( $CitrixCloudCheck -eq "1" ) {
   }
   Try {
     "- Executing Get-XDAuthentication..." | LogMe -display -progress
+    # Using Get-XDAuthenticationEx instead of Get-XDAuthentication will set the Global:XDSerializedNonPersistentMetadata variable. This is the only
+    # variable it sets. However, for the Get-XDAuthenticationEx cmdlet the documentation states that "This cmdlet is not intended to be used directly"
+    # as it's an "Internally executed cmdlet". So using the Get-XDAuthentication cmdlet ensures we keep within the realms of support. Therefore, using
+    # the NonPersistentMetadata property is the best solution.
+    #Get-XDAuthenticationEx -ProfileName $ProfileName
     Get-XDAuthentication -ProfileName $ProfileName
     "  - Successfully authenticated using the profile named $ProfileName" | LogMe -display -progress
     "- Executing Get-XDCredentials..." | LogMe -display -progress
@@ -378,6 +501,17 @@ if ( $CitrixCloudCheck -eq "1" ) {
       } Else {
         "  - There are no Global variables set that start with XD" | LogMe -display -progress
       }
+      $BearerToken = ""
+      Try {
+        # The Bearer Token is both a direct property of the Get-XDCredentials output or within the NonPersistentMetadata property.
+        If ($CCCreds.NonPersistentMetadata.BearerToken -ne $null) {
+          "- The NonPersistentMetadata property exists with the BearerToken value" | LogMe -display -progress
+          $BearerToken = $CCCreds.NonPersistentMetadata.BearerToken
+        }
+      }
+      Catch {
+        "- The property 'NonPersistentMetadata' cannot be found on this object. Will try the Global XDAuthToken variable next." | LogMe -display -warning
+      }
       $AdminAddress = ""
       Try {
         If ($CCCreds.NonPersistentMetadata.AdminAddress -ne $null) {
@@ -388,23 +522,37 @@ if ( $CitrixCloudCheck -eq "1" ) {
       Catch {
         "- The property 'NonPersistentMetadata' cannot be found on this object. Will try the Global XDSDKProxy variable next." | LogMe -display -warning
       }
+      If ([string]::IsNullOrEmpty($BearerToken)) {
+        Try {
+          Get-Variable -Name "XDAuthToken" -Scope Global -ErrorAction Stop | out-null
+          "- The Global XDAuthToken variable is set" | LogMe -display -progress
+          $BearerToken = $Global:XDAuthToken
+        }
+        Catch {
+         "- The Global XDSDKProxy variable cannot be retrieved" | LogMe -display -warning
+        }
+      }
       If ([string]::IsNullOrEmpty($AdminAddress)) {
-        $IsVariableSet = $False
         Try {
           Get-Variable -Name "XDSDKProxy" -Scope Global -ErrorAction Stop | out-null
           "- The Global XDSDKProxy variable is set" | LogMe -display -progress
           $AdminAddress = $Global:XDSDKProxy
-          $IsVariableSet = $True
         }
         Catch {
           "- The Global XDSDKProxy variable cannot be retrieved" | LogMe -display -warning
         }
       }
-      If (![string]::IsNullOrEmpty($AdminAddress)) {
-        "- AdminAddress (AKA XDSDKProxy) is: $AdminAddress" | LogMe -display -progress
+      If (![string]::IsNullOrEmpty($BearerToken) -AND ![string]::IsNullOrEmpty($AdminAddress)) {
+        "- BearerToken (AKA XDAuthToken) is set under the BearerToken variable: (For security and confidentiality reasons we do not output the BearerToken here)" | LogMe -display -progress
+        "- AdminAddress (AKA XDSDKProxy) is set under the AdminAddress variable: $AdminAddress" | LogMe -display -progress
       } Else {
         $CloudAuthSuccess = $False
-        "- The AdminAddress (AKA XDSDKProxy) cannot be determined" | LogMe -display -error
+        If ([string]::IsNullOrEmpty($BearerToken)) {
+            "- The BearerToken (AKA XDAuthToken) cannot be determined" | LogMe -display -error
+        }
+        If ([string]::IsNullOrEmpty($AdminAddress)) {
+          "- The AdminAddress (AKA XDSDKProxy) cannot be determined" | LogMe -display -error
+        }
       }
     } Else {
       $CloudAuthSuccess = $False
@@ -469,7 +617,7 @@ If ($CitrixCloudCheck -ne 1) {
 
   If ($FoundHealthyDeliveryController -eq $False) {
     "Unable to validate a healthy Delivery Controller" | LogMe -display -progress
-    "- Locally installed Studio PowerShell module or the PowerShell SDK requires TCP 80, 443 open to the remote Delivery Controllers at minimum"| LogMe -display -progress
+    "- Locally installed Studio PowerShell module or the PowerShell SDK requires TCP 80, 443 open to the remote Delivery Controllers at minimum" | LogMe -display -progress
     "- Exiting the script" | LogMe -display -progress
     Exit
   }
@@ -602,6 +750,294 @@ $XenApptablewidth = 2400
 $StuckSessionsfirstheaderName = "Stuck-Session"
 $StuckSessionsHeaderNames  = "CatalogName", "DesktopGroupName", "UserName", "SessionState", "AppState", "SessionStateChangeTime", "LogonInProgress", "LogoffInProgress", "ClientAddress", "ConnectionMode", "Protocol"
 $StuckSessionstablewidth = 1800
+
+#==============================================================================================
+
+Function ConvertTo-StructuredData {
+<#
+  This function converts a PSCustomObject or hashtable into the required format for the SYSLOG
+  Structured Data section. It handles required RFC 5424 escaping of " and ] inside structured-data values.
+
+  The Id and param names should be 1–32 chars as per the syslog standard (RFC 5424).
+  - In RFC 5424 §6.3.2 (SD-ID), the Structured Data ID (SD-ID) must be 1 to 32 visible US-ASCII characters.
+  - In RFC 5424 §6.3.3 (PARAM-NAME), each parameter name inside the structured data also has the same restriction: 1–32 characters.
+  This keeps syslog messages interoperable between vendors, platforms, and collectors.
+  Why the restriction matters
+  - Parsing simplicity: syslog parsers don't need to deal with arbitrarily long tokens.
+  - Interoperability: messages won’t get truncated or rejected by downstream collectors.
+  - Spec compliance: ensures you can claim "RFC 5424-compliant syslog."
+  However, by setting the AllowMoreParamChars parameter, you can allow param names to be longer than 32 characters.
+
+  Example syntax:
+  Build SD element directly
+    ConvertTo-StructuredData -Id 'diskinfo@32473' -Data ([pscustomobject]@{ size='120GB'; used='95GB' })
+    -> [diskinfo@32473 size="120GB" used="95GB"]
+  Handles arrays
+    ConvertTo-StructuredData -Id 'meta@32473' -Data ([pscustomobject]@{ tags=@('blue','green'); note='C:\Path\] "y"' })
+    -> [meta@32473 note="C:\\Path\] \"y\"" tags="blue,green"]
+  Handles booleans & datetimes
+    ConvertTo-StructuredData -Id 'audit@32473' -Data ([pscustomobject]@{ ok=$true; at=[DateTimeOffset]::Now })
+    -> [audit@32473 at="2025-09-01T12:30:15.456+08:00" ok="true"]
+#>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Id,   # e.g. "diskinfo@32473"
+        [Parameter(Mandatory, ValueFromPipeline)]
+        [object]$Data,  # PSCustomObject or hashtable
+        [switch]$SortProps,  # Sort the properties in alphabetical (ascending) order
+        [switch]$AllowMoreParamChars  #Allow a token greater than 32 characters
+    )
+
+    function Validate-Token([string]$Token, [string]$What, [switch]$AllowMoreParamChars) {
+        if ([string]::IsNullOrWhiteSpace($Token)) { throw "$What cannot be empty." }
+        if ($Token.Length -lt 1 -or $Token.Length -gt 32) {
+          if ($Token.Length -gt 32 -AND $AllowMoreParamChars) {
+            # We are allowing then length of the token to be greater than 32 characters
+          } else {
+            throw "$What must be 1-32 characters."
+          }
+        }
+        if ($Token -match '[\s=\]"]') { throw "$What cannot contain space, equals sign, right bracket, or double-quote." }
+    }
+
+    function Coerce([object]$v) {
+        switch ($v) {
+            $null { '' }
+            { $_ -is [DateTimeOffset] } { $_.ToString("yyyy-MM-ddTHH:mm:ss.fffzzz"); break }
+            { $_ -is [DateTime] }       { ([DateTimeOffset]$_).ToString("yyyy-MM-ddTHH:mm:ss.fffzzz"); break }
+            { $_ -is [bool] }           { if ($_) { 'true' } else { 'false' }; break }
+            default { [string]$_ }
+        }
+    }
+
+    # Validate SD-ID
+    Validate-Token -Token $Id -What 'SD-ID' -AllowMoreParamChars $false
+
+    # Normalize properties
+    if ($Data -is [hashtable]) {
+        $props = $Data.GetEnumerator() | Sort-Object Name
+    } else {
+        if ($SortProps) {
+          $props = $Data.PSObject.Properties | Sort-Object Name
+        } else {
+          $props = $Data.PSObject.Properties
+        }
+    }
+
+    $pairs = foreach ($p in $props) {
+        $name = [string]$p.Name
+        Validate-Token -Token $name -What 'Param name' -AllowMoreParamChars $AllowMoreParamChars
+
+        $val = $p.Value
+        if ($val -is [System.Collections.IEnumerable] -and -not ($val -is [string])) {
+            # Join arrays/lists into one value (params must be unique)
+            $val = (@($val | ForEach-Object { Coerce -v $_ }) -join ',')
+        } else {
+            $val = Coerce $val
+        }
+
+        # RFC 5424 escaping: backslash, quote, right-bracket
+        $escaped = $val -replace '\\','\\\\' -replace '"','\"' -replace '\]','\]'
+        "$name=""$escaped"""
+    }
+
+    if (-not $pairs -or $pairs.Count -eq 0) {
+        return ("[{0}]" -f $Id)  # valid empty SD element
+    }
+
+    return ("[{0} {1}]" -f $Id, ($pairs -join ' '))
+}
+
+Function Write-IetfSyslogEntry {
+<#
+  This function will create an IETF structured Syslog Format (RFC 5424 compliant) log file and/or send to a syslog server.
+
+  This function only supports UDP (classic syslog) and HTTP/HTTPS (API ingest) only. It does not support classic syslog
+  using TCP on port 514 and TLS on port 6514. This is because TCP communications being flagged as a reverse shell.
+
+  Note that in Syslog you cannot create a new/custom facility. The facility is a fixed numeric field defined by the standard.
+  The valid facility codes are the well-known ones (kernel, user, mail, daemon, …) plus LOCAL0–LOCAL7 (codes 16–23) reserved
+  for site-specific use.
+  However, what you can do is...
+  - Use LOCAL0–LOCAL7 as your "custom" buckets and document what each means in your environment (e.g., LOCAL4 = MyApp,
+    LOCAL5 = Payments, etc.).
+  - Add rich tags in Structured Data and/or APP-NAME/MSGID to classify events beyond facility (e.g., [app@32473
+    svc="billing" tier="prod" region="au-west"]).
+  - On the collector, create routes/streams/indices based on facility, app-name, msgid, or your structured data keys.
+  So whilst you cannot add new facilities, you can repurpose LOCAL0–LOCAL7 plus rich structured metadata to get virtually
+  unlimited categorization.
+
+  Example usage:
+  
+  1) UDP (classic syslog daemon, port 514 by default):
+     Write-IetfSyslogEntry -Message "Job started" `
+       -SyslogServer "rsyslog01.acme.local" `
+       -CollectorType Syslog
+
+  2) HTTPS ingest API (defaults to 443) with headers & file copy:
+     $sd = [pscustomobject]@{
+             Id='audit@32473'
+             Data=[pscustomobject]@{ actor='svc.backup'; action='start'; jobId='BKP-001'; outcome='success' }
+           }
+     Write-IetfSyslogEntry -Message "Backup started" `
+                           -StructuredDataObject $sd `
+                           -SyslogServer "logs.example.com" `
+                           -CollectorType HttpApi -Transport HTTPS -HttpPath "/syslog/ingest" `
+                           -HttpHeaders @{ "X-Api-Key" = "abc123" } `
+                           -LogFilePath "C:\Logs\backup.log" -UseLocalTime
+
+  3) File-only:
+     Write-IetfSyslogEntry -Message "Local audit only" `
+                           -CollectorType Syslog `
+                           -LogFilePath "C:\Logs\audit.log" -FileOnly
+#>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [string]$Message,
+ 
+        [string]$SyslogServer,             # host/IP for UDP; host for HTTP/S
+ 
+        # Choose collector kind → sets sane defaults & validates transports
+        [ValidateSet("Syslog","HttpApi")]
+        [string]$CollectorType = "Syslog",
+ 
+        # Transport choices per collector:
+        # - Syslog: UDP only
+        # - HttpApi: HTTP or HTTPS
+        [string]$Transport,
+ 
+        # Port (defaults based on CollectorType + Transport)
+        [int]$Port,
+ 
+        # HTTP options (only for CollectorType=HttpApi)
+        [string]$HttpPath = "/",
+        [hashtable]$HttpHeaders,
+        [string]$HttpContentType = "application/syslog; charset=utf-8",
+        [int]$HttpTimeoutSeconds = 15,
+        [switch]$SkipHttpCertValidation,   # lab use only
+ 
+        # Syslog metadata
+        [ValidateSet("Emergency","Alert","Critical","Error","Warning","Notice","Informational","Debug")]
+        [string]$Severity = "Informational",
+ 
+        [ValidateSet("Kernel","User","Mail","Daemon","Auth","Syslog","LPR","News","UUCP","Cron","AuthPriv","FTP","NTP","LogAudit","LogAlert","ClockDaemon","Local0","Local1","Local2","Local3","Local4","Local5","Local6","Local7")]
+        [string]$Facility = "User",
+ 
+        [string]$AppName = "PowerShellApp",
+        [string]$ProcId = $PID,
+        [string]$MsgId = "-",
+ 
+        # Structured Data: pass either a ready string or a wrapper object
+        [string]$StructuredData = "-",
+        [object]$StructuredDataObject,
+ 
+        # File logging
+        [string]$LogFilePath,
+        [switch]$FileOnly,
+ 
+        # Time handling
+        [switch]$UseLocalTime
+    )
+ 
+    if ([string]::IsNullOrWhiteSpace($SyslogServer)) {
+      $FileOnly = $True
+    }
+    # Build StructuredData from wrapper if provided
+    if ($StructuredDataObject) {
+        $StructuredData = ConvertTo-StructuredData -StructuredDataObject $StructuredDataObject -SortProps -AllowMoreParamChars
+    }
+    if (-not $StructuredData) { $StructuredData = "-" }
+ 
+    # PRI
+    $facilityMap = @{
+        "Kernel"=0;"User"=1;"Mail"=2;"Daemon"=3;"Auth"=4;"Syslog"=5;"LPR"=6;"News"=7;"UUCP"=8;"Cron"=9;
+        "AuthPriv"=10;"FTP"=11;"NTP"=12;"LogAudit"=13;"LogAlert"=14;"ClockDaemon"=15;
+        "Local0"=16;"Local1"=17;"Local2"=18;"Local3"=19;"Local4"=20;"Local5"=21;"Local6"=22;"Local7"=23
+    }
+    $severityMap = @{
+        "Emergency"=0;"Alert"=1;"Critical"=2;"Error"=3;"Warning"=4;"Notice"=5;"Informational"=6;"Debug"=7
+    }
+    $pri = ($facilityMap[$Facility] * 8) + $severityMap[$Severity]
+ 
+    $version   = 1
+    $hostname  = $env:COMPUTERNAME
+    $timestamp = if ($UseLocalTime) {
+        [DateTimeOffset]::Now.ToString("yyyy-MM-ddTHH:mm:ss.fffzzz")
+    } else {
+        [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+    }
+ 
+    $syslogMsg = "<$pri>$version $timestamp $hostname $AppName $ProcId $MsgId $StructuredData $Message"
+    $msgBytes  = [System.Text.Encoding]::UTF8.GetBytes($syslogMsg)
+ 
+    # Optional file copy
+    if ($LogFilePath) {
+        try { Add-Content -Path $LogFilePath -Value $syslogMsg } catch { Write-Warning "File write failed: $_" }
+    }
+    if ($FileOnly) { return }
+ 
+    # Defaults + validation
+    if (-not $Transport) {
+        $Transport = if ($CollectorType -eq "Syslog") { "UDP" } else { "HTTPS" }
+    }
+ 
+    if ($CollectorType -eq "Syslog") {
+        if ($Transport -ne "UDP") {
+            throw "CollectorType=Syslog only supports Transport=UDP in this build."
+        }
+        if (-not $Port) { $Port = 514 }
+    } else {
+        if ($Transport -notin @("HTTP","HTTPS")) {
+            throw "CollectorType=HttpApi requires Transport=HTTP or HTTPS."
+        }
+        if (-not $Port) { $Port = if ($Transport -eq "HTTPS") { 443 } else { 80 } }
+    }
+ 
+    switch ($CollectorType) {
+        "Syslog" {
+            try {
+                # Classic syslog over UDP/514
+                $udp = New-Object System.Net.Sockets.UdpClient
+                $udp.Connect($SyslogServer, $Port)
+                $udp.Send($msgBytes, $msgBytes.Length) | Out-Null
+                $udp.Close()
+            } catch {
+                Write-Warning "UDP send failed: $_"
+            }
+        }
+        "HttpApi" {
+            try {
+                $handler = New-Object System.Net.Http.HttpClientHandler
+                if ($Transport -eq "HTTPS" -and $SkipHttpCertValidation) {
+                    $handler.ServerCertificateCustomValidationCallback = { param($m,$c,$ch,$e) $true }
+                }
+ 
+                $client  = [System.Net.Http.HttpClient]::new($handler)
+                $client.Timeout = [TimeSpan]::FromSeconds($HttpTimeoutSeconds)
+ 
+                $scheme = $Transport.ToLower()  # http | https
+                $uri    = "${scheme}://${SyslogServer}`:${Port$HttpPath}"
+ 
+                $content = New-Object System.Net.Http.StringContent($syslogMsg, [System.Text.Encoding]::UTF8, $HttpContentType)
+                if ($HttpHeaders) {
+                    foreach ($k in $HttpHeaders.Keys) {
+                        $content.Headers.Add($k, [string]$HttpHeaders[$k]) 2>$null
+                    }
+                }
+ 
+                $resp = $client.PostAsync($uri, $content).GetAwaiter().GetResult()
+                if (-not $resp.IsSuccessStatusCode) {
+                    Write-Warning ("HTTP{0} {1} {2}" -f ($(if($Transport -eq 'HTTPS'){'S'}else{''}), [int]$resp.StatusCode, $resp.ReasonPhrase))
+                }
+                $client.Dispose()
+            } catch {
+                Write-Warning "HTTP API send failed: $_"
+            }
+        }
+    }
+}
 
 #==============================================================================================
 
@@ -1167,8 +1603,9 @@ Function Check-NvidiaLicenseStatus {
   # Examples of significant licensing events that are logged are as follows:
   # - Acquisition of a license
   # - Return of a license
-  # - Expiration of a license
+  # - Expiration of a license (have only seen this happen after 7 failed attempts to renew)
   # - Failure to acquire a license
+  # - Failure to renew a license
   # - License state changes between the unlicensed restricted state (20 mins), unlicensed state (24 hours), and licensed state
   # Reference: https://docs.nvidia.com/vgpu/latest/grid-licensing-user-guide/index.html
   # Written by Jeremy Saunders
@@ -1388,9 +1825,20 @@ Function Get-RDSLicensingDetails {
 
 Function Get-PersonalityInfo {
   # This function will test the Personality.ini or MCSPersonality.ini to determine what sort of
-  # session host it is. It will return the DiskMode and WriteCacheType for PVS.
-  # It is possible that from VDA 2311 the Personality.ini may be missing altogether for standalone
-  # VDA deployments. This function allows for that.
+  # session host it is based on the following logic.
+  # - If the Personality.ini contains the WriteCacheType entry, it will return the DiskName, DiskMode
+  #   and WriteCacheType, and flag it as a PVS image.
+  # - If the Personality.ini contains the ListOfDDCs entry, it will return the DiskMode and flag it
+  #   as an MCS image.
+  # - If the Personality.ini does not contain a WriteCacheType or ListOfDDCs entry, it will return
+  #   the DiskMode and flag it as a Standalone image.
+  # - If the MCSPersonality.ini contains the ListOfDDCs entry, it will return the DiskMode and flag
+  #   it as an MCS image.
+  # - If the MCSPersonality.ini does not contains the ListOfDDCs entry, it will return the DiskMode
+  #   and flag it as a Standalone image.
+  # - It is possible that from VDA 2311 the Personality.ini may be missing altogether for standalone
+  #   VDA deployments. This function allows for that.
+  #
   # DiskMode for PVS, MCS and Standalone can be as follows:
   # - S (Standard)
   # - P (Private)
@@ -1405,13 +1853,14 @@ Function Get-PersonalityInfo {
   # - PrivateAppLayering
   # - SharedAppLayering
   # - UNC-Path
+  #
   # Written by Jeremy Saunders
   param (
          [string]$computername = "$env:computername"
         )
   $results = @()
   $ResultProps = @{
-    DiskMode = ""
+    DiskMode = "N/A"
     IsPVS = $False
     PVSCacheOnDeviceHardDisk = $False
     PVSCacheType = "N/A"
@@ -1419,93 +1868,100 @@ Function Get-PersonalityInfo {
     Output_To_Log1 = "PVSCacheType: N/A"
     PVSDiskName = ""
     IsMCS = $False
-    IsStandAlone = $False
+    IsStandAlone = $True
   }
-  $Path = "filesystem::\\$computername\c$\Personality.ini"
-  If (-not(Test-Path $Path)) {
-    $Path = "filesystem::\\$computername\c$\MCSPersonality.ini"
-    If (-not(Test-Path $Path)) {
-      $ResultProps.IsStandAlone = $True
-      $ResultProps.DiskMode = "N/A"
-    } Else {
-      $Personalityini = Get-Content "$Path"
-      $ResultProps.IsMCS = $True
-      $DiskMode = ($Personalityini | Select-String "DiskMode" | ForEach-Object {$_.Line}).split('=')[1]
-      $ResultProps.DiskMode = $DiskMode
+  # Due to VDA upgrades and the change from Personality.ini to MCSPersonality.ini from VDA 2303, both ini files can potentially exist in the root of the C drive.
+  # The assumption is that the one that was last written to is the live ini file.
+  $Path = Get-ChildItem -Path "filesystem::\\$computername\c$\" -Filter '*Personality.ini' | Where-Object {$_.Extension -eq ".ini"} | Sort-Object -Property LastWriteTime -Descending | Select-Object -First 1
+  If ($null -ne $path) {
+    $Personalityini = Get-Content $Path.FullName
+    $DiskMode = ($Personalityini | Select-String "DiskMode" | ForEach-Object {$_.Line}).split('=')[1]
+    $ResultProps.DiskMode = $DiskMode
+    If ($Path.Name -eq "MCSPersonality.ini") {
+      $ListOfDDCs = $Personalityini -match 'ListOfDDCs='
+      If ($ListOfDDCs -ne $null) {
+        $ResultProps.IsMCS = $True
+        $ResultProps.IsStandAlone = $False
+      }
+    }
+    If ($Path.Name -eq "Personality.ini") {
+      If ($Personalityini | Where-Object { $_.Contains('WriteCacheType=')}) {
+        $ResultProps.IsPVS = $True
+        $ResultProps.IsStandAlone = $False
+        $WriteCacheType = ($Personalityini | Select-String "WriteCacheType" | ForEach-Object {$_.Line}).split('=')[1]
+        $ResultProps.PVSCacheType = $WriteCacheType
+        switch ($WriteCacheType)
+        {
+          "9" {
+               $ResultProps.PVSCacheOnDeviceHardDisk = $True
+               $ResultProps.Output_To_Log1 = "PVSCacheType: 9 - WC is set to Cache to Device Ram with overflow to HD"
+               $ResultProps.PVSCacheType = "9 - WC to Ram with overflow to HD"
+               $ResultProps.Output_For_HTML1 = "SUCCESS"
+               break
+              }
+          "0" {
+               $ResultProps.PVSCacheOnDeviceHardDisk = $False
+               $ResultProps.Output_To_Log1 = "PVSCacheType: 0 - WC is not set because vDisk is in PrivateMode (R/W)"
+               $ResultProps.PVSCacheType = "0 - vDisk is in PrivateMode (R/W)"
+               $ResultProps.Output_For_HTML1 = "Error"
+               break
+              }
+          "1" {
+               $ResultProps.PVSCacheOnDeviceHardDisk = $False
+               $ResultProps.Output_To_Log1 = "PVSCacheType: 1 - WC is set to Cache to PVS Server HD"
+               $ResultProps.PVSCacheType = "1 - WC is set to Cache to PVS Server HD"
+               $ResultProps.Output_For_HTML1 = "Error"
+               break
+              }
+          "3" {
+               $ResultProps.PVSCacheOnDeviceHardDisk = $False
+               $ResultProps.Output_To_Log1 = "3 - PVSCacheType: WC is set to Cache to Device Ram"
+               $ResultProps.PVSCacheType = "3 - WC is set to Cache to Device Ram"
+               $ResultProps.Output_For_HTML1 = "WARNING"
+               break
+              }
+          "4" {
+               $ResultProps.PVSCacheOnDeviceHardDisk = $True
+               $ResultProps.Output_To_Log1 = "PVSCacheType: 4 - WC is set to Cache to Device Hard Disk"
+               $ResultProps.PVSCacheType = "4 - WC is set to Cache to Device Hard Disk"
+               $ResultProps.Output_For_HTML1 = "WARNING"
+               break
+              }
+          "7" {
+               $ResultProps.PVSCacheOnDeviceHardDisk = $False
+               $ResultProps.Output_To_Log1 = "PVSCacheType: 7 - WC is set to Cache to PVS Server HD Persistent"
+               $ResultProps.PVSCacheType = "7 - WC is set to Cache to PVS Server HD Persistent"
+               $ResultProps.Output_For_HTML1 = "Error"
+               break
+              }
+          "8" {
+               $ResultProps.PVSCacheOnDeviceHardDisk = $True
+               $ResultProps.Output_To_Log1 = "PVSCacheType: 8 - WC is set to Cache to Device Hard Disk Persistent"
+               $ResultProps.PVSCacheType = "8 - WC is set to Cache to Device Hard Disk Persistent"
+               $ResultProps.Output_For_HTML1 = "Error"
+               break
+              }
+          Default {
+               $ResultProps.PVSCacheOnDeviceHardDisk = $False
+               $ResultProps.Output_To_Log1 = "PVSCacheType: Unknowm"
+               $ResultProps.PVSCacheType = "$WriteCacheType - Unknown WC type"
+               $ResultProps.Output_For_HTML1 = "Error"
+               $cacheOnDeviceHardDisk = $False
+             }
+        }
+        $DiskName = ($Personalityini | Select-String "DiskName" | ForEach-Object {$_.Line}).split('=')[1]
+        $ResultProps.PVSDiskName = $DiskName
+      } Else {
+        $ListOfDDCs = $Personalityini -match 'ListOfDDCs='
+        If ($ListOfDDCs -ne $null) {
+          $ResultProps.IsMCS = $True
+          $ResultProps.IsStandAlone = $False
+        }
+     }
     }
   } Else {
-    $Personalityini = Get-Content "$Path"
-    If ($Personalityini | Where-Object { $_.Contains('WriteCacheType=')}) {
-      $ResultProps.IsPVS = $True
-      $WriteCacheType = ($Personalityini | Select-String "WriteCacheType" | ForEach-Object {$_.Line}).split('=')[1]
-      $ResultProps.PVSCacheType = $WriteCacheType
-      switch ($WriteCacheType)
-      {
-        "9" {
-             $ResultProps.PVSCacheOnDeviceHardDisk = $True
-             $ResultProps.Output_To_Log1 = "PVSCacheType: 9 - WC is set to Cache to Device Ram with overflow to HD"
-             $ResultProps.PVSCacheType = "9 - WC to Ram with overflow to HD"
-             $ResultProps.Output_For_HTML1 = "SUCCESS"
-             break
-            }
-        "0" {
-             $ResultProps.PVSCacheOnDeviceHardDisk = $False
-             $ResultProps.Output_To_Log1 = "PVSCacheType: 0 - WC is not set because vDisk is in PrivateMode (R/W)"
-             $ResultProps.PVSCacheType = "0 - vDisk is in PrivateMode (R/W)"
-             $ResultProps.Output_For_HTML1 = "Error"
-             break
-            }
-        "1" {
-             $ResultProps.PVSCacheOnDeviceHardDisk = $False
-             $ResultProps.Output_To_Log1 = "PVSCacheType: 1 - WC is set to Cache to PVS Server HD"
-             $ResultProps.PVSCacheType = "1 - WC is set to Cache to PVS Server HD"
-             $ResultProps.Output_For_HTML1 = "Error"
-             break
-            }
-        "3" {
-             $ResultProps.PVSCacheOnDeviceHardDisk = $False
-             $ResultProps.Output_To_Log1 = "3 - PVSCacheType: WC is set to Cache to Device Ram"
-             $ResultProps.PVSCacheType = "3 - WC is set to Cache to Device Ram"
-             $ResultProps.Output_For_HTML1 = "WARNING"
-             break
-            }
-        "4" {
-             $ResultProps.PVSCacheOnDeviceHardDisk = $True
-             $ResultProps.Output_To_Log1 = "PVSCacheType: 4 - WC is set to Cache to Device Hard Disk"
-             $ResultProps.PVSCacheType = "4 - WC is set to Cache to Device Hard Disk"
-             $ResultProps.Output_For_HTML1 = "WARNING"
-             break
-            }
-        "7" {
-             $ResultProps.PVSCacheOnDeviceHardDisk = $False
-             $ResultProps.Output_To_Log1 = "PVSCacheType: 7 - WC is set to Cache to PVS Server HD Persistent"
-             $ResultProps.PVSCacheType = "7 - WC is set to Cache to PVS Server HD Persistent"
-             $ResultProps.Output_For_HTML1 = "Error"
-             break
-            }
-        "8" {
-             $ResultProps.PVSCacheOnDeviceHardDisk = $True
-             $ResultProps.Output_To_Log1 = "PVSCacheType: 8 - WC is set to Cache to Device Hard Disk Persistent"
-             $ResultProps.PVSCacheType = "8 - WC is set to Cache to Device Hard Disk Persistent"
-             $ResultProps.Output_For_HTML1 = "Error"
-             break
-            }
-        Default {
-             $ResultProps.PVSCacheOnDeviceHardDisk = $False
-             $ResultProps.Output_To_Log1 = "PVSCacheType: Unknowm"
-             $ResultProps.PVSCacheType = "$WriteCacheType - Unknown WC type"
-             $ResultProps.Output_For_HTML1 = "Error"
-             $cacheOnDeviceHardDisk = $False
-           }
-      }
-      $DiskMode = ($Personalityini | Select-String "DiskMode" | ForEach-Object {$_.Line}).split('=')[1]
-      $ResultProps.DiskMode = $DiskMode
-      $DiskName = ($Personalityini | Select-String "DiskName" | ForEach-Object {$_.Line}).split('=')[1]
-      $ResultProps.PVSDiskName = $DiskName
-    } Else {
-      $ResultProps.IsStandAlone = $True
-      $ResultProps.DiskMode = "N/A"
-    }
+    $ResultProps.IsStandAlone = $True
+    $ResultProps.DiskMode = "N/A"
   }
   If ($ResultProps.DiskMode -eq "S") {$ResultProps.DiskMode = "Standard"}
   If ($ResultProps.DiskMode -eq "P") {$ResultProps.DiskMode = "Private"}
@@ -1606,7 +2062,7 @@ Function Get-WriteCacheDriveInfo {
       $ErrorActionPreference = "stop"
       Try {
         If (Test-Path "filesystem::\\$computername\$wcdrive`$\$wcfile") {
-          $ResultProps.vhdxSize_inMB = (Get-ChildItem "\\$computername\$wcdrive`$\$wcfile").Length/1024/1024
+          $ResultProps.vhdxSize_inMB = (Get-ChildItem -Path "filesystem::\\$computername\$wcdrive`$\$wcfile").Length/1024/1024
           $ResultProps.Output_To_Log3 = "vhdxSize: The `"$wcfile`" size is $($ResultProps.vhdxSize_inMB) MB"
         } Else {
           $ResultProps.Output_To_Log3 = "vhdxSize: The `"$wcfile`" file cannot be reached"
@@ -2426,29 +2882,66 @@ ForEach ($SnapIn in $SnapIns) {
 "Getting some Site information" | LogMe -display -progress
 If ($CitrixCloudCheck -ne 1) {
   $dbinfo = Get-BrokerDBConnection -AdminAddress $AdminAddress
+  "- Database: $($dbinfo)" | LogMe -display -progress
   $brokersiteinfos = Get-BrokerSite -AdminAddress $AdminAddress
+  $sitename = $brokersiteinfos.Name
 } Else {
   $dbinfo = $null
   $brokersiteinfos = Get-BrokerSite
+  If ($AppendCCSiteIdToName) {
+    $siteid = Get-CCSiteId -BearerToken:$BearerToken -CustomerID:$CustomerID
+    $sitename = $brokersiteinfos.Name + "-" + $siteid
+  } Else {
+    $sitename = $brokersiteinfos.Name
+  }
 }
-$sitename = $brokersiteinfos.Name
+"- SiteName: $($sitename)" | LogMe -display -progress
 $lsname = $brokersiteinfos.LicenseServerName
+"- LicenseServerName: $($lsname)" | LogMe -display -progress
 $lsport = $brokersiteinfos.LicenseServerPort
+"- LicenseServerPort: $($lsport)" | LogMe -display -progress
 $CLeasing = $brokersiteinfos.ConnectionLeasingEnabled
+"- ConnectionLeasingEnabled: $($CLeasing)" | LogMe -display -progress
 $LHC = $brokersiteinfos.LocalHostCacheEnabled
+"- LocalHostCacheEnabled: $($LHC)" | LogMe -display -progress
+
+" " | LogMe -display -progress
 
 "Getting the Site maintenance information for last $($MaintenanceModeActionsFromPastinDays) days" | LogMe -display -progress
 # Get the maintenance information from the Site using the Get-LogLowLevelOperation cmdlet
 # Original code written by Stefan Beckmann: http://www.beckmann.ch/blog/2016/11/01/get-user-who-set-maintenance-mode-for-a-server-or-client/
 # Enhanced by Jeremy Saunders (jeremy@jhouseconsulting.com) so we can also get information for who placed Delivery Groups and Hypervisor Connections
 # into maintenance mode. Refer to the Where-Object filter for the Get-LogLowLevelOperation cmdlet. Added PropertyName and TargetType to the output.
+# IMPORTANT: The further back you go with the $MaintenanceModeActionsFromPastinDays variable, the more records the Get-LogLowLevelOperation needs to
+# enumerate. The record enumeration starts from the $StartDate. So if you reach the MaxRecordCount before the EndTime, you may be missing the newer
+# records. To workaround this we are retieving records in batches of $maxmachines rows using the StartTime from the last record collected as a
+# reference for the next batch.
+# Citrix provide an example of how to do this here: https://www.citrix.com/blogs/2021/10/18/announcing-remote-powershell-sdk-record-limits/
 $EndDate = Get-Date
 $StartDate = $EndDate.AddDays(-$MaintenanceModeActionsFromPastinDays)
-If ($CitrixCloudCheck -ne 1) {
-  $LogEntrys = Get-LogLowLevelOperation -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -Filter { StartTime -ge $StartDate -and EndTime -le $EndDate } -ErrorAction Stop | Where-Object { $_.Details.PropertyName -eq 'MAINTENANCEMODE' -OR $_.Details.PropertyName -eq 'INMAINTENANCEMODE' -OR $_.Details.PropertyName -eq 'MaintenanceMode'} | Sort-Object EndTime -Descending
-} Else {
-  $LogEntrys = Get-LogLowLevelOperation -MaxRecordCount $maxmachines -Filter { StartTime -ge $StartDate -and EndTime -le $EndDate } -ErrorAction Stop | Where-Object { $_.Details.PropertyName -eq 'MAINTENANCEMODE' -OR $_.Details.PropertyName -eq 'INMAINTENANCEMODE' -OR $_.Details.PropertyName -eq 'MaintenanceMode'} | Sort-Object EndTime -Descending
+# Note that the Maintenance Mode property name is inconsistent across different object types (Machines, Delivery Groups and Hypervisor Connections),
+# so we use an array to filter objects where the 'PropertyName' property is in a list of names.
+$MaintModePropNames = @("MAINTENANCEMODE", "INMAINTENANCEMODE", "MaintenanceMode")
+$LogEntrys = @()
+$lastStartTime = $StartDate
+while ($true) {
+  $TotalEntries = $LogEntrys.Length
+  $previousStartTime = $lastStartTime
+  If ($CitrixCloudCheck -ne 1) {
+    $LogEntrys += @(Get-LogLowLevelOperation -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -Filter { StartTime -gt $lastStartTime -and EndTime -le $EndDate } -Sortby 'StartTime' -ErrorAction Stop | Where-Object { $_.Details.PropertyName -in $MaintModePropNames })
+  } Else {
+    $LogEntrys += @(Get-LogLowLevelOperation -MaxRecordCount $maxmachines -Filter { StartTime -gt $lastStartTime -and EndTime -le $EndDate } -Sortby 'StartTime' -ErrorAction Stop | Where-Object { $_.Details.PropertyName -in $MaintModePropNames })
+  }
+  if (($LogEntrys.Length - $TotalEntries) -eq 0) {
+    break;
+  }
+  $lastStartTime = $LogEntrys[-1].StartTime
+  If ($lastStartTime -eq $previousStartTime) {
+    break;
+  }
 }
+$LogEntrys = $LogEntrys | Sort-Object EndTime -Descending
+
 # Build an object with the data for the output
 [array]$Maintenance = @()
 ForEach ($LogEntry in $LogEntrys) {
@@ -2478,11 +2971,13 @@ If ($CitrixCloudCheck -ne 1) {
 
   # Get first DDC version (should be all the same unless an upgrade is in progress)
   $ControllerVersion = $Controllers[0].ControllerVersion
-  "Version: $controllerversion " | LogMe -display -progress
+  "Version: $controllerversion" | LogMe -display -progress
   
   "XenDesktop/XenApp Version above 7.x ($controllerversion) - XenApp and DesktopCheck will be performed" | LogMe -display -progress
 
   foreach ($Controller in $Controllers) {
+    $IsSeverityErrorLevel = $False
+    $IsSeverityWarningLevel = $False
     $tests = @{}
   
     #Name of $Controller
@@ -2498,9 +2993,11 @@ If ($CitrixCloudCheck -ne 1) {
       }
       Catch [System.Net.Sockets.SocketException] {
         "Failed to lookup host in DNS: $($_.Exception.Message)" | LogMe -display -warning
+         $IsSeverityWarningLevel = $True
       }
       Catch {
         "An unexpected error occurred: $($_.Exception.Message)" | LogMe -display -warning
+        $IsSeverityWarningLevel = $True
       }
     }
 
@@ -2524,6 +3021,7 @@ If ($CitrixCloudCheck -ne 1) {
       "- If this fails and machines are still registering okay to $ControllerDNS, check that the firewall is not dropping the traffic" | LogMe -display -error
       "  - This test sends a blank HTTP POST requests to the Broker's Registrar service, including 'Expect: 100-continue' in the body" | LogMe -display -error
       "  - A response of 'HTTP/1.1 100 Continue' should be returned, which is what we use to verify that it's in a healthy state" | LogMe -display -error
+      $IsSeverityErrorLevel = $True
     }
 
     $IsWinRMAccessible = IsWinRMAccessible -hostname:$ControllerDNS
@@ -2531,8 +3029,12 @@ If ($CitrixCloudCheck -ne 1) {
     #State of this controller
     $ControllerState = $Controller | ForEach-Object{ $_.State }
     "State: $ControllerState" | LogMe -display -progress
-    if ($ControllerState -ne "Active") { $tests.State = "ERROR", $ControllerState }
-    else { $tests.State = "SUCCESS", $ControllerState }
+    if ($ControllerState -ne "Active") {
+      $tests.State = "ERROR", $ControllerState
+      $IsSeverityErrorLevel = $True
+    } else {
+      $tests.State = "SUCCESS", $ControllerState
+    }
 
     #DesktopsRegistered on this controller
     $ControllerDesktopsRegistered = $Controller | ForEach-Object{ $_.DesktopsRegistered }
@@ -2552,21 +3054,32 @@ If ($CitrixCloudCheck -ne 1) {
           If ($return.CSFalconInstalled -AND $return.CSAgentInstalled) {
             "CrowdStrike Installed: True" | LogMe -display -progress
             "- CrowdStrike Windows Sensor Version: $($return.InstalledVersion)" | LogMe -display -progress
+            $tests.CSVersion = "NORMAL", $return.InstalledVersion
             "- CrowdStrike Company ID (CID): $($return.CID)" | LogMe -display -progress
+            $tests.CSCID = "NORMAL", $return.CID
             "- CrowdStrike Sensor Grouping Tags: $($return.SensorGroupingTags)" | LogMe -display -progress
             $tests.CSGroupTags = "NORMAL", $return.SensorGroupingTags
             "- CrowdStrike VDI switch: $($return.VDI)" | LogMe -display -progress
             If ($return.CSFalconServiceRunning -AND $return.CSAgentServiceRunning -AND (![string]::IsNullOrEmpty($return.AID))) {
               $tests.CSEnabled = "SUCCESS", $True
               "- CrowdStrike Agent ID (AID): $($return.AID)" | LogMe -display -progress
+              $tests.CSAID = "NORMAL", $return.AID
             } Else {
               $tests.CSEnabled = "WARNING", $False
+              If ([string]::IsNullOrEmpty($return.AID)) {
+                "- CrowdStrike Agent ID (AID) is missing" | LogMe -display -warning
+                $tests.CSAID = "NORMAL", "Missing"
+              } Else {
+                "- CrowdStrike is installed, but not running" | LogMe -display -warning
+              }
+              $IsSeverityWarningLevel = $True
             }
           } else {
             "CrowdStrike Installed: False" | LogMe -display -progress
           }
         } else {
           "Unable to get the CrowdStrike Service Status" | LogMe -display -error
+          $IsSeverityErrorLevel = $True
         }
       }
     }
@@ -2592,6 +3105,7 @@ If ($CitrixCloudCheck -ne 1) {
       } ElseIf ($CpuConfigAndUsage.LogicalProcessors -eq 1) {
         "- LogicalProcessors: $($CpuConfigAndUsage.LogicalProcessors)" | LogMe -display -warning
         $tests.LogicalProcessors = "WARNING", $CpuConfigAndUsage.LogicalProcessors
+        $IsSeverityWarningLevel = $True
       } Else {
         "- LogicalProcessors: Unable to detect." | LogMe -display -progress
       }
@@ -2609,19 +3123,21 @@ If ($CitrixCloudCheck -ne 1) {
       }
     } else {
       "Unable to get CPU configuration and usage" | LogMe -display -error
+      $IsSeverityErrorLevel = $True
     }
 
     # Check the Physical Memory usage       
     $UsedMemory = CheckMemoryUsage -hostname:$ControllerDNS -UseWinRM:$IsWinRMAccessible
     If ($null -ne $UsedMemory) {
       if( $UsedMemory -lt 75) { "Memory usage is normal [ $UsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$UsedMemory %" }
-      elseif( [int] $UsedMemory -lt 85) { "Memory usage is medium [ $UsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$UsedMemory %" }   	
-      elseif( [int] $UsedMemory -lt 95) { "Memory usage is high [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }
-      elseif( [int] $UsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
-      else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }   
+      elseif( [int] $UsedMemory -lt 85) { "Memory usage is medium [ $UsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$UsedMemory %" ; $IsSeverityWarningLevel= $True }   	
+      elseif( [int] $UsedMemory -lt 95) { "Memory usage is high [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" ; $IsSeverityErrorLevel = $True }
+      elseif( [int] $UsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" ; $IsSeverityErrorLevel = $True }
+      else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" ; $IsSeverityErrorLevel = $True }   
       $UsedMemory = 0  
     } else {
       "Unable to get Memory usage" | LogMe -display -error
+      $IsSeverityErrorLevel = $True
     }
 
     # Get the total Physical Memory
@@ -2632,9 +3148,11 @@ If ($CitrixCloudCheck -ne 1) {
     } ElseIf ($TotalPhysicalMemoryinGB -ge 2) {
       "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -warning
       $tests.TotalPhysicalMemoryinGB = "WARNING", $TotalPhysicalMemoryinGB
+      $IsSeverityWarningLevel = $True
     } Else {
       "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -error
       $tests.TotalPhysicalMemoryinGB = "ERROR", $TotalPhysicalMemoryinGB
+      $IsSeverityErrorLevel = $True
     }
 
     foreach ($disk in $diskLettersControllers)
@@ -2646,15 +3164,16 @@ If ($CitrixCloudCheck -ne 1) {
         $XAPercentageDS = $HardDisk.PercentageDS
         $frSpace = $HardDisk.frSpace
         If ( [int] $XAPercentageDS -gt 15) { "Disk Free is normal [ $XAPercentageDS % ]" | LogMe -display; $tests."$($disk)Freespace" = "SUCCESS", "$frSpace GB" } 
-        ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "Err" }
-        ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" } 
-        ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests."$($disk)Freespace" = "WARNING", "$frSpace GB" }     
-        Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" }  
+        ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "Err" ; $IsSeverityErrorLevel = $True }
+        ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" ; $IsSeverityErrorLevel = $True } 
+        ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests."$($disk)Freespace" = "WARNING", "$frSpace GB" ; $IsSeverityWarningLevel = $True }     
+        Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" ; $IsSeverityErrorLevel = $True }  
         $XAPercentageDS = 0
         $frSpace = 0
         $HardDisk = $null
       } else {
         "Unable to get Hard Disk usage" | LogMe -display -error
+        $IsSeverityErrorLevel = $True
       }
     }
 
@@ -2670,9 +3189,11 @@ If ($CitrixCloudCheck -ne 1) {
         $tests.OSCaption = "ERROR", $return.Caption
         $tests.OSBuild = "ERROR", $return.Version
         "OS Test: $($return.Error)" | LogMe -display -error
+        $IsSeverityErrorLevel = $True
       }
     } else {
       "Unable to get OS Version and Caption" | LogMe -display -error
+      $IsSeverityErrorLevel = $True
     }
 
     # Check uptime
@@ -2681,18 +3202,47 @@ If ($CitrixCloudCheck -ne 1) {
       if ($hostUptime.TimeSpan.days -lt $minUpTimeDaysDDC) {
         "reboot warning, last reboot: {0:D}" -f $hostUptime.LBTime | LogMe -display -warning
         $tests.Uptime = "WARNING", (ToHumanReadable($hostUptime.TimeSpan))
+        $IsSeverityWarningLevel = $True
       } else {
         "Uptime: $(ToHumanReadable($hostUptime.TimeSpan))" | LogMe -display -progress
         $tests.Uptime = "SUCCESS", (ToHumanReadable($hostUptime.TimeSpan))
       }
     } else {
       "WinRM or WMI connection failed" | LogMe -display -error
+      $IsSeverityErrorLevel = $True
     }
+
+    # Add the SiteName to the tests for the Syslog output
+    $tests.SiteName = "NORMAL", $sitename
 
     " --- " | LogMe -display -progress
     #Fill $tests into array
     $ControllerResults.$ControllerDNS = $tests
 
+    If ($CheckOutputSyslog) {
+      # Set up the severity of the log entry based on the output of each test.
+      $Severity = "Informational"
+      If ($IsSeverityWarningLevel) { $Severity = "Warning" }
+      If ($IsSeverityErrorLevel) { $Severity = "Error" }
+      # Setup the PSCustomObject that will become the Data within the Structured Data
+      $Data = [PSCustomObject]@{
+        'DeliveryController' = $ControllerDNS
+      }
+      $ControllerResults.$ControllerDNS.GetEnumerator() | ForEach-Object {
+        $MyKey = $_.Key -replace " ", ""
+        $Data | Add-Member -MemberType NoteProperty $MyKey -Value $_.Value[1]
+      }
+      $sdString = ConvertTo-StructuredData -Id $StructuredDataID -Data $Data -AllowMoreParamChars
+      If ($SyslogFileOnly) {
+        Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$ControllerDNS" `
+                              -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                              -LogFilePath "$resultsSyslog" -FileOnly
+      } Else {
+        Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$ControllerDNS" `
+                              -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                              -LogFilePath "$resultsSyslog" -SyslogServer $SyslogServer
+      }
+    }
   }#Close off foreach $Controller
 }#Close off $CitrixCloudCheck
 
@@ -2705,6 +3255,8 @@ if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
   $CCResults = @{}
 
   foreach ($CloudConnectorServer in $CloudConnectorServers) {
+    $IsSeverityErrorLevel = $False
+    $IsSeverityWarningLevel = $False
     $tests = @{}
 
     #Name of $CloudConnectorServer
@@ -2720,9 +3272,11 @@ if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
       }
       Catch [System.Net.Sockets.SocketException] {
         "Failed to lookup host in DNS: $($_.Exception.Message)" | LogMe -display -warning
+         $IsSeverityWarningLevel = $True
       }
       Catch {
         "An unexpected error occurred: $($_.Exception.Message)" | LogMe -display -warning
+        $IsSeverityWarningLevel = $True
       }
     }
 
@@ -2746,6 +3300,7 @@ if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
       "- If this fails and machines are still registering okay to $ControllerDNS, check that the firewall is not dropping the traffic" | LogMe -display -error
       "  - This test sends a blank HTTP POST requests to the Broker's Registrar service, including 'Expect: 100-continue' in the body" | LogMe -display -error
       "  - A response of 'HTTP/1.1 100 Continue' should be returned, which is what we use to verify that it's in a healthy state" | LogMe -display -error
+      $IsSeverityErrorLevel = $True
     }
 
     $IsWinRMAccessible = IsWinRMAccessible -hostname:$CloudConnectorServerDNS
@@ -2763,6 +3318,7 @@ if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
           "The following services are not running:$(($CCActiveSiteServices).Name)" | LogMe -display -warning
           $NotRunning_Service = $CCActiveSiteServices | ForEach-Object { $_.Name }
           $tests.CitrixServices = "Warning","$NotRunning_Service"
+          $IsSeverityWarningLevel = $True
         } else {
           # If no services are stopped, print success message
           "All services are running successfully." | LogMe -display -progress
@@ -2771,10 +3327,12 @@ if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
       }
       Catch {
         #"Error returned while checking the services" | LogMe -error; return 101
+        $IsSeverityErrorLevel = $True
       }
     } Else {
       $tests.CitrixServices = "WARNING","Cannot connect via WinRM"
       "Cannot connect via WinRM" | LogMe -display -warning
+      $IsSeverityWarningLevel = $True
     }
 
     # Check CrowdStrike State
@@ -2785,21 +3343,32 @@ if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
           If ($return.CSFalconInstalled -AND $return.CSAgentInstalled) {
             "CrowdStrike Installed: True" | LogMe -display -progress
             "- CrowdStrike Windows Sensor Version: $($return.InstalledVersion)" | LogMe -display -progress
+            $tests.CSVersion = "NORMAL", $return.InstalledVersion
             "- CrowdStrike Company ID (CID): $($return.CID)" | LogMe -display -progress
+            $tests.CSCID = "NORMAL", $return.CID
             "- CrowdStrike Sensor Grouping Tags: $($return.SensorGroupingTags)" | LogMe -display -progress
             $tests.CSGroupTags = "NORMAL", $return.SensorGroupingTags
             "- CrowdStrike VDI switch: $($return.VDI)" | LogMe -display -progress
             If ($return.CSFalconServiceRunning -AND $return.CSAgentServiceRunning -AND (![string]::IsNullOrEmpty($return.AID))) {
               $tests.CSEnabled = "SUCCESS", $True
               "- CrowdStrike Agent ID (AID): $($return.AID)" | LogMe -display -progress
+              $tests.CSAID = "NORMAL", $return.AID
             } Else {
               $tests.CSEnabled = "WARNING", $False
+              If ([string]::IsNullOrEmpty($return.AID)) {
+                "- CrowdStrike Agent ID (AID) is missing" | LogMe -display -warning
+                $tests.CSAID = "NORMAL", "Missing"
+              } Else {
+                "- CrowdStrike is installed, but not running" | LogMe -display -warning
+              }
+              $IsSeverityWarningLevel = $True
             }
           } else {
             "CrowdStrike Installed: False" | LogMe -display -progress
           }
         } else {
           "Unable to get the CrowdStrike Service Status" | LogMe -display -error
+          $IsSeverityErrorLevel = $True
         }
       }
     }
@@ -2825,6 +3394,7 @@ if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
       } ElseIf ($CpuConfigAndUsage.LogicalProcessors -eq 1) {
         "- LogicalProcessors: $($CpuConfigAndUsage.LogicalProcessors)" | LogMe -display -warning
         $tests.LogicalProcessors = "WARNING", $CpuConfigAndUsage.LogicalProcessors
+        $IsSeverityWarningLevel = $True
       } Else {
         "- LogicalProcessors: Unable to detect." | LogMe -display -progress
       }
@@ -2842,19 +3412,21 @@ if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
       }
     } else {
       "Unable to get CPU configuration and usage" | LogMe -display -error
+      $IsSeverityErrorLevel = $True
     }
 
     # Check the Physical Memory usage       
     $UsedMemory = CheckMemoryUsage -hostname:$CloudConnectorServerDNS -UseWinRM:$IsWinRMAccessible
     If ($null -ne $UsedMemory) {
       if( $UsedMemory -lt 75) { "Memory usage is normal [ $UsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$UsedMemory %" }
-      elseif( [int] $UsedMemory -lt 85) { "Memory usage is medium [ $UsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$UsedMemory %" }   	
-      elseif( [int] $UsedMemory -lt 95) { "Memory usage is high [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }
-      elseif( [int] $UsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
-      else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }   
+      elseif( [int] $UsedMemory -lt 85) { "Memory usage is medium [ $UsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$UsedMemory %" ; $IsSeverityWarningLevel= $True }   	
+      elseif( [int] $UsedMemory -lt 95) { "Memory usage is high [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" ; $IsSeverityErrorLevel = $True }
+      elseif( [int] $UsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" ; $IsSeverityErrorLevel = $True }
+      else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" ; $IsSeverityErrorLevel = $True }   
       $UsedMemory = 0  
     } else {
       "Unable to get Memory usage" | LogMe -display -error
+      $IsSeverityErrorLevel = $True
     }
 
     # Get the total Physical Memory
@@ -2865,9 +3437,11 @@ if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
     } ElseIf ($TotalPhysicalMemoryinGB -ge 2) {
       "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -warning
       $tests.TotalPhysicalMemoryinGB = "WARNING", $TotalPhysicalMemoryinGB
+      $IsSeverityWarningLevel = $True
     } Else {
       "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -error
       $tests.TotalPhysicalMemoryinGB = "ERROR", $TotalPhysicalMemoryinGB
+      $IsSeverityErrorLevel = $True
     }
 
     foreach ($disk in $diskLettersControllers)
@@ -2879,15 +3453,16 @@ if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
         $XAPercentageDS = $HardDisk.PercentageDS
         $frSpace = $HardDisk.frSpace
         If ( [int] $XAPercentageDS -gt 15) { "Disk Free is normal [ $XAPercentageDS % ]" | LogMe -display; $tests."$($disk)Freespace" = "SUCCESS", "$frSpace GB" } 
-        ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "Err" }
-        ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" } 
-        ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests."$($disk)Freespace" = "WARNING", "$frSpace GB" }     
-        Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" }  
+        ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "Err" ; $IsSeverityErrorLevel = $True }
+        ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" ; $IsSeverityErrorLevel = $True } 
+        ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests."$($disk)Freespace" = "WARNING", "$frSpace GB" ; $IsSeverityWarningLevel = $True }     
+        Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" ; $IsSeverityErrorLevel = $True }  
         $XAPercentageDS = 0
         $frSpace = 0
         $HardDisk = $null
       } else {
         "Unable to get Hard Disk usage" | LogMe -display -error
+        $IsSeverityErrorLevel = $True
       }
     }
 
@@ -2903,9 +3478,11 @@ if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
         $tests.OSCaption = "ERROR", $return.Caption
         $tests.OSBuild = "ERROR", $return.Version
         "OS Test: $($return.Error)" | LogMe -display -error
+        $IsSeverityErrorLevel = $True
       }
     } else {
       "Unable to get OS Version and Caption" | LogMe -display -error
+      $IsSeverityErrorLevel = $True
     }
 
     # Check uptime
@@ -2914,18 +3491,47 @@ if ($CitrixCloudCheck -eq 1 -AND $ShowCloudConnectorTable -eq 1 ) {
       if ($hostUptime.TimeSpan.days -lt $minUpTimeDaysDDC) {
         "reboot warning, last reboot: {0:D}" -f $hostUptime.LBTime | LogMe -display -warning
         $tests.Uptime = "WARNING", (ToHumanReadable($hostUptime.TimeSpan))
+        $IsSeverityWarningLevel = $True
       } else {
         "Uptime: $(ToHumanReadable($hostUptime.TimeSpan))" | LogMe -display -progress
         $tests.Uptime = "SUCCESS", (ToHumanReadable($hostUptime.TimeSpan))
       }
     } else {
       "WinRM or WMI connection failed" | LogMe -display -error
+      $IsSeverityErrorLevel = $True
     }
+
+    # Add the SiteName to the tests for the Syslog output
+    $tests.SiteName = "NORMAL", $sitename
 
     " --- " | LogMe -display -progress
     #Fill $tests into array
     $CCResults.$CloudConnectorServerDNS = $tests
 
+    If ($CheckOutputSyslog) {
+      # Set up the severity of the log entry based on the output of each test.
+      $Severity = "Informational"
+      If ($IsSeverityWarningLevel) { $Severity = "Warning" }
+      If ($IsSeverityErrorLevel) { $Severity = "Error" }
+      # Setup the PSCustomObject that will become the Data within the Structured Data
+      $Data = [PSCustomObject]@{
+        'CloudConnector' = $CloudConnectorServerDNS
+      }
+      $CCResults.$CloudConnectorServerDNS.GetEnumerator() | ForEach-Object {
+        $MyKey = $_.Key -replace " ", ""
+        $Data | Add-Member -MemberType NoteProperty $MyKey -Value $_.Value[1]
+      }
+      $sdString = ConvertTo-StructuredData -Id $StructuredDataID -Data $Data -AllowMoreParamChars
+      If ($SyslogFileOnly) {
+        Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$CloudConnectorServerDNS" `
+                              -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                              -LogFilePath "$resultsSyslog" -FileOnly
+      } Else {
+        Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$CloudConnectorServerDNS" `
+                              -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                              -LogFilePath "$resultsSyslog" -SyslogServer $SyslogServer
+      }
+    }
   }#Close off foreach $CloudConnectorServer
 }#Close off if $ShowCloudConnectorTable
 
@@ -2938,6 +3544,8 @@ If ($ShowStorefrontTable -eq 1) {
   $SFResults = @{}
 
   foreach ($StoreFrontServer in $StoreFrontServers) {
+    $IsSeverityErrorLevel = $False
+    $IsSeverityWarningLevel = $False
     $tests = @{}
 
     #Name of $StoreFrontServer
@@ -2953,9 +3561,11 @@ If ($ShowStorefrontTable -eq 1) {
       }
       Catch [System.Net.Sockets.SocketException] {
         "Failed to lookup host in DNS: $($_.Exception.Message)" | LogMe -display -warning
+         $IsSeverityWarningLevel = $True
       }
       Catch {
         "An unexpected error occurred: $($_.Exception.Message)" | LogMe -display -warning
+        $IsSeverityWarningLevel = $True
       }
     }
 
@@ -2984,6 +3594,7 @@ If ($ShowStorefrontTable -eq 1) {
           "The following services are not running:$(($CCActiveSiteServices).Name)" | LogMe -display -warning
           $NotRunning_Service = $SFActiveSiteServices | ForEach-Object { $_.Name }
           $tests.CitrixServices = "Warning","$NotRunning_Service"
+          $IsSeverityWarningLevel = $True
         } else {
           # If no services are stopped, print success message
           "All services are running successfully." | LogMe -display -progress
@@ -2992,10 +3603,12 @@ If ($ShowStorefrontTable -eq 1) {
       }
       Catch {
         #"Error returned while checking the services" | LogMe -error; return 101
+        $IsSeverityErrorLevel = $True
       }
     } Else {
       $tests.CitrixServices = "WARNING","Cannot connect via WinRM"
       "Cannot connect via WinRM" | LogMe -display -warning
+      $IsSeverityWarningLevel = $True
     }
 
     # Check CrowdStrike State
@@ -3006,21 +3619,32 @@ If ($ShowStorefrontTable -eq 1) {
           If ($return.CSFalconInstalled -AND $return.CSAgentInstalled) {
             "CrowdStrike Installed: True" | LogMe -display -progress
             "- CrowdStrike Windows Sensor Version: $($return.InstalledVersion)" | LogMe -display -progress
+            $tests.CSVersion = "NORMAL", $return.InstalledVersion
             "- CrowdStrike Company ID (CID): $($return.CID)" | LogMe -display -progress
+            $tests.CSCID = "NORMAL", $return.CID
             "- CrowdStrike Sensor Grouping Tags: $($return.SensorGroupingTags)" | LogMe -display -progress
             $tests.CSGroupTags = "NORMAL", $return.SensorGroupingTags
             "- CrowdStrike VDI switch: $($return.VDI)" | LogMe -display -progress
             If ($return.CSFalconServiceRunning -AND $return.CSAgentServiceRunning -AND (![string]::IsNullOrEmpty($return.AID))) {
               $tests.CSEnabled = "SUCCESS", $True
               "- CrowdStrike Agent ID (AID): $($return.AID)" | LogMe -display -progress
+              $tests.CSAID = "NORMAL", $return.AID
             } Else {
               $tests.CSEnabled = "WARNING", $False
+              If ([string]::IsNullOrEmpty($return.AID)) {
+                "- CrowdStrike Agent ID (AID) is missing" | LogMe -display -warning
+                $tests.CSAID = "NORMAL", "Missing"
+              } Else {
+                "- CrowdStrike is installed, but not running" | LogMe -display -warning
+              }
+              $IsSeverityWarningLevel = $True
             }
           } else {
             "CrowdStrike Installed: False" | LogMe -display -progress
           }
         } else {
           "Unable to get the CrowdStrike Service Status" | LogMe -display -error
+          $IsSeverityErrorLevel = $True
         }
       }
     }
@@ -3046,6 +3670,7 @@ If ($ShowStorefrontTable -eq 1) {
       } ElseIf ($CpuConfigAndUsage.LogicalProcessors -eq 1) {
         "- LogicalProcessors: $($CpuConfigAndUsage.LogicalProcessors)" | LogMe -display -warning
         $tests.LogicalProcessors = "WARNING", $CpuConfigAndUsage.LogicalProcessors
+        $IsSeverityWarningLevel = $True
       } Else {
         "- LogicalProcessors: Unable to detect." | LogMe -display -progress
       }
@@ -3063,19 +3688,21 @@ If ($ShowStorefrontTable -eq 1) {
       }
     } else {
       "Unable to get CPU configuration and usage" | LogMe -display -error
+      $IsSeverityErrorLevel = $True
     }
 
     # Check the Physical Memory usage       
     $UsedMemory = CheckMemoryUsage -hostname:$StoreFrontServerDNS -UseWinRM:$IsWinRMAccessible
     If ($null -ne $UsedMemory) {
       if( $UsedMemory -lt 75) { "Memory usage is normal [ $UsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$UsedMemory %" }
-      elseif( [int] $UsedMemory -lt 85) { "Memory usage is medium [ $UsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$UsedMemory %" }   	
-      elseif( [int] $UsedMemory -lt 95) { "Memory usage is high [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }
-      elseif( [int] $UsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
-      else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" }   
+      elseif( [int] $UsedMemory -lt 85) { "Memory usage is medium [ $UsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$UsedMemory %" ; $IsSeverityWarningLevel= $True }   	
+      elseif( [int] $UsedMemory -lt 95) { "Memory usage is high [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" ; $IsSeverityErrorLevel = $True }
+      elseif( [int] $UsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" ; $IsSeverityErrorLevel = $True }
+      else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$UsedMemory %" ; $IsSeverityErrorLevel = $True }   
       $UsedMemory = 0  
     } else {
       "Unable to get Memory usage" | LogMe -display -error
+      $IsSeverityErrorLevel = $True
     }
 
     # Get the total Physical Memory
@@ -3086,9 +3713,11 @@ If ($ShowStorefrontTable -eq 1) {
     } ElseIf ($TotalPhysicalMemoryinGB -ge 2) {
       "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -warning
       $tests.TotalPhysicalMemoryinGB = "WARNING", $TotalPhysicalMemoryinGB
+      $IsSeverityWarningLevel = $True
     } Else {
       "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -error
       $tests.TotalPhysicalMemoryinGB = "ERROR", $TotalPhysicalMemoryinGB
+      $IsSeverityErrorLevel = $True
     }
 
     foreach ($disk in $diskLettersControllers)
@@ -3100,15 +3729,16 @@ If ($ShowStorefrontTable -eq 1) {
         $XAPercentageDS = $HardDisk.PercentageDS
         $frSpace = $HardDisk.frSpace
         If ( [int] $XAPercentageDS -gt 15) { "Disk Free is normal [ $XAPercentageDS % ]" | LogMe -display; $tests."$($disk)Freespace" = "SUCCESS", "$frSpace GB" } 
-        ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "Err" }
-        ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" } 
-        ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests."$($disk)Freespace" = "WARNING", "$frSpace GB" }     
-        Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" }  
+        ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "Err" ; $IsSeverityErrorLevel = $True }
+        ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" ; $IsSeverityErrorLevel = $True } 
+        ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests."$($disk)Freespace" = "WARNING", "$frSpace GB" ; $IsSeverityWarningLevel = $True }     
+        Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" ; $IsSeverityErrorLevel = $True }  
         $XAPercentageDS = 0
         $frSpace = 0
         $HardDisk = $null
       } else {
         "Unable to get Hard Disk usage" | LogMe -display -error
+        $IsSeverityErrorLevel = $True
       }
     }
 
@@ -3124,9 +3754,11 @@ If ($ShowStorefrontTable -eq 1) {
         $tests.OSCaption = "ERROR", $return.Caption
         $tests.OSBuild = "ERROR", $return.Version
         "OS Test: $($return.Error)" | LogMe -display -error
+        $IsSeverityErrorLevel = $True
       }
     } else {
       "Unable to get OS Version and Caption" | LogMe -display -error
+      $IsSeverityErrorLevel = $True
     }
 
     # Check uptime
@@ -3135,18 +3767,47 @@ If ($ShowStorefrontTable -eq 1) {
       if ($hostUptime.TimeSpan.days -lt $minUpTimeDaysDDC) {
         "reboot warning, last reboot: {0:D}" -f $hostUptime.LBTime | LogMe -display -warning
         $tests.Uptime = "WARNING", (ToHumanReadable($hostUptime.TimeSpan))
+        $IsSeverityWarningLevel = $True
       } else {
         "Uptime: $(ToHumanReadable($hostUptime.TimeSpan))" | LogMe -display -progress
         $tests.Uptime = "SUCCESS", (ToHumanReadable($hostUptime.TimeSpan))
       }
     } else {
       "WinRM or WMI connection failed" | LogMe -display -error
+      $IsSeverityErrorLevel = $True
     }
+
+    # Add the SiteName to the tests for the Syslog output
+    $tests.SiteName = "NORMAL", $sitename
 
     " --- " | LogMe -display -progress
     #Fill $tests into array
     $SFResults.$StoreFrontServerDNS = $tests
 
+    If ($CheckOutputSyslog) {
+      # Set up the severity of the log entry based on the output of each test.
+      $Severity = "Informational"
+      If ($IsSeverityWarningLevel) { $Severity = "Warning" }
+      If ($IsSeverityErrorLevel) { $Severity = "Error" }
+      # Setup the PSCustomObject that will become the Data within the Structured Data
+      $Data = [PSCustomObject]@{
+        'StoreFront' = $StoreFrontServerDNS
+      }
+      $SFResults.$StoreFrontServerDNS.GetEnumerator() | ForEach-Object {
+        $MyKey = $_.Key -replace " ", ""
+        $Data | Add-Member -MemberType NoteProperty $MyKey -Value $_.Value[1]
+      }
+      $sdString = ConvertTo-StructuredData -Id $StructuredDataID -Data $Data -AllowMoreParamChars
+      If ($SyslogFileOnly) {
+        Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$StoreFrontServerDNS" `
+                              -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                              -LogFilePath "$resultsSyslog" -FileOnly
+      } Else {
+        Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$StoreFrontServerDNS" `
+                              -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                              -LogFilePath "$resultsSyslog" -SyslogServer $SyslogServer
+      }
+    }
   }#Close off foreach $StoreFrontServer
 }#Close off if $ShowStorefrontTable
 
@@ -3244,12 +3905,10 @@ If ($CitrixCloudCheck -ne 1) {
 		    $tests.Available ="NEUTRAL", $line.Available}
             $CTXLicResults.($line.LicenceName) =  $tests
         }
-
   }
   else {"CTX License Check skipped because ShowCTXLicense = 0 " | LogMe -display -progress }
   " --- " | LogMe -display -progress
 }
-
 
 #== Catalog Check ============================================================================================
 "Check Catalog #################################################################################" | LogMe -display -progress
@@ -3265,6 +3924,8 @@ If ($CitrixCloudCheck -ne 1) {
 }
 
 foreach ($Catalog in $Catalogs) {
+  $IsSeverityErrorLevel = $False
+  $IsSeverityWarningLevel = $False
   $tests = @{}
 
   #Name of MachineCatalog
@@ -3330,6 +3991,7 @@ foreach ($Catalog in $Catalogs) {
     } Else {
       "AvailableUnassignedCount: $CatalogAvailableUnassignedCount" | LogMe -display -warning
       $tests.Unassigned = "WARNING", $CatalogAvailableUnassignedCount
+      $IsSeverityWarningLevel = $True
     }
 
     #MinimumFunctionalLevel
@@ -3427,6 +4089,7 @@ foreach ($Catalog in $Catalogs) {
          if ($parsedDate -lt $thresholdDate) {
            "The MasterImageVMDate is more than 90 days old." | LogMe -display -warning
            $tests.MasterImageVMDate = "WARNING", $MasterImageVMDate
+           $IsSeverityWarningLevel = $True
          } else {
            $tests.MasterImageVMDate = "NEUTRAL", $MasterImageVMDate
          }
@@ -3438,8 +4101,36 @@ foreach ($Catalog in $Catalogs) {
        "This is not an MCS provisioned catalog." | LogMe -display -progress
      }
 
+    # Add the SiteName to the tests for the Syslog output
+    $tests.SiteName = "NORMAL", $sitename
+
     "", ""
     $CatalogResults.$FullCatalogNameIncAdminFolder = $tests
+
+    If ($CheckOutputSyslog) {
+      # Set up the severity of the log entry based on the output of each test.
+      $Severity = "Informational"
+      If ($IsSeverityWarningLevel) { $Severity = "Warning" }
+      If ($IsSeverityErrorLevel) { $Severity = "Error" }
+      # Setup the PSCustomObject that will become the Data within the Structured Data
+      $Data = [PSCustomObject]@{
+        'MachineCatalog' = $FullCatalogNameIncAdminFolder
+      }
+      $CatalogResults.$FullCatalogNameIncAdminFolder.GetEnumerator() | ForEach-Object {
+        $MyKey = $_.Key -replace " ", ""
+        $Data | Add-Member -MemberType NoteProperty $MyKey -Value $_.Value[1]
+      }
+      $sdString = ConvertTo-StructuredData -Id $StructuredDataID -Data $Data -AllowMoreParamChars
+      If ($SyslogFileOnly) {
+        Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$FullCatalogNameIncAdminFolder" `
+                              -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                              -LogFilePath "$resultsSyslog" -FileOnly
+      } Else {
+        Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$FullCatalogNameIncAdminFolder" `
+                              -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                              -LogFilePath "$resultsSyslog" -SyslogServer $SyslogServer
+      }
+    }
   }  
   " --- " | LogMe -display -progress
 }
@@ -3459,6 +4150,8 @@ If ($CitrixCloudCheck -ne 1) {
 }
   
 foreach ($Assigment in $Assigments) {
+  $IsSeverityErrorLevel = $False
+  $IsSeverityWarningLevel = $False
   $tests = @{}
 
   #Name of DeliveryGroup
@@ -3529,6 +4222,7 @@ foreach ($Assigment in $Assigments) {
     
     if ($SessionSupport -eq "MultiSession" -and $ShutdownDesktopsAfterUse -eq "$true" ) { 
     $tests.ShutdownAfterUse = "ERROR", $ShutdownDesktopsAfterUse
+    $IsSeverityErrorLevel = $True
     }
     else { 
     $tests.ShutdownAfterUse = "NEUTRAL", $ShutdownDesktopsAfterUse
@@ -3563,6 +4257,7 @@ foreach ($Assigment in $Assigments) {
         } else {
           $tests.DesktopsFree = "WARNING", $AssigmentDesktopsFree
           "DesktopsFree > 0 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
+          $IsSeverityWarningLevel = $True
         }
       } else {
         $tests.DesktopsFree = "NEUTRAL", "N/A"
@@ -3571,8 +4266,8 @@ foreach ($Assigment in $Assigments) {
 
     $AssigmentDesktopsenabled = $Assigment | ForEach-Object{ $_.enabled }
     "Enabled: $AssigmentDesktopsenabled" | LogMe -display -progress
-    if ($AssigmentDesktopsenabled) { $tests.enabled = "SUCCESS", "TRUE" }
-    else { $tests.Enabled = "WARNING", "FALSE" }
+    if ($AssigmentDesktopsenabled) { $tests.Enabled = "SUCCESS", "TRUE" }
+    else { $tests.Enabled = "WARNING", "FALSE" ; $IsSeverityWarningLevel = $True }
 
     #inMaintenanceMode
     $AssigmentDesktopsinMaintenanceMode = $Assigment | ForEach-Object{ $_.inMaintenanceMode }
@@ -3597,6 +4292,7 @@ foreach ($Assigment in $Assigments) {
       }
       "MaintenanceModeInfo: $AssigmentDesktopsinMaintenanceModeOn" | LogMe -display -progress
       $tests.MaintenanceMode = "WARNING", $AssigmentDesktopsinMaintenanceModeOn
+      $IsSeverityWarningLevel = $True
     }
     else { $tests.MaintenanceMode = "SUCCESS", "OFF" }
 
@@ -3606,6 +4302,7 @@ foreach ($Assigment in $Assigments) {
     if ($AssigmentDesktopsUnregistered -gt 0 ) {
       "DesktopsUnregistered > 0 ! ($AssigmentDesktopsUnregistered)" | LogMe -display -warning
       $tests.DesktopsUnregistered = "WARNING", $AssigmentDesktopsUnregistered
+      $IsSeverityWarningLevel = $True
     } else {
       $tests.DesktopsUnregistered = "SUCCESS", $AssigmentDesktopsUnregistered
       "DesktopsUnregistered <= 0 ! ($AssigmentDesktopsUnregistered)" | LogMe -display -progress
@@ -3625,6 +4322,7 @@ foreach ($Assigment in $Assigments) {
     } else {
       "DesktopsPowerStateUnknown: $($DesktopsPowerStateUnknown)" | LogMe -display -error
       $tests.DesktopsPowerStateUnknown = "ERROR", $DesktopsPowerStateUnknown
+      $IsSeverityErrorLevel = $True
     }
 
     $DesktopsNotUsedLast90Days = 0
@@ -3639,10 +4337,39 @@ foreach ($Assigment in $Assigments) {
     } else {
       "DesktopsNotUsedLast90Days: $($DesktopsNotUsedLast90Days)" | LogMe -display -warning
       $tests.DesktopsNotUsedLast90Days = "WARNING", $DesktopsNotUsedLast90Days
+      $IsSeverityWarningLevel = $True
     }
+
+    # Add the SiteName to the tests for the Syslog output
+    $tests.SiteName = "NORMAL", $sitename
 
     #Fill $tests into array
     $AssigmentsResults.$FullDeliveryGroupNameIncAdminFolder = $tests
+
+    If ($CheckOutputSyslog) {
+      # Set up the severity of the log entry based on the output of each test.
+      $Severity = "Informational"
+      If ($IsSeverityWarningLevel) { $Severity = "Warning" }
+      If ($IsSeverityErrorLevel) { $Severity = "Error" }
+      # Setup the PSCustomObject that will become the Data within the Structured Data
+      $Data = [PSCustomObject]@{
+        'DeliveryGroup' = $FullDeliveryGroupNameIncAdminFolder
+      }
+      $AssigmentsResults.$FullDeliveryGroupNameIncAdminFolder.GetEnumerator() | ForEach-Object {
+        $MyKey = $_.Key -replace " ", ""
+        $Data | Add-Member -MemberType NoteProperty $MyKey -Value $_.Value[1]
+      }
+      $sdString = ConvertTo-StructuredData -Id $StructuredDataID -Data $Data -AllowMoreParamChars
+      If ($SyslogFileOnly) {
+        Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$FullDeliveryGroupNameIncAdminFolder" `
+                              -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                              -LogFilePath "$resultsSyslog" -FileOnly
+      } Else {
+        Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$FullDeliveryGroupNameIncAdminFolder" `
+                              -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                              -LogFilePath "$resultsSyslog" -SyslogServer $SyslogServer
+      }
+    }
   }
   " --- " | LogMe -display -progress
 }
@@ -3695,6 +4422,9 @@ If ($null -ne $BrkrTags) {
       $Description = $BrkrTag.Description
       "Description: $($BrkrTag.Description)" | LogMe -display -progress
 
+      # Add the SiteName to the tests for the Syslog output
+      $tests.SiteName = "NORMAL", $sitename
+
       #Fill $tests into array
       $BrkrTagsResults.$Tag = $tests
     }
@@ -3723,6 +4453,8 @@ If ($CitrixCloudCheck -ne 1) {
 If ($null -ne $BrkrConFailures) {
 
   foreach ($BrkrConFailure in $BrkrConFailures) {
+    $IsSeverityErrorLevel = $False
+    $IsSeverityWarningLevel = $False
     $tests = @{}
 
     #Name of HypervisorConnection
@@ -3754,6 +4486,7 @@ If ($null -ne $BrkrConFailures) {
       # - Other - Other
       "ConnectionFailureReason: $($BrkrConFailure.ConnectionFailureReason)" | LogMe -display -progress
       $tests.ConnectionFailureReason = "WARNING", $ConnectionFailureReason
+      $IsSeverityWarningLevel = $True
 
       $BrokeringUserName = $BrkrConFailure.BrokeringUserName
       "BrokeringUserName: $($BrkrConFailure.BrokeringUserName)" | LogMe -display -progress
@@ -3763,8 +4496,37 @@ If ($null -ne $BrkrConFailures) {
       "BrokeringUserUPN: $($BrkrConFailure.BrokeringUserUPN)" | LogMe -display -progress
       $tests.BrokeringUserUPN = "NEUTRAL", $BrokeringUserUPN
 
+      # Add the SiteName to the tests for the Syslog output
+      $tests.SiteName = "NORMAL", $sitename
+
       #Fill $tests into array
       $BrokerConnectionLogResults.$MachineDNSName = $tests
+
+    If ($CheckOutputSyslog) {
+      # Set up the severity of the log entry based on the output of each test.
+      $Severity = "Informational"
+      If ($IsSeverityWarningLevel) { $Severity = "Warning" }
+      If ($IsSeverityErrorLevel) { $Severity = "Error" }
+      # Setup the PSCustomObject that will become the Data within the Structured Data
+      $Data = [PSCustomObject]@{
+        'BrokerConnectionFailure' = $MachineDNSName
+      }
+      $BrokerConnectionLogResults.$MachineDNSName.GetEnumerator() | ForEach-Object {
+        $MyKey = $_.Key -replace " ", ""
+        $Data | Add-Member -MemberType NoteProperty $MyKey -Value $_.Value[1]
+      }
+      $sdString = ConvertTo-StructuredData -Id $StructuredDataID -Data $Data -AllowMoreParamChars
+      If ($SyslogFileOnly) {
+        Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$MachineDNSName" `
+                              -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                              -LogFilePath "$resultsSyslog" -FileOnly
+      } Else {
+        Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$MachineDNSName" `
+                              -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                              -LogFilePath "$resultsSyslog" -SyslogServer $SyslogServer
+      }
+    }
+
     }
    " --- " | LogMe -display -progress
   }
@@ -3786,6 +4548,8 @@ If ($CitrixCloudCheck -ne 1) {
 
 If ($null -ne $BrkrHvsCons) {
   foreach ($BrkrHvsCon in $BrkrHvsCons) {
+    $IsSeverityErrorLevel = $False
+    $IsSeverityWarningLevel = $False
     $tests = @{}
 
     #Name of HypervisorConnection
@@ -3818,8 +4582,10 @@ If ($null -ne $BrkrHvsCons) {
       }
       "MaintenanceModeInfo: $BrkrHvsConState" | LogMe -display -progress
       $tests.State = "WARNING", $BrkrHvsConState
+      $IsSeverityWarningLevel = $True
     } Else {
       $tests.State = "ERROR", $BrkrHvsCon.State
+      $IsSeverityErrorLevel = $True
     }
 
     "IsReady: $($BrkrHvsCon.IsReady)" | LogMe -display -progress
@@ -3827,6 +4593,7 @@ If ($null -ne $BrkrHvsCons) {
       $tests.IsReady = "NEUTRAL", $BrkrHvsCon.IsReady
     } Else {
       $tests.IsReady = "ERROR", $BrkrHvsCon.IsReady
+      $IsSeverityErrorLevel = $True
     }
 
     "MachineCount: $($BrkrHvsCon.MachineCount)" | LogMe -display -progress
@@ -3838,6 +4605,7 @@ If ($null -ne $BrkrHvsCons) {
         $tests.FaultState = "NEUTRAL", $BrkrHvsCon.FaultState
       } Else {
         $tests.FaultState = "ERROR", $BrkrHvsCon.FaultState
+        $IsSeverityErrorLevel = $True
       }
     }
     Catch {
@@ -3869,10 +4637,37 @@ If ($null -ne $BrkrHvsCons) {
       "FaultStateDuration: Property does not exist on this object" | LogMe -display -progress
     }
 
+    # Add the SiteName to the tests for the Syslog output
+    $tests.SiteName = "NORMAL", $sitename
+
     #Fill $tests into array
     $HypervisorConnectionResults.$HypervisorConnectionName = $tests
 
-   " --- " | LogMe -display -progress
+    If ($CheckOutputSyslog) {
+      # Set up the severity of the log entry based on the output of each test.
+      $Severity = "Informational"
+      If ($IsSeverityWarningLevel) { $Severity = "Warning" }
+      If ($IsSeverityErrorLevel) { $Severity = "Error" }
+      # Setup the PSCustomObject that will become the Data within the Structured Data
+      $Data = [PSCustomObject]@{
+        'HostingConnection' = $HypervisorConnectionName
+      }
+      $HypervisorConnectionResults.$HypervisorConnectionName.GetEnumerator() | ForEach-Object {
+        $MyKey = $_.Key -replace " ", ""
+        $Data | Add-Member -MemberType NoteProperty $MyKey -Value $_.Value[1]
+      }
+      $sdString = ConvertTo-StructuredData -Id $StructuredDataID -Data $Data -AllowMoreParamChars
+      If ($SyslogFileOnly) {
+        Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$HypervisorConnectionName" `
+                              -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                              -LogFilePath "$resultsSyslog" -FileOnly
+      } Else {
+        Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$HypervisorConnectionName" `
+                              -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                              -LogFilePath "$resultsSyslog" -SyslogServer $SyslogServer
+      }
+    }
+    " --- " | LogMe -display -progress
   }
 } Else {
   " --- " | LogMe -display -progress
@@ -3911,7 +4706,6 @@ if($ShowDesktopTable -eq 1 ) {
   }
 
   $allResults = @{}
-  $ErrorVDI = 0
 
   If ($CitrixCloudCheck -ne 1) {
     $machines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -Filter "SessionSupport -eq 'SingleSession'" | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)} | Sort-Object DNSName
@@ -3925,6 +4719,8 @@ if($ShowDesktopTable -eq 1 ) {
   }
 
   foreach($machine in $machines) {
+    $IsSeverityErrorLevel = $False
+    $IsSeverityWarningLevel = $False
     $tests = @{}
     $ErrorVDI = 0
   
@@ -3934,6 +4730,8 @@ if($ShowDesktopTable -eq 1 ) {
       "Machine: $machineDNS" | LogMe -display -progress
     } Else {
       "Machine: This is an invalid computer object" | LogMe -display -error
+      $ErrorVDI = $ErrorVDI + 1
+      $IsSeverityErrorLevel = $True
     }
 
     # Column IPv4Address
@@ -3945,9 +4743,13 @@ if($ShowDesktopTable -eq 1 ) {
       }
       Catch [System.Net.Sockets.SocketException] {
         "Failed to lookup host in DNS: $($_.Exception.Message)" | LogMe -display -warning
+        $ErrorVDI = $ErrorVDI + 1
+        $IsSeverityWarningLevel = $True
       }
       Catch {
         "An unexpected error occurred: $($_.Exception.Message)" | LogMe -display -warning
+        $ErrorVDI = $ErrorVDI + 1
+        $IsSeverityWarningLevel = $True
       }
     }
 
@@ -3964,6 +4766,8 @@ if($ShowDesktopTable -eq 1 ) {
     } Else {
       "DeliveryGroup: This machine is not assigned to a Delivery Group" | LogMe -display -warning
       $tests.DeliveryGroup = "WARNING", $DeliveryGroup
+      $ErrorVDI = $ErrorVDI + 1
+      $IsSeverityWarningLevel = $True
     }
 
     # Column Powerstate
@@ -3977,6 +4781,8 @@ if($ShowDesktopTable -eq 1 ) {
     } else {
       "PowerState: $Powered" | LogMe -display -error
       $tests.PowerState = "ERROR", $Powered
+      $ErrorVDI = $ErrorVDI + 1
+      $IsSeverityErrorLevel = $True
     }
 
     # Column displaymode when a User has a Session
@@ -3999,6 +4805,8 @@ if($ShowDesktopTable -eq 1 ) {
         $tests.WinRM = "SUCCESS", $IsWinRMAccessible
       } Else {
         $tests.WinRM = "WARNING", $IsWinRMAccessible
+        $ErrorVDI = $ErrorVDI + 1
+        $IsSeverityWarningLevel = $True
       }
       "Can connect via WinRM: $IsWinRMAccessible" | LogMe -display -progress
 
@@ -4008,6 +4816,8 @@ if($ShowDesktopTable -eq 1 ) {
         $tests.WMI= "SUCCESS", $IsWMIAccessible
       } Else {
         $tests.WMI = "WARNING", $IsWMIAccessible
+        $ErrorVDI = $ErrorVDI + 1
+        $IsSeverityWarningLevel = $True
       }
       "Can connect via WMI: $IsWMIAccessible" | LogMe -display -progress
 
@@ -4017,6 +4827,8 @@ if($ShowDesktopTable -eq 1 ) {
         $tests.UNC= "SUCCESS", $IsUNCPathAccessible
       } Else {
         $tests.UNC = "WARNING", $IsUNCPathAccessible
+        $ErrorVDI = $ErrorVDI + 1
+        $IsSeverityWarningLevel = $True
       }
       "Can connect via UNC: $IsUNCPathAccessible" | LogMe -display -progress
 
@@ -4037,10 +4849,12 @@ if($ShowDesktopTable -eq 1 ) {
             "reboot warning, last reboot: {0:D}" -f $hostUptime.LBTime | LogMe -display -error
             $tests.Uptime = "ERROR", $hostUptime.TimeSpan.days
             $ErrorVDI = $ErrorVDI + 1
+            $IsSeverityErrorLevel = $True
           } elseif ($hostUptime.TimeSpan.days -gt $maxUpTimeDays) {
             "reboot warning, last reboot: {0:D}" -f $hostUptime.LBTime | LogMe -display -warning
             $tests.Uptime = "WARNING", $hostUptime.TimeSpan.days
             $ErrorVDI = $ErrorVDI + 1
+            $IsSeverityWarningLevel = $True
           } else { 
             If ($hostUptime.TimeSpan.days -gt 0) {
               "Uptime: $($hostUptime.TimeSpan.days)"  | LogMe -display -progress
@@ -4051,6 +4865,8 @@ if($ShowDesktopTable -eq 1 ) {
           }
         } else {
           "Unable to get host uptime" | LogMe -display -error
+          $ErrorVDI = $ErrorVDI + 1
+          $IsSeverityErrorLevel = $True
         }
 
         #==============================================================================================
@@ -4065,6 +4881,8 @@ if($ShowDesktopTable -eq 1 ) {
           } ElseIf ($CpuConfigAndUsage.LogicalProcessors -eq 1) {
             "- LogicalProcessors: $($CpuConfigAndUsage.LogicalProcessors)" | LogMe -display -warning
             $tests.LogicalProcessors = "WARNING", $CpuConfigAndUsage.LogicalProcessors
+            $ErrorVDI = $ErrorVDI + 1
+            $IsSeverityWarningLevel = $True
           } Else {
             "- LogicalProcessors: Unable to detect." | LogMe -display -progress
           }
@@ -4082,6 +4900,8 @@ if($ShowDesktopTable -eq 1 ) {
           }
         } else {
           "Unable to get CPU configuration and usage" | LogMe -display -error
+          $ErrorVDI = $ErrorVDI + 1
+          $IsSeverityErrorLevel = $True
         }
 
         #==============================================================================================
@@ -4095,9 +4915,13 @@ if($ShowDesktopTable -eq 1 ) {
         } ElseIf ($TotalPhysicalMemoryinGB -ge 2) {
           "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -warning
           $tests.TotalPhysicalMemoryinGB = "WARNING", $TotalPhysicalMemoryinGB
+          $ErrorVDI = $ErrorVDI + 1
+          $IsSeverityWarningLevel = $True
         } Else {
           "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -error
           $tests.TotalPhysicalMemoryinGB = "ERROR", $TotalPhysicalMemoryinGB
+          $ErrorVDI = $ErrorVDI + 1
+          $IsSeverityErrorLevel = $True
         }
 
         # Column OSBuild 
@@ -4116,9 +4940,13 @@ if($ShowDesktopTable -eq 1 ) {
             $tests.OSCaption = "ERROR", $return.Caption
             $tests.OSBuild = "ERROR", $return.Version
             "OS Test: $($return.Error)" | LogMe -display -error
+            $ErrorVDI = $ErrorVDI + 1
+            $IsSeverityErrorLevel = $True
           }
         } else {
           "Unable to get OS Version and Caption" | LogMe -display -error
+          $ErrorVDI = $ErrorVDI + 1
+          $IsSeverityErrorLevel = $True
         }
 
         ################ Start PVS SECTION ###############
@@ -4163,9 +4991,13 @@ if($ShowDesktopTable -eq 1 ) {
               }
               elseif ($WriteCacheDriveInfo.Output_To_Log2 -like "*low*") {
                 $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -warning
+                $ErrorVDI = $ErrorVDI + 1
+                $IsSeverityWarningLevel = $True
               }
               else {
                 $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -error
+                $ErrorVDI = $ErrorVDI + 1
+                $IsSeverityErrorLevel = $True
               }
             }
 
@@ -4184,11 +5016,15 @@ if($ShowDesktopTable -eq 1 ) {
                 # If the cache file is less than 80% the max size, flag as a warning
                 "WriteCache file size moderate" | LogMe -display -warning
                 $tests.vhdxSize_inGB = "WARNING", "{0:n3} GB" -f($CacheDiskGB)
+                $ErrorVDI = $ErrorVDI + 1
+                $IsSeverityWarningLevel = $True
               }
               else {
                 # Flag as an error when 80% or greater
                 "WriteCache file size is high" | LogMe -display -error
                 $tests.vhdxSize_inGB = "ERROR", "{0:n3} GB" -f($CacheDiskGB)
+                $ErrorVDI = $ErrorVDI + 1
+                $IsSeverityErrorLevel = $True
               }
             } Else {
               $tests.vhdxSize_inGB = $WriteCacheDriveInfo.Output_For_HTML3, $WriteCacheDriveInfo.vhdxSize_inMB
@@ -4198,6 +5034,8 @@ if($ShowDesktopTable -eq 1 ) {
             }
             else {
               $WriteCacheDriveInfo.Output_To_Log3 | LogMe -display -error
+              $ErrorVDI = $ErrorVDI + 1
+              $IsSeverityErrorLevel = $True
             }
 
           }
@@ -4233,6 +5071,8 @@ if($ShowDesktopTable -eq 1 ) {
               $return.Output_To_Log | LogMe -display -progress
             } else {
               $return.Output_To_Log | LogMe -display -error
+              $ErrorVDI = $ErrorVDI + 1
+              $IsSeverityErrorLevel = $True
             }
           } Else {
             # UNC Path is not accessible
@@ -4262,8 +5102,17 @@ if($ShowDesktopTable -eq 1 ) {
               $tests.Spooler = "SUCCESS","Success"
             }
             else {
-              "SPOOLER service stopped" | LogMe -display -error
-              $tests.Spooler = "ERROR","Error"
+              If ($MarkSpoolerAsWarningOnly -eq 0) {
+                "SPOOLER service stopped" | LogMe -display -error
+                $tests.Spooler = "ERROR","Error"
+                $ErrorVDI = $ErrorVDI + 1
+                $IsSeverityErrorLevel = $True
+              } Else {
+                "SPOOLER service stopped" | LogMe -display -warning
+                $tests.Spooler = "WARNING","Warning"
+                $ErrorVDI = $ErrorVDI + 1
+                $IsSeverityWarningLevel = $True
+              }
             }
 
             if (($services | Where-Object {$_.Name -eq "cpsvc"}).Status -Match "Running") {
@@ -4271,12 +5120,23 @@ if($ShowDesktopTable -eq 1 ) {
               $tests.CitrixPrint = "SUCCESS","Success"
             }
             else {
-              "Citrix Print Manager service stopped" | LogMe -display -error
-              $tests.CitrixPrint = "ERROR","Error"
+              If ($MarkSpoolerAsWarningOnly -eq 0) {
+                "Citrix Print Manager service stopped" | LogMe -display -error
+                $tests.CitrixPrint = "ERROR","Error"
+                $ErrorVDI = $ErrorVDI + 1
+                $IsSeverityErrorLevel = $True
+              } Else {
+                "Citrix Print Manager service stopped" | LogMe -display -warning
+                $tests.CitrixPrint = "WARNING","Warning"
+                $ErrorVDI = $ErrorVDI + 1
+                $IsSeverityWarningLevel = $True
+              }
             }
           }
           Catch {
             #"Error returned while checking the services" | LogMe -error; return 101
+            #$ErrorVDI = $ErrorVDI + 1
+            #$IsSeverityErrorLevel = $True
           }
         } Else {
           # Cannot connect via WinRM
@@ -4291,8 +5151,17 @@ if($ShowDesktopTable -eq 1 ) {
               $tests.Spooler = "SUCCESS","Success"
             }
             else {
-              "SPOOLER service stopped" | LogMe -display -error
-              $tests.Spooler = "ERROR","Error"
+              If ($MarkSpoolerAsWarningOnly -eq 0) {
+                "SPOOLER service stopped" | LogMe -display -error
+                $tests.Spooler = "ERROR","Error"
+                $ErrorVDI = $ErrorVDI + 1
+                $IsSeverityErrorLevel = $True
+              } Else {
+                "SPOOLER service stopped" | LogMe -display -warning
+                $tests.Spooler = "WARNING","Warning"
+                $ErrorVDI = $ErrorVDI + 1
+                $IsSeverityWarningLevel = $True
+              }
             }
 
             if (($services | Where-Object {$_.Name -eq "cpsvc"}).State -Match "Running") {
@@ -4300,12 +5169,23 @@ if($ShowDesktopTable -eq 1 ) {
               $tests.CitrixPrint = "SUCCESS","Success"
             }
             else {
-              "Citrix Print Manager service stopped" | LogMe -display -error
-              $tests.CitrixPrint = "ERROR","Error"
+              If ($MarkSpoolerAsWarningOnly -eq 0) {
+                "Citrix Print Manager service stopped" | LogMe -display -error
+                $tests.CitrixPrint = "ERROR","Error"
+                $ErrorVDI = $ErrorVDI + 1
+                $IsSeverityErrorLevel = $True
+              } Else {
+                "Citrix Print Manager service stopped" | LogMe -display -warning
+                $tests.CitrixPrint = "WARNING","Warning"
+                $ErrorVDI = $ErrorVDI + 1
+                $IsSeverityWarningLevel = $True
+              }
             }
           }
           Catch {
             #"Error returned while checking the services" | LogMe -error; return 101
+            #$ErrorVDI = $ErrorVDI + 1
+            #$IsSeverityErrorLevel = $True
           }
         } Else {
           # Cannot connect via WMI
@@ -4483,35 +5363,47 @@ if($ShowDesktopTable -eq 1 ) {
 
         # Check CrowdStrike State
         If ($ShowCrowdStrikeTests -eq 1) {
-          If ($UseWinRM) {
+          If ($IsWinRMAccessible) {
             $return = Get-CrowdStrikeServiceStatus -ComputerName:$machineDNS
             If ($null -ne $return) {
               If ($return.CSFalconInstalled -AND $return.CSAgentInstalled) {
                 "CrowdStrike Installed: True" | LogMe -display -progress
                 "- CrowdStrike Windows Sensor Version: $($return.InstalledVersion)" | LogMe -display -progress
+                $tests.CSVersion = "NORMAL", $return.InstalledVersion
                 "- CrowdStrike Company ID (CID): $($return.CID)" | LogMe -display -progress
+                $tests.CSCID = "NORMAL", $return.CID
                 "- CrowdStrike Sensor Grouping Tags: $($return.SensorGroupingTags)" | LogMe -display -progress
                 $tests.CSGroupTags = "NORMAL", $return.SensorGroupingTags
                 "- CrowdStrike VDI switch: $($return.VDI)" | LogMe -display -progress
                 If ($return.CSFalconServiceRunning -AND $return.CSAgentServiceRunning -AND (![string]::IsNullOrEmpty($return.AID))) {
                   $tests.CSEnabled = "SUCCESS", $True
                   "- CrowdStrike Agent ID (AID): $($return.AID)" | LogMe -display -progress
+                  $tests.CSAID = "NORMAL", $return.AID
                 } Else {
                   $tests.CSEnabled = "WARNING", $False
+                  If ([string]::IsNullOrEmpty($return.AID)) {
+                    "- CrowdStrike Agent ID (AID) is missing" | LogMe -display -warning
+                    $tests.CSAID = "NORMAL", "Missing"
+                  } Else {
+                    "- CrowdStrike is installed, but not running" | LogMe -display -warning
+                  }
+                  $IsSeverityWarningLevel = $True
                 }
               } else {
                 "CrowdStrike Installed: False" | LogMe -display -progress
               }
             } else {
               "Unable to get the CrowdStrike Service Status" | LogMe -display -error
+              $IsSeverityErrorLevel = $True
             }
           }
         }
 
       }#If can connect via WinRM or WMI
       else {
-        $ErrorVDI = $ErrorVDI + 0 # No WinRM or WMI connectivity
         "WinRM or WMI connection not possible" | LogMe -display -error
+        $ErrorVDI = $ErrorVDI + 1
+        $IsSeverityErrorLevel = $True
       } # Closing else cannot connect via WinRM or WMI
 
     } # Close off $Powered -eq "On", "Unknown", or "Unmanaged"
@@ -4526,6 +5418,7 @@ if($ShowDesktopTable -eq 1 ) {
         "RegistrationState: $RegState" | LogMe -display -error
         $tests.RegState = "ERROR", $RegState
         $ErrorVDI = $ErrorVDI + 1
+        $IsSeverityErrorLevel = $True
       }
     } else {
       "RegistrationState: $RegState" | LogMe -display -progress
@@ -4556,6 +5449,7 @@ if($ShowDesktopTable -eq 1 ) {
       "MaintenanceModeInfo: $MaintenanceModeOn" | LogMe -display -progress
       $tests.MaintMode = "WARNING", $MaintenanceModeOn
       $ErrorVDI = $ErrorVDI + 1
+      $IsSeverityWarningLevel = $True
     }
     else { $tests.MaintMode = "SUCCESS", "OFF" }
   
@@ -4566,8 +5460,31 @@ if($ShowDesktopTable -eq 1 ) {
 
     # Column VDAVersion AgentVersion
     $VDAVersion = $machine | ForEach-Object{ $_.AgentVersion }
-    "VDAVersion: $VDAVersion" | LogMe -display -progress
-    $tests.VDAVersion = "NEUTRAL", $VDAVersion
+    $Found = $False
+    If ($SupportedVDAVersions.Count -gt 0) {
+      If (!([String]::IsNullOrEmpty($SupportedVDAVersions[0]))) {
+        ForEach ($SupportedVDAVersion in $SupportedVDAVersions) {
+          If ($VDAVersion -Like $SupportedVDAVersion) {
+            $Found = $True
+            break
+          }
+        }
+        If ($SupportedVDAVersions -contains $VDAVersion) {
+          $Found = $True
+        }
+      }
+    } Else {
+      $Found = $True
+    }
+    If ($Found) {
+      "VDAVersion: $VDAVersion" | LogMe -display -progress
+      $tests.VDAVersion = "NEUTRAL", $VDAVersion
+    } Else {
+      "VDAVersion: $VDAVersion" | LogMe -display -warning
+      $tests.VDAVersion = "WARNING", $VDAVersion
+      $ErrorVDI = $ErrorVDI + 1
+      $IsSeverityWarningLevel = $True
+    }
 
     # Column AssociatedUserNames
     $AssociatedUserNames = $machine | ForEach-Object{ $_.AssociatedUserNames }
@@ -4606,6 +5523,8 @@ if($ShowDesktopTable -eq 1 ) {
         } else {
           "MCSImageOutOfDate: $MCSImageOutOfDate" | LogMe -display -error
           $tests.MCSImageOutOfDate = "ERROR", $MCSImageOutOfDate
+          $ErrorVDI = $ErrorVDI + 1
+          $IsSeverityErrorLevel = $True
         }
       } else {
         "MCSImageOutOfDate: $MCSImageOutOfDate" | LogMe -display -progress
@@ -4629,17 +5548,24 @@ if($ShowDesktopTable -eq 1 ) {
     {
       "LastConnectionTime: $machineLastConnectionTime" | LogMe -display -ERROR
       $tests.LastConnectionTime = "ERROR", $machineLastConnectionTime
+      $ErrorVDI = $ErrorVDI + 1
+      $IsSeverityErrorLevel = $True
     } 	
     elseif ($machineLastConnectionTime -lt $yellow)
     {
       "LastConnectionTime: $machineLastConnectionTime" | LogMe -display -WARNING
       $tests.LastConnectionTime = "WARNING", $machineLastConnectionTime
+      $ErrorVDI = $ErrorVDI + 1
+      $IsSeverityWarningLevel = $True
     }
     else 
     {
       $tests.LastConnectionTime = "SUCCESS", $machineLastConnectionTime
       "LastConnectionTime: $machineLastConnectionTime" | LogMe -display -progress
     }
+
+    # Add the SiteName to the tests for the Syslog output
+    $tests.SiteName = "NORMAL", $sitename
 
     # Fill $tests into array if error occured OR $ShowOnlyErrorVDI = 0
     # Check if error exists on this vdi
@@ -4649,6 +5575,32 @@ if($ShowDesktopTable -eq 1 ) {
       else { "$machineDNS is ok, no output into HTML-File" | LogMe -display -progress }
     }
 
+    If ($tests.Count -gt 0) {
+      If ($CheckOutputSyslog) {
+        # Set up the severity of the log entry based on the output of each test.
+        $Severity = "Informational"
+        If ($IsSeverityWarningLevel) { $Severity = "Warning" }
+        If ($IsSeverityErrorLevel) { $Severity = "Error" }
+        # Setup the PSCustomObject that will become the Data within the Structured Data
+        $Data = [PSCustomObject]@{
+          'SingleSessionHost' = $machineDNS
+        }
+        $allResults.$machineDNS.GetEnumerator() | ForEach-Object {
+          $MyKey = $_.Key -replace " ", ""
+          $Data | Add-Member -MemberType NoteProperty $MyKey -Value $_.Value[1]
+        }
+        $sdString = ConvertTo-StructuredData -Id $StructuredDataID -Data $Data -AllowMoreParamChars
+        If ($SyslogFileOnly) {
+          Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$machineDNS" `
+                                -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                                -LogFilePath "$resultsSyslog" -FileOnly
+        } Else {
+          Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$machineDNS" `
+                                -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                                -LogFilePath "$resultsSyslog" -SyslogServer $SyslogServer
+        }
+      }
+    }
     " --- " | LogMe -display -progress
 
   } # Close off foreach $machine
@@ -4698,7 +5650,6 @@ if($ShowXenAppTable -eq 1 ) {
   }
 
   $allXenAppResults = @{}
-  $ErrorXA = 0
 
   If ($CitrixCloudCheck -ne 1) {
     $XAmachines = Get-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -Filter "SessionSupport -eq 'MultiSession'"  | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)} | Sort-Object DNSName
@@ -4712,6 +5663,8 @@ if($ShowXenAppTable -eq 1 ) {
   }
 
   foreach ($XAmachine in $XAmachines) {
+    $IsSeverityErrorLevel = $False
+    $IsSeverityWarningLevel = $False
     $tests = @{}
     $ErrorXA = 0
 
@@ -4721,6 +5674,8 @@ if($ShowXenAppTable -eq 1 ) {
       "Machine: $machineDNS" | LogMe -display -progress
     } Else {
       "Machine: This is an invalid computer object" | LogMe -display -error
+      $ErrorXA = $ErrorXA + 1
+      $IsSeverityErrorLevel = $True
     }
 
     # Column IPv4Address
@@ -4732,9 +5687,13 @@ if($ShowXenAppTable -eq 1 ) {
       }
       Catch [System.Net.Sockets.SocketException] {
         "Failed to lookup host in DNS: $($_.Exception.Message)" | LogMe -display -warning
+        $ErrorXA = $ErrorXA + 1
+        $IsSeverityWarningLevel = $True
       }
       Catch {
         "An unexpected error occurred: $($_.Exception.Message)" | LogMe -display -warning
+        $ErrorXA = $ErrorXA + 1
+        $IsSeverityWarningLevel = $True
       }
     }
 
@@ -4751,6 +5710,8 @@ if($ShowXenAppTable -eq 1 ) {
     } Else {
       "DeliveryGroup: This machine is not assigned to a Delivery Group" | LogMe -display -warning
       $tests.DeliveryGroup = "WARNING", $DeliveryGroup
+      $ErrorXA = $ErrorXA + 1
+      $IsSeverityWarningLevel = $True
     }
 
     # Column Powerstate
@@ -4764,6 +5725,8 @@ if($ShowXenAppTable -eq 1 ) {
     } else {
       "PowerState: $Powered" | LogMe -display -error
       $tests.PowerState = "ERROR", $Powered
+      $ErrorXA = $ErrorXA + 1
+      $IsSeverityErrorLevel = $True
     }
 
     if ($Powered -eq "On" -OR $Powered -eq "Unknown" -OR $Powered -eq "Unmanaged") {
@@ -4783,6 +5746,8 @@ if($ShowXenAppTable -eq 1 ) {
         $tests.WinRM = "SUCCESS", $IsWinRMAccessible
       } Else {
         $tests.WinRM = "WARNING", $IsWinRMAccessible
+        $ErrorXA = $ErrorXA + 1
+        $IsSeverityWarningLevel = $True
       }
       "Can connect via WinRM: $IsWinRMAccessible" | LogMe -display -progress
 
@@ -4792,6 +5757,8 @@ if($ShowXenAppTable -eq 1 ) {
         $tests.WMI= "SUCCESS", $IsWMIAccessible
       } Else {
         $tests.WMI = "WARNING", $IsWMIAccessible
+        $ErrorXA = $ErrorXA + 1
+        $IsSeverityWarningLevel = $True
       }
       "Can connect via WMI: $IsWMIAccessible" | LogMe -display -progress
 
@@ -4801,6 +5768,8 @@ if($ShowXenAppTable -eq 1 ) {
         $tests.UNC= "SUCCESS", $IsUNCPathAccessible
       } Else {
         $tests.UNC = "WARNING", $IsUNCPathAccessible
+        $ErrorXA = $ErrorXA + 1
+        $IsSeverityWarningLevel = $True
       }
       "Can connect via UNC: $IsUNCPathAccessible" | LogMe -display -progress
 
@@ -4820,10 +5789,12 @@ if($ShowXenAppTable -eq 1 ) {
             "reboot warning, last reboot: {0:D}" -f $hostUptime.LBTime | LogMe -display -error
             $tests.Uptime = "ERROR", $hostUptime.TimeSpan.days
             $ErrorXA = $ErrorXA + 1
+            $IsSeverityErrorLevel = $True
           } elseif ($hostUptime.TimeSpan.days -gt $maxUpTimeDays) {
             "reboot warning, last reboot: {0:D}" -f $hostUptime.LBTime | LogMe -display -warning
             $tests.Uptime = "WARNING", $hostUptime.TimeSpan.days
             $ErrorXA = $ErrorXA + 1
+            $IsSeverityWarningLevel = $True
           } else {
             If ($hostUptime.TimeSpan.days -gt 0) {
               "Uptime: $($hostUptime.TimeSpan.days)"  | LogMe -display -progress
@@ -4834,6 +5805,8 @@ if($ShowXenAppTable -eq 1 ) {
           }
         } else {
           "Unable to get host uptime" | LogMe -display -error
+          $ErrorXA = $ErrorXA + 1
+          $IsSeverityErrorLevel = $True
         }
 
         #==============================================================================================
@@ -4844,10 +5817,10 @@ if($ShowXenAppTable -eq 1 ) {
         If ($null -ne $CpuConfigAndUsage) {
           $XAAvgCPUval = $CpuConfigAndUsage.CpuUsage
           if( [int] $XAAvgCPUval -lt 75) { "CPU usage is normal [ $XAAvgCPUval % ]" | LogMe -display; $tests.AvgCPU = "SUCCESS", "$XAAvgCPUval %" }
-          elseif([int] $XAAvgCPUval -lt 85) { "CPU usage is medium [ $XAAvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$XAAvgCPUval %" }   	
-          elseif([int] $XAAvgCPUval -lt 95) { "CPU usage is high [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %" }
-          elseif([int] $XAAvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err" }
-          else { "CPU usage is Critical [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %" }   
+          elseif([int] $XAAvgCPUval -lt 85) { "CPU usage is medium [ $XAAvgCPUval % ]" | LogMe -warning; $tests.AvgCPU = "WARNING", "$XAAvgCPUval %" ; $ErrorXA = $ErrorXA + 1 ; $IsSeverityWarningLevel = $True }   	
+          elseif([int] $XAAvgCPUval -lt 95) { "CPU usage is high [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %" ; $ErrorXA = $ErrorXA + 1 ; $IsSeverityErrorLevel = $True }
+          elseif([int] $XAAvgCPUval -eq 101) { "CPU usage test failed" | LogMe -error; $tests.AvgCPU = "ERROR", "Err" ; $ErrorXA = $ErrorXA + 1 ; $IsSeverityErrorLevel = $True }
+          else { "CPU usage is Critical [ $XAAvgCPUval % ]" | LogMe -error; $tests.AvgCPU = "ERROR", "$XAAvgCPUval %" ; $ErrorXA = $ErrorXA + 1 ; $IsSeverityErrorLevel = $True }
           $XAAvgCPUval = 0
           "CPU Configuration:" | LogMe -display -progress
           If ($CpuConfigAndUsage.LogicalProcessors -gt 1) {
@@ -4856,6 +5829,8 @@ if($ShowXenAppTable -eq 1 ) {
           } ElseIf ($CpuConfigAndUsage.LogicalProcessors -eq 1) {
             "- LogicalProcessors: $($CpuConfigAndUsage.LogicalProcessors)" | LogMe -display -warning
             $tests.LogicalProcessors = "WARNING", $CpuConfigAndUsage.LogicalProcessors
+            $ErrorXA = $ErrorXA + 1
+            $IsSeverityWarningLevel = $True
           } Else {
             "- LogicalProcessors: Unable to detect." | LogMe -display -progress
           }
@@ -4873,6 +5848,8 @@ if($ShowXenAppTable -eq 1 ) {
           }
         } else {
           "Unable to get CPU configuration and usage" | LogMe -display -error
+          $ErrorXA = $ErrorXA + 1
+          $IsSeverityErrorLevel = $True
         }
 
         #==============================================================================================
@@ -4882,13 +5859,15 @@ if($ShowXenAppTable -eq 1 ) {
 
         If ($null -ne $XAUsedMemory) {
           if( [int] $XAUsedMemory -lt 75) { "Memory usage is normal [ $XAUsedMemory % ]" | LogMe -display; $tests.MemUsg = "SUCCESS", "$XAUsedMemory %" }
-          elseif( [int] $XAUsedMemory -lt 85) { "Memory usage is medium [ $XAUsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$XAUsedMemory %" }   	
-          elseif( [int] $XAUsedMemory -lt 95) { "Memory usage is high [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" }
-          elseif( [int] $XAUsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" }
-          else { "Memory usage is Critical [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" }   
+          elseif( [int] $XAUsedMemory -lt 85) { "Memory usage is medium [ $XAUsedMemory % ]" | LogMe -warning; $tests.MemUsg = "WARNING", "$XAUsedMemory %" ; $ErrorXA = $ErrorXA + 1 ; $IsSeverityWarningLevel = $True }   	
+          elseif( [int] $XAUsedMemory -lt 95) { "Memory usage is high [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" ; $ErrorXA = $ErrorXA + 1 ; $IsSeverityErrorLevel = $True }
+          elseif( [int] $XAUsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $tests.MemUsg = "ERROR", "Err" ; $ErrorXA = $ErrorXA + 1 ; $IsSeverityErrorLevel = $True }
+          else { "Memory usage is Critical [ $XAUsedMemory % ]" | LogMe -error; $tests.MemUsg = "ERROR", "$XAUsedMemory %" ; $ErrorXA = $ErrorXA + 1 ; $IsSeverityErrorLevel = $True }   
           $XAUsedMemory = 0  
         } else {
           "Unable to get Memory usage" | LogMe -display -error
+          $ErrorXA = $ErrorXA + 1
+          $IsSeverityErrorLevel = $True
         }
 
         # Get the total Physical Memory
@@ -4899,9 +5878,13 @@ if($ShowXenAppTable -eq 1 ) {
         } ElseIf ($TotalPhysicalMemoryinGB -ge 2) {
           "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -warning
           $tests.TotalPhysicalMemoryinGB = "WARNING", $TotalPhysicalMemoryinGB
+          $ErrorXA = $ErrorXA + 1
+          $IsSeverityWarningLevel = $True
         } Else {
           "Total Physical Memory: $($TotalPhysicalMemoryinGB) GB" | LogMe -display -error
           $tests.TotalPhysicalMemoryinGB = "ERROR", $TotalPhysicalMemoryinGB
+          $ErrorXA = $ErrorXA + 1
+          $IsSeverityErrorLevel = $True
         }
 
         #==============================================================================================
@@ -4915,15 +5898,17 @@ if($ShowXenAppTable -eq 1 ) {
             $XAPercentageDS = $HardDisk.PercentageDS
             $frSpace = $HardDisk.frSpace
             If ( [int] $XAPercentageDS -gt 15) { "Disk Free is normal [ $XAPercentageDS % ]" | LogMe -display; $tests."$($disk)Freespace" = "SUCCESS", "$frSpace GB" } 
-            ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests.CFreespace = "ERROR", "Err" }
-            ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" } 
-            ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests."$($disk)Freespace" = "WARNING", "$frSpace GB" }     
-            Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" }
+            ElseIf ([int] $XAPercentageDS -eq 0) { "Disk Free test failed" | LogMe -error; $tests.CFreespace = "ERROR", "Err" ; $ErrorXA = $ErrorXA + 1 ; $IsSeverityErrorLevel = $True }
+            ElseIf ([int] $XAPercentageDS -lt 5) { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" ; $ErrorXA = $ErrorXA + 1 ; $IsSeverityErrorLevel = $True } 
+            ElseIf ([int] $XAPercentageDS -lt 15) { "Disk Free is Low [ $XAPercentageDS % ]" | LogMe -warning; $tests."$($disk)Freespace" = "WARNING", "$frSpace GB" ; $ErrorXA = $ErrorXA + 1 ; $IsSeverityWarningLevel = $True }     
+            Else { "Disk Free is Critical [ $XAPercentageDS % ]" | LogMe -error; $tests."$($disk)Freespace" = "ERROR", "$frSpace GB" ; $ErrorXA = $ErrorXA + 1 ; $IsSeverityErrorLevel = $True }
             $XAPercentageDS = 0
             $frSpace = 0
             $HardDisk = $null
           } else {
             "Unable to get Hard Disk usage" | LogMe -display -error
+            $ErrorXA = $ErrorXA + 1
+            $IsSeverityErrorLevel = $True
           }
         }
  
@@ -4943,9 +5928,13 @@ if($ShowXenAppTable -eq 1 ) {
             $tests.OSCaption = "ERROR", $return.Caption
             $tests.OSBuild = "ERROR", $return.Version
             "OS Test: $($return.Error)" | LogMe -display -error
+            $ErrorXA = $ErrorXA + 1
+            $IsSeverityErrorLevel = $True
           }
         } else {
           "Unable to get OS Version and Caption" | LogMe -display -error
+          $ErrorXA = $ErrorXA + 1
+          $IsSeverityErrorLevel = $True
         }
 
         ################ Start PVS SECTION ###############
@@ -4990,9 +5979,13 @@ if($ShowXenAppTable -eq 1 ) {
               }
               elseif ($WriteCacheDriveInfo.Output_To_Log2 -like "*low*") {
                 $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -warning
+                $ErrorXA = $ErrorXA + 1
+                $IsSeverityWarningLevel = $True
               }
               else {
                 $WriteCacheDriveInfo.Output_To_Log2 | LogMe -display -error
+                $ErrorXA = $ErrorXA + 1
+                $IsSeverityErrorLevel = $True
               }
             }
 
@@ -5011,11 +6004,15 @@ if($ShowXenAppTable -eq 1 ) {
                 # If the cache file is less than 80% the max size, flag as a warning
                 "WriteCache file size moderate" | LogMe -display -warning
                 $tests.vhdxSize_inGB = "WARNING", ("{0:n3} GB" -f($CacheDiskGB))
+                $ErrorXA = $ErrorXA + 1
+                $IsSeverityWarningLevel = $True
               }
               else {
                 # Flag as an error when 80% or greater
                 "WriteCache file size is high" | LogMe -display -error
                 $tests.vhdxSize_inGB = "ERROR", ("{0:n3} GB" -f($CacheDiskGB))
+                $ErrorXA = $ErrorXA + 1
+                $IsSeverityErrorLevel = $True
               }
             } Else {
               $tests.vhdxSize_inGB = $WriteCacheDriveInfo.Output_For_HTML3, $WriteCacheDriveInfo.vhdxSize_inMB
@@ -5025,6 +6022,8 @@ if($ShowXenAppTable -eq 1 ) {
             }
             else {
               $WriteCacheDriveInfo.Output_To_Log3 | LogMe -display -error
+              $ErrorXA = $ErrorXA + 1
+              $IsSeverityErrorLevel = $True
             }
 
           }
@@ -5060,6 +6059,8 @@ if($ShowXenAppTable -eq 1 ) {
               $return.Output_To_Log | LogMe -display -progress
             } else {
               $return.Output_To_Log | LogMe -display -error
+              $ErrorXA = $ErrorXA + 1
+              $IsSeverityErrorLevel = $True
             }
           } Else {
             # UNC Path is not accessible
@@ -5083,9 +6084,13 @@ if($ShowXenAppTable -eq 1 ) {
           }
           elseif ($return.Output_To_Log -like "*Warning*") {
             $return.Output_To_Log | LogMe -display -warning
+            $ErrorXA = $ErrorXA + 1
+            $IsSeverityWarningLevel = $True
           }
           else {
             $return.Output_To_Log | LogMe -display -error
+            $ErrorXA = $ErrorXA + 1
+            $IsSeverityErrorLevel = $True
           }
           If ($return.TerminalServerMode -eq "AppServer") {
             $tests.TerminalServerMode = "SUCCESS",$return.TerminalServerMode
@@ -5095,11 +6100,15 @@ if($ShowXenAppTable -eq 1 ) {
             "TerminalServerMode: $($return.TerminalServerMode)" | LogMe -display -Error
             If ($return.TerminalServerMode -eq "RemoteAdmin") {
               "RemoteAdmin mode does not have a GetGracePeriodDays method or path to query" | LogMe -display -Error
+              $ErrorXA = $ErrorXA + 1
+              $IsSeverityErrorLevel = $True
             }
           }
           If ([string]::IsNullOrEmpty($return.LicensingName) -OR $return.LicensingName -eq "Unknown") {
             $tests.LicensingName = "ERROR", $return.LicensingName
             "LicensingName: $($return.LicensingName)" | LogMe -display -error
+            $ErrorXA = $ErrorXA + 1
+            $IsSeverityErrorLevel = $True
           } ELse {
             $tests.LicensingName = "NEUTRAL", $return.LicensingName
             "LicensingName: $($return.LicensingName)" | LogMe -display -progress
@@ -5107,6 +6116,8 @@ if($ShowXenAppTable -eq 1 ) {
           If ($return.LicensingType -eq "5" -OR $return.LicensingType -eq "Unknown") {
             $tests.LicensingType = "ERROR", $return.LicensingType
             "LicensingType: $($return.LicensingType)" | LogMe -display -error
+            $ErrorXA = $ErrorXA + 1
+            $IsSeverityErrorLevel = $True
           } Else {
             $tests.LicensingType = "NEUTRAL", $return.LicensingType
             "LicensingType: $($return.LicensingType)" | LogMe -display -progress
@@ -5114,6 +6125,8 @@ if($ShowXenAppTable -eq 1 ) {
           If ($return.LicenseServerList -eq "Unknown") {
             $tests.LicenseServerList = "ERROR", $return.LicenseServerList
             "LicenseServerList: $($return.LicenseServerList)" | LogMe -display -error
+            $ErrorXA = $ErrorXA + 1
+            $IsSeverityErrorLevel = $True
           } Else {
             $tests.LicenseServerList = "NEUTRAL", $return.LicenseServerList
             "LicenseServerList: $($return.LicenseServerList)" | LogMe -display -progress
@@ -5148,8 +6161,17 @@ if($ShowXenAppTable -eq 1 ) {
               $tests.Spooler = "SUCCESS","Success"
             }
             else {
-              "SPOOLER service stopped" | LogMe -display -error
-              $tests.Spooler = "ERROR","Error"
+              If ($MarkSpoolerAsWarningOnly -eq 0) {
+                "SPOOLER service stopped" | LogMe -display -error
+                $tests.Spooler = "ERROR","Error"
+                $ErrorXA = $ErrorXA + 1
+                $IsSeverityErrorLevel = $True
+              } Else {
+                "SPOOLER service stopped" | LogMe -display -warning
+                $tests.Spooler = "WARNING","Warning"
+                $ErrorXA = $ErrorXA + 1
+                $IsSeverityWarningLevel = $True
+              }
             }
 
             if (($services | Where-Object {$_.Name -eq "cpsvc"}).Status -Match "Running") {
@@ -5157,12 +6179,23 @@ if($ShowXenAppTable -eq 1 ) {
               $tests.CitrixPrint = "SUCCESS","Success"
             }
             else {
-              "Citrix Print Manager service stopped" | LogMe -display -error
-              $tests.CitrixPrint = "ERROR","Error"
+              If ($MarkSpoolerAsWarningOnly -eq 0) {
+                "Citrix Print Manager service stopped" | LogMe -display -error
+                $tests.CitrixPrint = "ERROR","Error"
+                $ErrorXA = $ErrorXA + 1
+                $IsSeverityErrorLevel = $True
+              } Else {
+                "Citrix Print Manager service stopped" | LogMe -display -warning
+                $tests.CitrixPrint = "WARNING","Warning"
+                $ErrorXA = $ErrorXA + 1
+                $IsSeverityWarningLevel = $True
+              }
             }
           }
           Catch {
             #"Error returned while checking the services" | LogMe -error; return 101
+            #$ErrorXA = $ErrorXA + 1
+            #$IsSeverityErrorLevel = $True
           }
         } Else {
           # Cannot connect via WinRM
@@ -5177,8 +6210,17 @@ if($ShowXenAppTable -eq 1 ) {
               $tests.Spooler = "SUCCESS","Success"
             }
             else {
-              "SPOOLER service stopped" | LogMe -display -error
-              $tests.Spooler = "ERROR","Error"
+              If ($MarkSpoolerAsWarningOnly -eq 0) {
+                "SPOOLER service stopped" | LogMe -display -error
+                $tests.Spooler = "ERROR","Error"
+                $ErrorXA = $ErrorXA + 1
+                $IsSeverityErrorLevel = $True
+              } Else {
+                "SPOOLER service stopped" | LogMe -display -warning
+                $tests.Spooler = "WARNING","Warning"
+                $ErrorXA = $ErrorXA + 1
+                $IsSeverityWarningLevel = $True
+              }
             }
 
             if (($services | Where-Object {$_.Name -eq "cpsvc"}).State -Match "Running") {
@@ -5186,12 +6228,23 @@ if($ShowXenAppTable -eq 1 ) {
               $tests.CitrixPrint = "SUCCESS","Success"
             }
             else {
-              "Citrix Print Manager service stopped" | LogMe -display -error
-              $tests.CitrixPrint = "ERROR","Error"
+              If ($MarkSpoolerAsWarningOnly -eq 0) {
+                "Citrix Print Manager service stopped" | LogMe -display -error
+                $tests.CitrixPrint = "ERROR","Error"
+                $ErrorXA = $ErrorXA + 1
+                $IsSeverityErrorLevel = $True
+              } Else {
+                "Citrix Print Manager service stopped" | LogMe -display -warning
+                $tests.CitrixPrint = "WARNING","Warning"
+                $ErrorXA = $ErrorXA + 1
+                $IsSeverityWarningLevel = $True
+              }
             }
           }
           Catch {
             #"Error returned while checking the services" | LogMe -error; return 101
+            #$ErrorXA = $ErrorXA + 1
+            #$IsSeverityErrorLevel = $True
           }
         } Else {
           # Cannot connect via WMI
@@ -5267,35 +6320,47 @@ if($ShowXenAppTable -eq 1 ) {
 
         # Check CrowdStrike State
         If ($ShowCrowdStrikeTests -eq 1) {
-          If ($UseWinRM) {
+          If ($IsWinRMAccessible) {
             $return = Get-CrowdStrikeServiceStatus -ComputerName:$machineDNS
             If ($null -ne $return) {
               If ($return.CSFalconInstalled -AND $return.CSAgentInstalled) {
                 "CrowdStrike Installed: True" | LogMe -display -progress
                 "- CrowdStrike Windows Sensor Version: $($return.InstalledVersion)" | LogMe -display -progress
+                $tests.CSVersion = "NORMAL", $return.InstalledVersion
                 "- CrowdStrike Company ID (CID): $($return.CID)" | LogMe -display -progress
+                $tests.CSCID = "NORMAL", $return.CID
                 "- CrowdStrike Sensor Grouping Tags: $($return.SensorGroupingTags)" | LogMe -display -progress
                 $tests.CSGroupTags = "NORMAL", $return.SensorGroupingTags
                 "- CrowdStrike VDI switch: $($return.VDI)" | LogMe -display -progress
                 If ($return.CSFalconServiceRunning -AND $return.CSAgentServiceRunning -AND (![string]::IsNullOrEmpty($return.AID))) {
                   $tests.CSEnabled = "SUCCESS", $True
                   "- CrowdStrike Agent ID (AID): $($return.AID)" | LogMe -display -progress
+                  $tests.CSAID = "NORMAL", $return.AID
                 } Else {
                   $tests.CSEnabled = "WARNING", $False
+                  If ([string]::IsNullOrEmpty($return.AID)) {
+                    "- CrowdStrike Agent ID (AID) is missing" | LogMe -display -warning
+                    $tests.CSAID = "NORMAL", "Missing"
+                  } Else {
+                    "- CrowdStrike is installed, but not running" | LogMe -display -warning
+                  }
+                  $IsSeverityWarningLevel = $True
                 }
               } else {
                 "CrowdStrike Installed: False" | LogMe -display -progress
               }
             } else {
               "Unable to get the CrowdStrike Service Status" | LogMe -display -error
+              $IsSeverityErrorLevel = $True
             }
           }
         }
 
       }#If can connect via WinRM or WMI
       else {
-        $ErrorXA = $ErrorXA + 0 # No WinRM or WMI connectivity
         "WinRM or WMI connection not possible" | LogMe -display -error
+        $ErrorXA = $ErrorXA + 1
+        $IsSeverityErrorLevel = $True
       } # Closing else cannot connect via WinRM or WMI
 
     } # Close off $Powered -eq "On", "Unknown", or "Unmanaged"
@@ -5303,8 +6368,8 @@ if($ShowXenAppTable -eq 1 ) {
     # Column Serverload
     $Serverload = $XAmachine | ForEach-Object{ $_.LoadIndex }
     "Serverload: $Serverload" | LogMe -display -progress
-    if ($Serverload -ge $loadIndexError) { $tests.Serverload = "ERROR", $Serverload }
-    elseif ($Serverload -ge $loadIndexWarning) { $tests.Serverload = "WARNING", $Serverload }
+    if ($Serverload -ge $loadIndexError) { $tests.Serverload = "ERROR", $Serverload ; $ErrorXA = $ErrorXA + 1 ; $IsSeverityErrorLevel = $True }
+    elseif ($Serverload -ge $loadIndexWarning) { $tests.Serverload = "WARNING", $Serverload ; $ErrorXA = $ErrorXA + 1 ; $IsSeverityWarningLevel = $True }
     else { $tests.Serverload = "SUCCESS", $Serverload }
   
     # Column RegistrationState
@@ -5316,7 +6381,8 @@ if($ShowXenAppTable -eq 1 ) {
       } else {
         "RegistrationState: $RegState" | LogMe -display -error
         $tests.RegState = "ERROR", $RegState
-        $ErrorVDI = $ErrorVDI + 1
+        $ErrorXA = $ErrorXA + 1
+        $IsSeverityErrorLevel = $True
       }
     } else {
       "RegistrationState: $RegState" | LogMe -display -progress
@@ -5347,13 +6413,37 @@ if($ShowXenAppTable -eq 1 ) {
       "MaintenanceModeInfo: $MaintenanceModeOn" | LogMe -display -progress
       $tests.MaintMode = "WARNING", $MaintenanceModeOn
       $ErrorXA = $ErrorXA + 1
+      $IsSeverityWarningLevel = $True
     }
     else { $tests.MaintMode = "SUCCESS", "OFF" }
 
     # Column VDAVersion AgentVersion
     $VDAVersion = $XAmachine | ForEach-Object{ $_.AgentVersion }
-    "VDAVersion: $VDAVersion" | LogMe -display -progress
-    $tests.VDAVersion = "NEUTRAL", $VDAVersion
+    $Found = $False
+    If ($SupportedVDAVersions.Count -gt 0) {
+      If (!([String]::IsNullOrEmpty($SupportedVDAVersions[0]))) {
+        ForEach ($SupportedVDAVersion in $SupportedVDAVersions) {
+          If ($VDAVersion -Like $SupportedVDAVersion) {
+            $Found = $True
+            break
+          }
+        }
+        If ($SupportedVDAVersions -contains $VDAVersion) {
+          $Found = $True
+        }
+      }
+    } Else {
+      $Found = $True
+    }
+    If ($Found) {
+      "VDAVersion: $VDAVersion" | LogMe -display -progress
+      $tests.VDAVersion = "NEUTRAL", $VDAVersion
+    } Else {
+      "VDAVersion: $VDAVersion" | LogMe -display -warning
+      $tests.VDAVersion = "WARNING", $VDAVersion
+      $ErrorXA = $ErrorXA + 1
+      $IsSeverityWarningLevel = $True
+    }
 
     # Column HostedOn - v1.4.4 Lines
     #$HostedOn = $XAmachine | ForEach-Object{ $_.HostingServerName }
@@ -5403,6 +6493,8 @@ if($ShowXenAppTable -eq 1 ) {
         } else {
           "MCSImageOutOfDate: $MCSImageOutOfDate" | LogMe -display -error
           $tests.MCSImageOutOfDate = "ERROR", $MCSImageOutOfDate
+          $ErrorXA = $ErrorXA + 1
+          $IsSeverityErrorLevel = $True
         }
       } else {
         "MCSImageOutOfDate: $MCSImageOutOfDate" | LogMe -display -progress
@@ -5414,15 +6506,41 @@ if($ShowXenAppTable -eq 1 ) {
       }
     }
 
-    # Column ActiveSessions
-    $ActiveSessions = $XAmachine | ForEach-Object{ $_.SessionCount }
-    "Active Sessions: $ActiveSessions" | LogMe -display -progress
-    $tests.ActiveSessions = "NEUTRAL", $ActiveSessions
-
     # Column ConnectedUsers
     $ConnectedUsers = $XAmachine | ForEach-Object{ $_.AssociatedUserNames }
-    "Connected users: $ConnectedUsers" | LogMe -display -progress
+    $ConnectedUsersCount = 0
+    Try {
+      # The AssociatedUserNames property is a System.String[] (an array of strings) object, which is a type of System.Object[].
+      # - With multiple users connected, the ForEach-Object converts it into a System.Object[] object, which is correct.
+      # - With 1 user connected, the ForEach-Object casts it into a System.String object, which is incorrect.
+      # - Therefore, with 1 user connected, the count is 0, which is incorrect output.
+      # - So we use type casting for single string to array to address this.
+      If ($ConnectedUsers.GetType().FullName -eq "System.String") {
+        $ConnectedUsers = [System.Object[]]@($ConnectedUsers)
+        # $ConnectedUsers will be a System.Object[] containing one string element.
+      }
+      $ConnectedUsersCount = $ConnectedUsers.Count
+    }
+    Catch {
+      # The AssociatedUserNames property is of type "System.Object[]
+      # Wrapping this in a Try/Catch to prevent errors like...
+      # - "The property 'Count' cannot be found on this object."
+      # - "You cannot call a method on a null-valued expression."
+    }
+    "$ConnectedUsersCount Connected users: $ConnectedUsers" | LogMe -display -progress
     $tests.ConnectedUsers = "NEUTRAL", $ConnectedUsers
+
+    # Column ActiveSessions
+    $ActiveSessions = $XAmachine | ForEach-Object{ $_.SessionCount }
+    If ([int]$ActiveSessions -gt $ConnectedUsersCount) {
+      $tests.ActiveSessions = "ERROR", $ActiveSessions
+      "The Active Sessions count does match the Connected Users count: $ActiveSessions" | LogMe -display -error
+      $ErrorXA = $ErrorXA + 1
+      $IsSeverityErrorLevel = $True
+    } Else {
+      $tests.ActiveSessions = "NEUTRAL", $ActiveSessions
+      "Active Sessions: $ActiveSessions" | LogMe -display -progress
+    }
 
     # Column LastConnectionTime
     $yellow =((Get-Date).AddDays(-30).ToString('yyyy-MM-dd HH:mm:s'))
@@ -5436,17 +6554,24 @@ if($ShowXenAppTable -eq 1 ) {
     {
       "LastConnectionTime: $machineLastConnectionTime" | LogMe -display -ERROR
       $tests.LastConnectionTime = "ERROR", $machineLastConnectionTime
+      $ErrorXA = $ErrorXA + 1
+      $IsSeverityErrorLevel = $True
     } 	
     elseif ($machineLastConnectionTime -lt $yellow)
     {
       "LastConnectionTime: $machineLastConnectionTime" | LogMe -display -WARNING
       $tests.LastConnectionTime = "WARNING", $machineLastConnectionTime
+      $ErrorXA = $ErrorXA + 1
+      $IsSeverityWarningLevel = $True
     }
     else 
     {
       $tests.LastConnectionTime = "SUCCESS", $machineLastConnectionTime
       "LastConnectionTime: $machineLastConnectionTime" | LogMe -display -progress
     }
+
+    # Add the SiteName to the tests for the Syslog output
+    $tests.SiteName = "NORMAL", $sitename
   
     # Fill $tests into array if error occured OR $ShowOnlyErrorXA = 0
     # Check if error exists on this vdi
@@ -5456,6 +6581,32 @@ if($ShowXenAppTable -eq 1 ) {
       else { "$machineDNS is ok, no output into HTML-File" | LogMe -display -progress }
     }
 
+    If ($tests.Count -gt 0) {
+      If ($CheckOutputSyslog) {
+        # Set up the severity of the log entry based on the output of each test.
+        $Severity = "Informational"
+        If ($IsSeverityWarningLevel) { $Severity = "Warning" }
+        If ($IsSeverityErrorLevel) { $Severity = "Error" }
+        # Setup the PSCustomObject that will become the Data within the Structured Data
+        $Data = [PSCustomObject]@{
+          'MultiSessionHost' = $machineDNS
+        }
+        $allXenAppResults.$machineDNS.GetEnumerator() | ForEach-Object {
+          $MyKey = $_.Key -replace " ", ""
+          $Data | Add-Member -MemberType NoteProperty $MyKey -Value $_.Value[1]
+        }
+        $sdString = ConvertTo-StructuredData -Id $StructuredDataID -Data $Data -AllowMoreParamChars
+        If ($SyslogFileOnly) {
+          Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$machineDNS" `
+                                -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                                -LogFilePath "$resultsSyslog" -FileOnly
+        } Else {
+          Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$machineDNS" `
+                                -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                                -LogFilePath "$resultsSyslog" -SyslogServer $SyslogServer
+        }
+      }
+    }
     " --- " | LogMe -display -progress
 
   } # Closing foreach $XAmachine
@@ -5704,8 +6855,37 @@ if($ShowStuckSessionsTable -eq 1 ) {
 
     " --- " | LogMe -display -progress
 
+    # Add the SiteName to the tests for the Syslog output
+    $tests.SiteName = "NORMAL", $sitename
+
     $allStuckSessionResults.$machineDNS = $tests 
 
+    If ($tests.Count -gt 0) {
+      If ($CheckOutputSyslog) {
+        # Set up the severity of the log entry based on the output of each test.
+        $Severity = "Informational"
+        If ($IsSeverityWarningLevel) { $Severity = "Warning" }
+        If ($IsSeverityErrorLevel) { $Severity = "Error" }
+        # Setup the PSCustomObject that will become the Data within the Structured Data
+        $Data = [PSCustomObject]@{
+          'StuckSession' = $machineDNS
+        }
+        $allStuckSessionResults.$machineDNS.GetEnumerator() | ForEach-Object {
+          $MyKey = $_.Key -replace " ", ""
+          $Data | Add-Member -MemberType NoteProperty $MyKey -Value $_.Value[1]
+        }
+        $sdString = ConvertTo-StructuredData -Id $StructuredDataID -Data $Data -AllowMoreParamChars
+        If ($SyslogFileOnly) {
+          Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$machineDNS" `
+                                -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                                -LogFilePath "$resultsSyslog" -FileOnly
+        } Else {
+          Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$machineDNS" `
+                                -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                                -LogFilePath "$resultsSyslog" -SyslogServer $SyslogServer
+        }
+      }
+    }
   }
 } # Close if $ShowStuckSessionsTable
 else { "Stuck Sessions Check skipped because ShowStuckSessionsTable = 0" | LogMe -display -progress	}
@@ -6326,6 +7506,33 @@ If ($UseRunspace) {
 # - 1.5.5, by Jeremy Saunders (jeremy@jhouseconsulting.com)
 #          - Fixed a bug in the Citrix Cloud Auth related to the NonPersistentMetadata property not existing with older PowerShell modules. Basically just wrapped some more error checking
 #            around it using a Try/Catch.
+# - 1.5.6, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+#          - Added XML variable MarkSpoolerAsWarningOnly. This can be used to flag a failed Spooler and CitrixPrint service as a warning only. It reduces the red (errors) in the reports in
+#            environments where these services are not required for normal operation.
+#          - For multi-session hosts, if ActiveSessions is greater than ConnectedUsers count, mark as an error. It should point to a ghosted session in the Stuck Sessions Table. Depending on
+#            the size of your environment and the potential time difference between when the multi-session host test collects data via the Get-BrokerMachine cmdlet and the stuck sessions
+#            collects data via the Get-BrokerSession cmdlet, the ghosted sessions may have cleared, and that discrepancy is no longer valid.
+#          - Fixed a bug with the ActiveSessions Count property if the System.String[] (an array of strings) object has been cast into a System.String.
+#          - Added XML variable SupportedVDAVersions. Any versions that do not match will be marked as a warning in the VDAVersion column and log. Leave the setting empty in the XML to ignore
+#            this. This helps with planning for software lifecycle management and to flag when someone has deployed an unsupported version.
+#          - Updated the Citrix Cloud Auth related code to expose the bearer token in a variable which can be used in the header for OData API Authorization.
+#          - Improved the Get-PersonalityInfo function to test for more scenarios based on the history of VDA changes for the Personality.ini and MCSPersonality.ini files.
+#          - Improved the logging for CrowdStrike output.
+#          - Added a minor code improvement to the Get-WriteCacheDriveInfo function.
+#          - Exdended the use of the $ErrorVDI and $ErrorXA variables to flag the machine for all warninings and errors.
+#          - Added new functions ConvertTo-StructuredData and Write-IetfSyslogEntry for Syslog output.
+#          - Added XML variables CheckOutputSyslog, OutputSyslog, PrivateEnterpriseNumber, StructuredDataIDPrefix, SyslogMsgId, SyslogFileOnly, SyslogServer to support Syslog output.
+#          - Added new script variables $SyslogAppName, $StructuredDataID and $resultsSyslog to support Syslog output, which are derived from XML variables.
+#          - Added the $IsSeverityWarningLevel and $IsSeverityErrorLevel script variables throughout the test sections of the script to support the Severity level for Syslog.
+#          - Added the Get-CCSiteId function to get the Citrix Cloud Site Id, which can then be appended to the "cloudsite" name. The SiteName is then added to each test to provide uniqueness
+#            across sites when bringing the data altogether into observability platforms.
+#          - Added the $AppendCCSiteIdToName XML variable. The Site Name for Citrix Cloud is "cloudxdsite". If you are running checks against multiple Citrix Cloud sites, you may want to set
+#            this to true to append the SiteId GUID for uniqueness.
+#          - Also added the Get-BearerToken and Get-CCSiteDetails functions in preparation for leveraging the APIs.
+#          - Fixed a bug with the getting site maintenance information using the Get-LogLowLevelOperation, where it may not return all records.
+#          - Added the $NoProxy and $SkipCertificateCheck XML variables, which make it easier when working with the Invoke-RestMethod and Invoke-WebRequest cmdlets.
+#          - Added further variables to the XML params file to support the new Logon Durations script called CitrixLogonDurations.ps1 that I will publish separately. This allows them to share
+#            the same XML params files, avoiding duplication.
 #
 # == FUTURE ==
 # #  1.5.x
@@ -6345,7 +7552,11 @@ If ($UseRunspace) {
 # - Combine functions where possible to collect data more efficiently.
 # - Implement DaaS APIs (from 2209 and above) to remove reliance on PowerShell SDK. It should be able to be slotted in quite easily with a variable to switch between them, which will allow
 #   new and legacy to work side-by-side.
-# - Convert the output for ingestion into tools like Splunk, Azure Monitor Logs, VMware Aria Operations for Logs (formerly VMware vRealize Log Insight), OpenSearch, Elasticsearch, Crible, etc.
+# - If Syslog if not enough, then further convert the output for ingestion into tools like Splunk, Azure Monitor Logs, VMware Aria Operations for Logs (formerly VMware vRealize Log Insight),
+#   OpenSearch, Elasticsearch, Cribl, etc.
+# - May implement logon durations using the Odata API or keep that as a separate script.
+# - Implement improved licensing checks, especially for Citrix Cloud licensing.
+# - Implement connection failures using the Odata API instead of the Get-BrokerConnectionLog cmdlet, which lacks enhanced data.
 #
 # #  1.5.x
 # Version changes by S.Thomet
