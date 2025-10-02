@@ -1,5 +1,5 @@
 ﻿#==============================================================================================
-# Created on: 11.2014 modfied 09.2025 Version: 1.5.6
+# Created on: 11.2014 modfied 09.2025 Version: 1.5.7
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -426,6 +426,23 @@ Function Get-CCSiteDetails {
         "Accept" = "application/json";
         "Authorization" = "$bearerToken";
         "Citrix-CustomerId" = $customerid;
+  }
+  $response = Invoke-RestMethod -Uri $requestUri -Method GET -Headers $headers 
+  return $response
+}
+
+Function Get-CCOrchestrationStatus {
+  param (
+         [Parameter(Mandatory=$true)]
+         [string] $bearerToken,
+         [Parameter(Mandatory=$true)]
+         [string] $customerId
+  )
+  $requestUri = [string]::Format("https://{0}.xendesktop.net/citrix/orchestration/api/ping/status", $customerid)
+  $headers = @{
+    "Accept" = "application/json";
+    "Authorization" = "$bearerToken";
+    "Citrix-CustomerId" = $customerid;
   }
   $response = Invoke-RestMethod -Uri $requestUri -Method GET -Headers $headers 
   return $response
@@ -2894,6 +2911,12 @@ If ($CitrixCloudCheck -ne 1) {
   } Else {
     $sitename = $brokersiteinfos.Name
   }
+  $orchestrationstatus = Get-CCOrchestrationStatus -BearerToken:$BearerToken -CustomerID:$CustomerID
+  $productinternalversion = $orchestrationstatus.ProductInternalVersion
+  "- ProductInternalVersion: $productinternalversion" | LogMe -display -progress
+  $productexternalversion = $orchestrationstatus.ProductExternalVersion
+  "- ProductExternalVersion: $productexternalversion" | LogMe -display -progress
+  $controllerversion = $productinternalversion
 }
 "- SiteName: $($sitename)" | LogMe -display -progress
 $lsname = $brokersiteinfos.LicenseServerName
@@ -4438,101 +4461,103 @@ If ($null -ne $BrkrTags) {
 #== Broker Connection Failure Results ===============================================================================
 "Check Broker Connection Failures #############################################################" | LogMe -display -progress
 
-$BrokerConnectionLogResults = @{}
+if($ShowBrokerConnectionFailuresTable -eq 1 ) {
 
-# Get the total FAILED Connections from the last x hours
-$BrokerConnectionFailuresForLastxHours = [DateTime]::Now - [TimeSpan]::FromHours($BrokerConnectionFailuresinHours)
+  $BrokerConnectionLogResults = @{}
 
-$BrkrConFailures = $null
-If ($CitrixCloudCheck -ne 1) {
-  $BrkrConFailures = Get-BrokerConnectionLog -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -Filter {BrokeringTime -gt $BrokerConnectionFailuresForLastxHours -and ConnectionFailureReason -ne 'None' -and ConnectionFailureReason -ne $null}
-} Else {
-  $BrkrConFailures = Get-BrokerConnectionLog -MaxRecordCount $maxmachines -Filter {BrokeringTime -gt $BrokerConnectionFailuresForLastxHours -and ConnectionFailureReason -ne 'None' -and ConnectionFailureReason -ne $null}
-}
+  # Get the total FAILED Connections from the last x hours
+  $BrokerConnectionFailuresForLastxHours = [DateTime]::Now - [TimeSpan]::FromHours($BrokerConnectionFailuresinHours)
 
-If ($null -ne $BrkrConFailures) {
-
-  foreach ($BrkrConFailure in $BrkrConFailures) {
-    $IsSeverityErrorLevel = $False
-    $IsSeverityWarningLevel = $False
-    $tests = @{}
-
-    #Name of HypervisorConnection
-    $MachineDNSName = $BrkrConFailure.MachineDNSName
-    "MachineDNSName: $($BrkrConFailure.MachineDNSName)" | LogMe -display -progress
-
-    $validMachine = $null
-    If ($CitrixCloudCheck -ne 1) {
-      $validMachine = Get-BrokerMachine -DNSName $MachineDNSName -AdminAddress $AdminAddress | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
-    } Else {
-      $validMachine = Get-BrokerMachine -DNSName $MachineDNSName | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
-    }
-    If ($null -eq $validMachine) {
-      "Excluded, skipping this machine as it's in either the ExludedCatalogs, ExcludedDeliveryGroups and ExcludedTags" | LogMe -display -progress
-    } Else {
-
-      $BrokeringTime = $BrkrConFailure.BrokeringTime
-      "BrokeringTime: $($BrkrConFailure.BrokeringTime)" | LogMe -display -progress
-      $tests.BrokeringTime = "NEUTRAL", $BrokeringTime
-
-      $ConnectionFailureReason = $BrkrConFailure.ConnectionFailureReason
-      # As per Article ID: CTX137378, Failure Reasons and Causes:
-      # - None - No failure (successful connection - session went active).
-      # - SessionPreparation - Failure to prepare session, typically Virtual Desktop Agent (VDA) refused 'prepare' call, or communication error on prepare call to VDA.
-      # - RegistrationTimeout - Timeout while waiting for worker to register when worker is being spun up to satisfy the launch.
-      # - ConnectionTimeout - Timeout while waiting for client to connect to VDA after successful brokering part.
-      # - Licensing - Licensing issue (for example - unable to verify a license).
-      # - Ticketing - Failure during ticketing, indicating that the client connection to VDA does not match the brokered request.
-      # - Other - Other
-      "ConnectionFailureReason: $($BrkrConFailure.ConnectionFailureReason)" | LogMe -display -progress
-      $tests.ConnectionFailureReason = "WARNING", $ConnectionFailureReason
-      $IsSeverityWarningLevel = $True
-
-      $BrokeringUserName = $BrkrConFailure.BrokeringUserName
-      "BrokeringUserName: $($BrkrConFailure.BrokeringUserName)" | LogMe -display -progress
-      $tests.BrokeringUserName = "NEUTRAL", $BrokeringUserName
-
-      $BrokeringUserUPN = $BrkrConFailure.BrokeringUserUPN
-      "BrokeringUserUPN: $($BrkrConFailure.BrokeringUserUPN)" | LogMe -display -progress
-      $tests.BrokeringUserUPN = "NEUTRAL", $BrokeringUserUPN
-
-      # Add the SiteName to the tests for the Syslog output
-      $tests.SiteName = "NORMAL", $sitename
-
-      #Fill $tests into array
-      $BrokerConnectionLogResults.$MachineDNSName = $tests
-
-    If ($CheckOutputSyslog) {
-      # Set up the severity of the log entry based on the output of each test.
-      $Severity = "Informational"
-      If ($IsSeverityWarningLevel) { $Severity = "Warning" }
-      If ($IsSeverityErrorLevel) { $Severity = "Error" }
-      # Setup the PSCustomObject that will become the Data within the Structured Data
-      $Data = [PSCustomObject]@{
-        'BrokerConnectionFailure' = $MachineDNSName
-      }
-      $BrokerConnectionLogResults.$MachineDNSName.GetEnumerator() | ForEach-Object {
-        $MyKey = $_.Key -replace " ", ""
-        $Data | Add-Member -MemberType NoteProperty $MyKey -Value $_.Value[1]
-      }
-      $sdString = ConvertTo-StructuredData -Id $StructuredDataID -Data $Data -AllowMoreParamChars
-      If ($SyslogFileOnly) {
-        Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$MachineDNSName" `
-                              -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
-                              -LogFilePath "$resultsSyslog" -FileOnly
-      } Else {
-        Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$MachineDNSName" `
-                              -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
-                              -LogFilePath "$resultsSyslog" -SyslogServer $SyslogServer
-      }
-    }
-
-    }
-   " --- " | LogMe -display -progress
+  $BrkrConFailures = $null
+  If ($CitrixCloudCheck -ne 1) {
+    $BrkrConFailures = Get-BrokerConnectionLog -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -Filter {BrokeringTime -gt $BrokerConnectionFailuresForLastxHours -and ConnectionFailureReason -ne 'None' -and ConnectionFailureReason -ne $null}
+  } Else {
+    $BrkrConFailures = Get-BrokerConnectionLog -MaxRecordCount $maxmachines -Filter {BrokeringTime -gt $BrokerConnectionFailuresForLastxHours -and ConnectionFailureReason -ne 'None' -and ConnectionFailureReason -ne $null}
   }
-} Else {
-  " --- " | LogMe -display -progress
-}
+
+  If ($null -ne $BrkrConFailures) {
+
+    foreach ($BrkrConFailure in $BrkrConFailures) {
+      $IsSeverityErrorLevel = $False
+      $IsSeverityWarningLevel = $False
+      $tests = @{}
+
+      # Machine DNS Name
+      $MachineDNSName = $BrkrConFailure.MachineDNSName
+      "MachineDNSName: $($BrkrConFailure.MachineDNSName)" | LogMe -display -progress
+
+      $validMachine = $null
+      If ($CitrixCloudCheck -ne 1) {
+        $validMachine = Get-BrokerMachine -DNSName $MachineDNSName -AdminAddress $AdminAddress | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+      } Else {
+        $validMachine = Get-BrokerMachine -DNSName $MachineDNSName | Where-Object {@(Compare-Object $_.tags $ActualExcludedBrokerTags -IncludeEqual | Where-Object {$_.sideindicator -eq '=='}).count -eq 0 -and ($_.catalogname -notin $ActualExcludedCatalogs -AND $_.desktopgroupname -notin $ActualExcludedDeliveryGroups)}
+      }
+      If ($null -eq $validMachine) {
+        "Excluded, skipping this machine as it's in either the ExludedCatalogs, ExcludedDeliveryGroups and ExcludedTags" | LogMe -display -progress
+      } Else {
+
+        $BrokeringTime = $BrkrConFailure.BrokeringTime
+        "BrokeringTime: $($BrkrConFailure.BrokeringTime)" | LogMe -display -progress
+        $tests.BrokeringTime = "NEUTRAL", $BrokeringTime
+
+        $ConnectionFailureReason = $BrkrConFailure.ConnectionFailureReason
+        # As per Article ID: CTX137378, Failure Reasons and Causes:
+        # - None - No failure (successful connection - session went active).
+        # - SessionPreparation - Failure to prepare session, typically Virtual Desktop Agent (VDA) refused 'prepare' call, or communication error on prepare call to VDA.
+        # - RegistrationTimeout - Timeout while waiting for worker to register when worker is being spun up to satisfy the launch.
+        # - ConnectionTimeout - Timeout while waiting for client to connect to VDA after successful brokering part.
+        # - Licensing - Licensing issue (for example - unable to verify a license).
+        # - Ticketing - Failure during ticketing, indicating that the client connection to VDA does not match the brokered request.
+        # - Other - Other
+        "ConnectionFailureReason: $($BrkrConFailure.ConnectionFailureReason)" | LogMe -display -progress
+        $tests.ConnectionFailureReason = "WARNING", $ConnectionFailureReason
+        $IsSeverityWarningLevel = $True
+
+        $BrokeringUserName = $BrkrConFailure.BrokeringUserName
+        "BrokeringUserName: $($BrkrConFailure.BrokeringUserName)" | LogMe -display -progress
+        $tests.BrokeringUserName = "NEUTRAL", $BrokeringUserName
+
+        $BrokeringUserUPN = $BrkrConFailure.BrokeringUserUPN
+        "BrokeringUserUPN: $($BrkrConFailure.BrokeringUserUPN)" | LogMe -display -progress
+        $tests.BrokeringUserUPN = "NEUTRAL", $BrokeringUserUPN
+
+        # Add the SiteName to the tests for the Syslog output
+        $tests.SiteName = "NORMAL", $sitename
+
+        #Fill $tests into array
+        $BrokerConnectionLogResults.$MachineDNSName = $tests
+
+        If ($CheckOutputSyslog) {
+          # Set up the severity of the log entry based on the output of each test.
+          $Severity = "Informational"
+          If ($IsSeverityWarningLevel) { $Severity = "Warning" }
+          If ($IsSeverityErrorLevel) { $Severity = "Error" }
+          # Setup the PSCustomObject that will become the Data within the Structured Data
+          $Data = [PSCustomObject]@{
+            'BrokerConnectionFailure' = $MachineDNSName
+          }
+          $BrokerConnectionLogResults.$MachineDNSName.GetEnumerator() | ForEach-Object {
+            $MyKey = $_.Key -replace " ", ""
+            $Data | Add-Member -MemberType NoteProperty $MyKey -Value $_.Value[1]
+          }
+          $sdString = ConvertTo-StructuredData -Id $StructuredDataID -Data $Data -AllowMoreParamChars
+          If ($SyslogFileOnly) {
+            Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$MachineDNSName" `
+                                  -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                                  -LogFilePath "$resultsSyslog" -FileOnly
+          } Else {
+            Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$MachineDNSName" `
+                                  -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                                  -LogFilePath "$resultsSyslog" -SyslogServer $SyslogServer
+          }
+        }
+      }
+     " --- " | LogMe -display -progress
+    }
+  } Else {
+    " --- " | LogMe -display -progress
+  }
+} #Close off $ShowBrokerConnectionFailuresTable
 
 #== Hypervisor Connection Check =====================================================================================
 "Check Hypervisor Connections #################################################################" | LogMe -display -progress
@@ -6897,13 +6922,11 @@ else { "Stuck Sessions Check skipped because ShowStuckSessionsTable = 0" | LogMe
 #==============================================================================================
 
 # ======= Write all results to an html file =================================================
-# Add Version of CVAD to EnvironmentName
-$EnvironmentNameOut = "$EnvironmentName Site $sitename"
-If ($CitrixCloudCheck -ne 1) {
-  $XDmajor, $XDminor = $controllerversion.Split(".")[0..1]
-  $XDVersion = "$XDmajor.$XDminor"
-  $EnvironmentNameOut = "$EnvironmentNameOut v$XDVersion"
-}
+# Add Site Name and Version to EnvironmentName for e-mail subject
+$EnvironmentNameOut = "$EnvironmentName for Site $sitename"
+$XDmajor, $XDminor = $controllerversion.Split(".")[0..1]
+$XDVersion = "$XDmajor.$XDminor"
+$EnvironmentNameOut = "$EnvironmentNameOut v$XDVersion"
 $emailSubject = ("$EnvironmentNameOut Report - " + $ReportDate)
 
 Write-Host ("Saving results to html report: " + $resultsHTM)
@@ -6964,12 +6987,15 @@ $AssigmentsResults | ForEach-Object{ writeData $AssigmentsResults $resultsHTM $v
 writeTableFooter $resultsHTM
 
 # Write Table with the Connection Failures from Broker Connection Log
-If ($BrokerConnectionLogResults.Count -gt 0) {
-  "Adding Connection Failures output to HTML" | LogMe -display -progress 
-  writeTableHeader $resultsHTM $BrkrConFailureFirstheaderName $BrkrConFailureHeaderNames $BrkrConFailureTableWidth
-  $BrokerConnectionLogResults | ForEach-Object{ writeData $BrokerConnectionLogResults $resultsHTM $BrkrConFailureHeaderNames }
-  writeTableFooter $resultsHTM
-} Else { "The Connection Failures output has not been added to the HTML as it contains no data" | LogMe -display -progress }
+If($ShowBrokerConnectionFailuresTable -eq 1 ) {
+  If ($BrokerConnectionLogResults.Count -gt 0) {
+    "Adding Connection Failures output to HTML" | LogMe -display -progress 
+    writeTableHeader $resultsHTM $BrkrConFailureFirstheaderName $BrkrConFailureHeaderNames $BrkrConFailureTableWidth
+    $BrokerConnectionLogResults | ForEach-Object{ writeData $BrokerConnectionLogResults $resultsHTM $BrkrConFailureHeaderNames }
+    writeTableFooter $resultsHTM
+  } Else { "The Connection Failures output has not been added to the HTML as it contains no data" | LogMe -display -progress }
+}
+else { "No Connection Failures output in HTML " | LogMe -display -progress }
 
 # Write Table with the Hypervisor Connections
 If ($HypervisorConnectionResults.Count -gt 0) {
@@ -7533,6 +7559,16 @@ If ($UseRunspace) {
 #          - Added the $NoProxy and $SkipCertificateCheck XML variables, which make it easier when working with the Invoke-RestMethod and Invoke-WebRequest cmdlets.
 #          - Added further variables to the XML params file to support the new Logon Durations script called CitrixLogonDurations.ps1 that I will publish separately. This allows them to share
 #            the same XML params files, avoiding duplication.
+# - 1.5.7, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+#          - Added the Get-CCOrchestrationStatus function in preparation for leveraging the APIs. Using it initially to get the ProductVersion.
+#          - Added further variables to the XML params file to support the new Failed Connections script called CitrixFailedConnections.ps1 that I will publish separately. This allows them to
+#            share the same XML params files, avoiding duplication.
+#          - Added XML variable ShowBrokerConnectionFailuresTable to disable the Connection Failure On Machine table. Using the output from the CitrixFailedConnections.ps1 script provides an
+#            improved and thorough output aligned with Citrix Director.
+#
+# ==CURRENT KNOWN ISSUES AND/OR LIMITATIONS ==
+# - Any functions that use the Invoke-Command cmdlet "may" cause the script to wait indefinitely when run against an unhealthy machine. This is due to the known timeout issue with this cmdlet.
+#   Refer to comments in future release for how to code around this.
 #
 # == FUTURE ==
 # #  1.5.x
@@ -7552,11 +7588,8 @@ If ($UseRunspace) {
 # - Combine functions where possible to collect data more efficiently.
 # - Implement DaaS APIs (from 2209 and above) to remove reliance on PowerShell SDK. It should be able to be slotted in quite easily with a variable to switch between them, which will allow
 #   new and legacy to work side-by-side.
-# - If Syslog if not enough, then further convert the output for ingestion into tools like Splunk, Azure Monitor Logs, VMware Aria Operations for Logs (formerly VMware vRealize Log Insight),
-#   OpenSearch, Elasticsearch, Cribl, etc.
-# - May implement logon durations using the Odata API or keep that as a separate script.
-# - Implement improved licensing checks, especially for Citrix Cloud licensing.
-# - Implement connection failures using the Odata API instead of the Get-BrokerConnectionLog cmdlet, which lacks enhanced data.
+# - If Syslog output is not enough, then further convert the output for ingestion into tools like Splunk, Azure Monitor Logs, OpenSearch, Elasticsearch, Cribl, etc.
+# - Implement improved licensing checks, especially for Citrix Cloud licensing, keep this as a separate script.
 #
 # #  1.5.x
 # Version changes by S.Thomet
