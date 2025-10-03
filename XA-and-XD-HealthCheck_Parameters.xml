@@ -198,7 +198,15 @@
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
+			<!-- Set to 1 if you want to Check for Broker Connection Failures -->
+			<Name>ShowBrokerConnectionFailuresTable</Name>
+			<Value>0</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
 			<!-- Time (In Hours) of that it will look back for Broker Connection Failures
+				ShowBrokerConnectionFailuresTable must be set to 1 for this to be used.
 				 Example: 12
 				 If the report is run first thing in the morning, this will help see any
 				 brokering issues that occurred overnight -->
@@ -387,11 +395,18 @@
 			<Type>[long]</Type>
 			<Scope>Script</Scope>
 		</Variable>
-<!-- Logon Duration Params -->
+<!-- Logon Duration and Failed Connections Params -->
 		<Variable>
 			<!-- Define a EnvironmentName for the LogonDuration e.g. Integration/Production etc. - this will be used in HTML & Email Subject -->
 			<Name>EnvironmentNameLogonDuration</Name>
 			<Value>Citrix Logon Duration</Value>
+			<Type>[string]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Define a EnvironmentName for the FailedConnections e.g. Integration/Production etc. - this will be used in HTML & Email Subject -->
+			<Name>EnvironmentNameFailedConnections</Name>
+			<Value>Citrix Failed Connections</Value>
 			<Type>[string]</Type>
 			<Scope>Script</Scope>
 		</Variable>
@@ -403,17 +418,25 @@
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
-			<!-- The script will get the sessions that have a LogonDuration greater than the number of seconds you set here.
-			Your aim should always be 30, but that may not always be practical. -->
-			<Name>LogonDurationInSeconds</Name>
-			<Value>30</Value>
-			<Type>[int]</Type>
+			<!-- Define an Output log file for Citrix Failed Connections e.g CTXFailedConnections.log -->
+			<Name>OutputLogFailedConnections</Name>
+			<Value>CTXFailedConnections.log</Value>
+			<Type>[string]</Type>
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- Set this to how many hours in time you want to look back into the logs from script runtime. -->
 			<Name>HoursToLookBack</Name>
 			<Value>24</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+<!-- Logon Duration ONLY Params -->
+		<Variable>
+			<!-- The script will get the sessions that have a LogonDuration greater than the number of seconds you set here.
+			Your aim should always be 30, but that may not always be practical. -->
+			<Name>LogonDurationInSeconds</Name>
+			<Value>30</Value>
 			<Type>[int]</Type>
 			<Scope>Script</Scope>
 		</Variable>
@@ -453,6 +476,13 @@
 			<!-- Define an Output Syslog file for Citrix Logon Durations e.g CTXLogonDurationsSyslog.log -->
 			<Name>OutputSyslogLogonDurations</Name>
 			<Value>CTXLogonDurationsSyslog.log</Value>
+			<Type>[string]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Define an Output Syslog file for Citrix Failed Connections e.g CTXFailedConnectionsSyslog.log -->
+			<Name>OutputSyslogFailedConnections</Name>
+			<Value>CTXFailedConnectionsSyslog.log</Value>
 			<Type>[string]</Type>
 			<Scope>Script</Scope>
 		</Variable>
