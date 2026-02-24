@@ -1,5 +1,5 @@
 ﻿#==============================================================================================
-# Created on: 11.2014 modfied 09.2025 Version: 1.5.7
+# Created on: 11.2014 modfied 09.2025 Version: 1.5.8
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -706,12 +706,12 @@ $CTXLicTableWidth= 1200
   
 #Header for Table "MachineCatalogs" Get-BrokerCatalog
 $CatalogHeaderName = "CatalogName"
-$CatalogHeaderNames = "AssignedToUser", "AssignedToDG", "NotToUserAssigned", "Unassigned", "ProvisioningType", "AllocationType", "MinimumFunctionalLevel", "UsedMCSSnapshot", "MasterImageVMDate", "UseFullDiskClone", "UseWriteBackCache", "WriteBackCacheMemSize"
+$CatalogHeaderNames = "AssignedToUser", "AssignedToDG", "NotToUserAssigned", "Unassigned", "ProvisioningType", "AllocationType", "MinimumFunctionalLevel", "RecommendedMinimumFunctionalLevel", "UsedMCSSnapshot", "MasterImageVMDate", "UseFullDiskClone", "UseWriteBackCache", "WriteBackCacheMemSize"
 $CatalogTablewidth = 1200
 
 #Header for Table "DeliveryGroups" Get-BrokerDesktopGroup
 $AssigmentFirstheaderName = "DeliveryGroup"
-$vAssigmentHeaderNames = "PublishedName", "DesktopKind", "SessionSupport", "Enabled", "MaintenanceMode", "ShutdownAfterUse", "TotalMachines", "DesktopsAvailable", "DesktopsUnregistered", "DesktopsPowerStateUnknown", "DesktopsNotUsedLast90Days", "DesktopsInUse", "DesktopsFree", "MinimumFunctionalLevel"
+$vAssigmentHeaderNames = "PublishedName", "DesktopKind", "SessionSupport", "Enabled", "MaintenanceMode", "ShutdownAfterUse", "TotalMachines", "DesktopsAvailable", "MachinesInMaintMode", "PercentageOfMachinesInMaintMode", "DesktopsUnregistered", "DesktopsPowerStateUnknown", "DesktopsNotUsedLast90Days", "DesktopsInUse", "DesktopsFree", "MinimumFunctionalLevel", "RecommendedMinimumFunctionalLevel"
 $Assigmenttablewidth = 1200
 
 #Header for Table "ConnectionFailureOnMachine" Get-BrokerConnectionLog
@@ -746,7 +746,7 @@ $XenAppHeaderNames += "Spooler", "CitrixPrint", "UPMEnabled", "FSLogixEnabled", 
 If ($ShowCrowdStrikeTests -eq 1) {
   $XenAppHeaderNames += "CSEnabled", "CSGroupTags"
 }
-$XenAppHeaderNames += "RDSGracePeriod", "TerminalServerMode", "LicensingName", "LicensingType", "LicenseServerList"
+$XenAppHeaderNames += "RDSGracePeriod", "RDSGracePeriodExpired", "TerminalServerMode", "LicensingName", "LicensingType", "LicenseServerList"
 $XenAppHeaderNames += "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace"
 foreach ($disk in $diskLettersWorkers)
 {
@@ -767,6 +767,248 @@ $XenApptablewidth = 2400
 $StuckSessionsfirstheaderName = "Stuck-Session"
 $StuckSessionsHeaderNames  = "CatalogName", "DesktopGroupName", "UserName", "SessionState", "AppState", "SessionStateChangeTime", "LogonInProgress", "LogoffInProgress", "ClientAddress", "ConnectionMode", "Protocol"
 $StuckSessionstablewidth = 1800
+
+#==============================================================================================
+
+# There are two great references as follows:
+# 1) Steve Noel - Fun with Citrix Functional Levels
+#    - https://verticalagetechnologies.com/index.php/2022/11/10/fun-with-citrix-functional-levels
+# 2) Carl Webster - Citrix XenApp/XenDesktop/Virtual Apps and Desktop Product Numbers and Versions
+#    - https://www.carlwebster.com/citrix-xenapp-xendesktop-virtual-apps-and-desktop-product-numbers-and-versions/
+# However, they demonstrate the issue that this information cannot be derived by a simple lookup.
+# As Steve documents, you can list all the available Functional Levels, but there is no way to map them to a product version.
+# The following table provides a mapping between the Marketing Product Version, Internal Product Version, and Functional Levels
+# for the Delivery Group and Machine Catalog MinimumFunctionalLevel.
+# For now it will need to be continually maintained with new version numbers and functional levels.
+
+$ProductVersionValues = @"
+2603,7.47,L7_34
+2511,7.46,L7_34
+2507,7.45,L7_34
+2503,7.44,L7_34
+2411,7.43,L7_34
+2407,7.42,L7_34
+2402,7.41,L7_34
+2311,7.40,L7_34
+2308,7.39,L7_34
+2305,7.38,L7_34
+2303,7.37,L7_34
+2212,7.36,L7_34
+2209,7.35,L7_34
+2206,7.34,L7_34
+2203,7.33,L7_30
+2112,7.32,L7_30
+2109,7.31,L7_30
+2106,7.30,L7_30
+2103,7.29,L7_25
+2012,7.28,L7_25
+2009,7.27,L7_25
+2006,7.26,L7_25
+2003,7.25,L7_25
+1912,7.24,L7_20
+1909,7.23,L7_20
+1906,7.22,L7_20
+1903,7.21,L7_20
+1811,7.20,L7_20
+1808,7.19,L7_9
+7.18,7.18,L7_9
+7.17,7.17,L7_9
+7.16,7.16,L7_9
+7.15,7.15,L7_9
+7.14,7.14,L7_9
+7.13,7.13,L7_9
+7.12,7.12,L7_9
+7.11,7.11,L7_9
+7.9,7.9,L7_9
+7.8,7.8,L7_8
+7.7,7.7,L7_7
+7.6,7.6,L7_6
+7.5,7.5,L7
+7.1,7.1,L7
+7.0,7.0,L7
+5.6,5.6,L5
+"@
+
+Function Convert-HereStringToArray {
+  # This function was written based on information from Doctor Scripto from the Scripting Guys and the comments from Nikolay Kozhemyak
+  # https://devblogs.microsoft.com/scripting/powertip-converting-a-here-string-to-an-array-in-one-line-with-powershell/
+    param (
+        [Parameter(Mandatory,
+        ParameterSetName = 'Input')]
+        [string[]]
+        $HereString
+    )
+    process {
+      return ($HereString.Split(@("`r", "`n"), [StringSplitOptions]::RemoveEmptyEntries))
+    }
+}
+
+$ProductVersionHashTable = @{}
+Convert-HereStringToArray -HereString $ProductVersionValues | ForEach-Object {
+  $row = $_ -Split(',')
+  if (!$ProductVersionHashTable.ContainsKey($row[0])) {
+    $ProductVersionHashTable[$row[0]] = $row
+  }
+}
+
+Function Convert-FunctionalLevelToVersion {
+  # This is a helper function to convert a FunctionalLevel System.String type to a System.Version type.
+  param(
+        [Parameter(Mandatory)]
+        [string]$FunctionalLevel
+  )
+  if ($FunctionalLevel -match '^L(\d+)_(\d+)$') {
+    return [version]"$($matches[1]).$($matches[2])"
+  }
+  return $null
+}
+
+Function Convert-VersionToFunctionalLevel {
+  # This is a helper function to convert a System.Version type to a System.String type in the format
+  # of the MinimumFunctionalLevel.
+  param(
+        [Parameter(Mandatory)]
+        $InputVersion
+  )
+  # Convert to [version] if needed
+  if ($InputVersion -isnot [version]) {
+    $InputVersion = [version]$InputVersion
+  }
+  # If minor version is 0, return L<Major>
+  if ($InputVersion.Minor -eq 0) {
+    return "L$($InputVersion.Major)"
+  }
+  # Otherwise return L<Major>_<Minor>
+  return "L{0}_{1}" -f $InputVersion.Major, $InputVersion.Minor
+}
+
+Function Convert-ToComparableVersion {
+  # This function allows us to convert to type system.version so that we can easily compare values
+  # between the new and legacy product version numbering.
+  param(
+        [Parameter(Mandatory)]
+        [string]$InputString
+  )
+  if ([string]::IsNullOrWhiteSpace($InputString)) { return $null }
+  $s = $InputString.Trim().TrimEnd('.')
+
+  # Must contain only digits and dots
+  if ($s -notmatch '^[0-9\.]+$') { return $null }
+
+  # Force array output (prevents the "2402" -> "24020" concatenation bug)
+  $parts = @($s.Split('.') | Where-Object { $_ -ne '' })
+  if ($parts.Count -eq 0) { return $null }
+
+  # Build a valid System.Version string (2–4 segments)
+  $vParts = $parts
+
+  if ($vParts.Count -eq 1) { $vParts += '0' }       # "7" -> "7.0", "2402" -> "2402.0"
+  if ($vParts.Count -gt 4) { $vParts = $vParts[0..3] } # trim extras
+
+  $normalizedVersionString = ($vParts -join '.')
+
+  $ver = $null
+  if (-not [System.Version]::TryParse($normalizedVersionString, [ref]$ver)) {
+    return $null
+  }
+
+  # Build a "marketing-format" key:
+  # - 4-digit major => "2507"
+  # - 1-digit major (e.g. 7) => "7.18" (major.minor), default minor 0
+  $major = $parts[0]
+
+  $marketingKey =
+        if ($major -match '^\d{4}$') {
+            $major
+        }
+        elseif ($major -match '^\d$') {
+            $minor = if ($parts.Count -ge 2) { $parts[1] } else { '0' }
+            "$major.$minor"
+        }
+        else {
+            $null
+        }
+
+  [pscustomobject]@{
+        Input        = $InputString
+        Version      = $ver                       # [System.Version]
+        VersionText  = $ver.ToString()            # normalized version string
+        MarketingKey = $marketingKey              # "2507" or "7.18"
+  }
+}
+
+Function Find-CitrixVersion {
+  param (
+         [ValidateSet("MarketingProductVersion","InternalProductVersion","MinimumFunctionalLevel")]
+         [string]$MatchByColumn = "MarketingProductVersion",
+         [string]$VersionToFind
+        )
+  $result = [PSCustomObject]@{
+    Found                                      = $False
+    VersionToFind                              = $VersionToFind
+    MarketingProductVersion                    = "N/A"
+    InternalProductVersion                     = "N/A"
+    MinimumFunctionalLevel                     = "N/A"
+    LowestSupportedVDAVersion                  = "N/A"
+    HighestVDAVersionBeforeNextFunctionalLevel = "N/A"
+  }
+  If ($MatchByColumn -eq "MarketingProductVersion") {
+    $VersionToFind = (Convert-ToComparableVersion $VersionToFind).MarketingKey
+  }
+  If ($MatchByColumn -eq "InternalProductVersion") {
+    $VersionToFind = (Convert-ToComparableVersion $VersionToFind).Version
+  }
+  $ProductVersionHashTable.GetEnumerator() | ForEach-Object {
+    If ($MatchByColumn -eq "MarketingProductVersion") {
+      If ($_.Key -eq $VersionToFind) {
+        $result.Found = $True
+        $result.MarketingProductVersion = $_.Key
+        $result.InternalProductVersion  = $_.Value[1]
+        $result.MinimumFunctionalLevel  = $_.Value[2]
+      }
+    }
+    If ($MatchByColumn -eq "InternalProductVersion") {
+      If ($_.Value[1] -eq $VersionToFind) {
+        $result.Found = $True
+        $result.MarketingProductVersion = $_.Key
+        $result.InternalProductVersion  = $_.Value[1]
+        $result.MinimumFunctionalLevel  = $_.Value[2]
+      }
+    }
+    If ($MatchByColumn -eq "MinimumFunctionalLevel") {
+      If ($_.Value[2] -eq $VersionToFind) {
+        $result.Found = $True
+        $result.MinimumFunctionalLevel = $_.Value[2]
+        $tempVDAVersion = (Convert-ToComparableVersion $_.Key).Version
+        If ($result.LowestSupportedVDAVersion -eq "N/A") {
+          $result.LowestSupportedVDAVersion = $_.Key
+        } Else {
+          $TempLowestSupportedVDAVersion = (Convert-ToComparableVersion $result.LowestSupportedVDAVersion).Version
+          If ($tempVDAVersion -lt $TempLowestSupportedVDAVersion) {
+            $result.LowestSupportedVDAVersion = $_.Key
+          }
+        }
+        If ($result.HighestVDAVersionBeforeNextFunctionalLevel -eq "N/A") {
+          $result.HighestVDAVersionBeforeNextFunctionalLevel = $_.Key
+        } Else {
+          $TempHighestVDAVersionBeforeNextFunctionalLevel = (Convert-ToComparableVersion $result.HighestVDAVersionBeforeNextFunctionalLevel).Version
+          If ($tempVDAVersion -gt $TempHighestVDAVersionBeforeNextFunctionalLevel) {
+            $result.HighestVDAVersionBeforeNextFunctionalLevel = $_.Key
+          }
+        }
+      }
+    }
+  }
+  Return $result
+}
+
+# Syntax examples:
+# 1) Get the Internal Product Version and MinimumFunctionalLevel based on the Marketing Product Version
+#    Find-CitrixVersion -MatchByColumn:"MarketingProductVersion" -VersionToFind:"2311"
+# 2) Get the Marketing Product Version and MinimumFunctionalLevel based on the Internal Product Version
+#    Find-CitrixVersion -MatchByColumn:"InternalProductVersion" -VersionToFind:"7.21"
+# 3) Get the Lowest Supported VDA Version based on the MinimumFunctionalLevel and the Highest VDA Version Before the Next FunctionalLevel
+#    Find-CitrixVersion -MatchByColumn:"MinimumFunctionalLevel" -VersionToFind:"L7_9"
 
 #==============================================================================================
 
@@ -1619,12 +1861,21 @@ Function Check-NvidiaLicenseStatus {
   # This function gets the last update from the "C:\Users\Public\Documents\NvidiaLogging\Log.NVDisplay.Container.exe.log" log file to verify the current license status.
   # Examples of significant licensing events that are logged are as follows:
   # - Acquisition of a license
+  # - Platform detection successful (Licensed in Azure)
   # - Return of a license
   # - Expiration of a license (have only seen this happen after 7 failed attempts to renew)
   # - Failure to acquire a license
   # - Failure to renew a license
   # - License state changes between the unlicensed restricted state (20 mins), unlicensed state (24 hours), and licensed state
   # Reference: https://docs.nvidia.com/vgpu/latest/grid-licensing-user-guide/index.html
+  #
+  # When the log shows that "License has expired", you either need to restart the machine or restart the "NVIDIA Display Container LS" service.
+  #
+  # When using specific Azure N-series VMs you do not need a separate NVIDIA vGPU license server. The necessary licensing for the NVIDIA GRID software is included with
+  # the Azure service itself. Microsoft redistributes the Azure-optimized NVIDIA GRID drivers which are pre-licensed for the GRID Virtual GPU Software in the Azure
+  # environment. The "Platform detection successful" message indicates that the NVIDIA driver has correctly recognized it is running on a the supported Microsoft Azure
+  # virtual machine instance where a license is automatically provide through the platform. 
+  #
   # Written by Jeremy Saunders
   param (
          [string]$computername = "$env:computername"
@@ -1653,6 +1904,12 @@ Function Check-NvidiaLicenseStatus {
             {$Array[$Length -1] -Like "*License acquired successfully*"} {
                     $ResultProps.Output_To_Log = "nvidiaLicense: License acquired successfully"
                     $ResultProps.Licensed = "Acquired"
+                    $ResultProps.Output_For_HTML = "SUCCESS"
+                    break
+                   }
+            {$Array[$Length -1] -Like "*Platform detection successful*"} {
+                    $ResultProps.Output_To_Log = "nvidiaLicense: Platform detection successful"
+                    $ResultProps.Licensed = "Licensed"
                     $ResultProps.Output_For_HTML = "SUCCESS"
                     break
                    }
@@ -1718,6 +1975,143 @@ Function Check-NvidiaLicenseStatus {
 }
 
 #==============================================================================================
+
+Function Get-RDLicenseGracePeriodEventErrorsSinceBoot {
+  # This function will look for any Event ID 1069 errors found in the Microsoft-Windows-TerminalServices-RemoteConnectionManager/Admin Event Log.
+  # This error relates to "The RD Licensing grace period has expired and Licensing mode for the Remote Desktop Session Host server has not
+  # been configured. Licensing mode must be configured for continuous operation."
+  # When connecting via Citrix users will receive the error "The remote session was disconnected because there are no Terminal Server License
+  # Servers available to provide a license".
+  [CmdletBinding()]
+  param(
+         [switch]$UseWinRM,
+         [string]$computername = "$env:computername",
+         [datetime]$LastBootTime,
+         [int]$timeoutSeconds = 30
+  )
+
+  $LogName = 'Microsoft-Windows-TerminalServices-RemoteConnectionManager/Admin'
+  $EventId = 1069
+
+  $result = [PSCustomObject]@{
+    ComputerName  = $computername
+    LastBootTime  = $LastBootTime
+    Found         = $false
+    Count         = 0
+    Latest        = "N/A"
+    Sample        = "N/A"
+  }
+  $paramBundle = [PSCustomObject]@{
+    result       = $result
+    LogName      = $LogName
+    EventId      = $EventId
+    LastBootTime = $LastBootTime
+  }
+
+  if ($UseWinRM) {
+    try {
+      $job = Start-Job -ScriptBlock {
+        param (
+               [string]$computername,
+               $result,
+               $paramBundle
+              )
+        Invoke-Command -ComputerName $ComputerName -ErrorAction Stop -ScriptBlock {
+          param (
+                 $paramBundle
+                )
+          If ($null -ne $paramBundle) {
+            $result = $paramBundle.result
+            $LogName = $paramBundle.LogName
+            $EventId = $paramBundle.EventId
+            $LastBootTime = $paramBundle.LastBootTime
+          }
+
+          $events = @()
+          $evErr = $null
+          $null = Get-WinEvent -FilterHashtable @{
+                    LogName   = $LogName
+                    Id        = $EventId
+                    StartTime = $LastBootTime
+                  } -ErrorAction SilentlyContinue -ErrorVariable evErr |
+                     Sort-Object TimeCreated -Descending |
+                     Tee-Object -Variable events > $null
+
+          # Handle "no events found" gracefully
+          if ($evErr) {
+            $onlyNoEvents = $true
+            foreach ($e in $evErr) {
+              if ($e.Exception.Message -notlike 'No events were found*') {
+                $onlyNoEvents = $false
+              }
+            }
+            if (-not $onlyNoEvents) { throw "Get-WinEvent failed: $($evErr[0].Exception.Message)" }
+          }
+          if ($events.Count -gt 0) {
+            $result.Found = $true
+            $result.Count = $events.Count
+            $result.Latest = ($events | Select-Object -First 1 -ExpandProperty TimeCreated)
+            $result.Sample = $events | Select-Object -First 5 TimeCreated, Id, LevelDisplayName, Message
+          } Else {
+            $result.Latest = "no events found"
+            $result.Sample = "no events found"
+          }
+          return $result
+        } -ArgumentList $paramBundle
+      } -ArgumentList (,$computername,$result,$paramBundle)
+
+      # Wait for the job with a timeout
+      if (Wait-Job -Job $job -Timeout $timeoutSeconds) {
+        $result = Receive-Job -Job $job
+      } else {
+        Stop-Job $job | Out-Null
+        $result.Latest = "timed out checking for the events"
+        $result.Sample = "timed out checking for the events"
+      }
+      Remove-Job $job | Out-Null
+      return $result
+    }
+    catch {
+      #$_.Exception.Message
+      return $result
+    }
+  } else {
+    try {
+      $events = @()
+      $evErr = $null
+
+      $null = Get-WinEvent -ComputerName $ComputerName -FilterHashtable @{
+                LogName   = $LogName
+                Id        = $EventId
+                StartTime = $LastBootTime
+              } -ErrorAction SilentlyContinue -ErrorVariable evErr |
+                Sort-Object TimeCreated -Descending |
+                Tee-Object -Variable events > $null
+
+      if ($evErr) {
+        $onlyNoEvents = $true
+        foreach ($e in $evErr) {
+          if ($e.Exception.Message -notlike 'No events were found*') {
+            $onlyNoEvents = $false
+          }
+        }
+        if (-not $onlyNoEvents) { throw "Get-WinEvent failed: $($evErr[0].Exception.Message)" }
+      }
+
+      if ($events.Count -gt 0) {
+        $result.Found = $true
+      }
+      $result.Count = $events.Count
+      $result.Latest = ($events | Select-Object -First 1 -ExpandProperty TimeCreated)
+      $result.Sample = $events | Select-Object -First 5 TimeCreated, Id, LevelDisplayName, Message
+      return $result
+    }
+    catch {
+      #$_.Exception.Message
+      return $result
+    }
+  }
+}
 
 Function Get-RDSLicensingDetails {
   # This functions checks the RDS Licensing Details, including grace period.
@@ -1989,10 +2383,11 @@ Function Get-WriteCacheDriveInfo {
   # This function will test...
   # For PVS:
   # - The size of the vdiskdif.vhdx write-cache file and available free space on the write-cache drive.
-  # - The write cache drive is typically labeled "WCDisk", "Cache", "WriteCache", or "Write Cache".
+  # - The write cache drive is typically labeled "WCDisk", "Cache", "WriteCache", "Write Cache",
+  #   "CacheDisk" (BISF), or "WRcache"
   # For MCSIO:
   # - The size of the mcsdif.vhdx write-cache file and available free space on the write-cache drive.
-  # - The write cache drive is labeled "MCSWCDisk".
+  # - The write cache drive is labeled "MCSWCDisk" or "CacheDisk" (BISF).
   # Written by Jeremy Saunders
   param (
          [switch]$UseWinRM,
@@ -2003,7 +2398,7 @@ Function Get-WriteCacheDriveInfo {
          [string]$wcdrive = "D"
         )
   $results = @()
-  $wcvolumename = @("MCSWCDisk","WCDisk","Cache","WriteCache","Write Cache")
+  $wcvolumename = @("MCSWCDisk","WCDisk","Cache","WriteCache","Write Cache","CacheDisk","WRcache")
   If (($IsPVS -AND $IsMCS) -OR ($IsPVS -eq $False -AND $IsMCS -eq $False)) {
     return
   }
@@ -2105,11 +2500,11 @@ Function Get-ProfileAndUserEnvironmentManagementServiceStatus {
   # Written by Jeremy Saunders
   [CmdletBinding()]
   param (
-         [string]$ComputerName,
+         [string]$ComputerName = "$env:computername",
          [int]$WEMAgentRefresh = 30
         )
   $result = [PSCustomObject]@{
-    ComputerName                   = $env:COMPUTERNAME
+    ComputerName                   = $ComputerName
     FSLogixInstalled               = $false
     FSLogixServiceRunning          = $false
     FSLogixProfileEnabled          = $null
@@ -3839,99 +4234,93 @@ If ($ShowStorefrontTable -eq 1) {
 If ($CitrixCloudCheck -ne 1) {
   "Check Citrix Licensing ######################################################################" | LogMe -display -progress
   # ======= License Check ========
-  if($ShowCTXLicense -eq 1 ){
+  if ($ShowCTXLicense -eq 1 ) {
 
     $UseWinRM = $True
     $myCollection = @()
-    try 
-	{
-        If ($UseWinRM) {
-          $LicQuery = Get-CimInstance -namespace "ROOT\CitrixLicensing" -ComputerName $lsname -query "select * from Citrix_GT_License_Pool" -ErrorAction Stop | ? {$_.PLD -in $CTXLicenseMode}
-        } Else {
-          $LicQuery = Get-WmiObject -namespace "ROOT\CitrixLicensing" -ComputerName $lsname -query "select * from Citrix_GT_License_Pool" -ErrorAction Stop | ? {$_.PLD -in $CTXLicenseMode}
+    try {
+      If ($UseWinRM) {
+        $LicQuery = Get-CimInstance -namespace "ROOT\CitrixLicensing" -ComputerName $lsname -query "select * from Citrix_GT_License_Pool" -ErrorAction Stop | ? {$_.PLD -in $CTXLicenseMode}
+      } Else {
+        $LicQuery = Get-WmiObject -namespace "ROOT\CitrixLicensing" -ComputerName $lsname -query "select * from Citrix_GT_License_Pool" -ErrorAction Stop | ? {$_.PLD -in $CTXLicenseMode}
+      }
+
+      foreach ($group in $($LicQuery | group pld)) {
+        $lics = $group | Select-Object -ExpandProperty group
+        $i = 1
+
+        $myArray_Count = 0
+        $myArray_InUse = 0
+        $myArray_Available = 0
+
+        foreach ($lic in @($lics)) {
+          $myArray = "" | Select-Object LicenseServer,LicenceName,Count,InUse,Available
+          $myArray.LicenseServer = $lsname
+          $myArray.LicenceName = "$($lics.pld) ($i) Licence"
+          $myArray.Count = $Lic.count - $Lic.Overdraft
+          if ($Lic.inusecount -gt $myArray.Count) {$myArray.InUse = $myArray.Count} else {$myArray.InUse = $Lic.inusecount}
+          $myArray.Available = $myArray.count - $myArray.InUse
+          $myCollection += $myArray
+
+          $myArray = "" | Select-Object LicenseServer,LicenceName,Count,InUse,Available
+          $myArray.LicenseServer = $lsname
+          $myArray.LicenceName = "$($lics.pld) ($i) Overdraft"
+          $myArray.Count = $Lic.Overdraft
+          if ($Lic.inusecount -gt $($Lic.count - $Lic.Overdraft)) {$myArray.InUse = $Lic.inusecount - $($Lic.count - $Lic.Overdraft)} else {$myArray.InUse = 0}
+          $myArray.Available = $myArray.count - $myArray.InUse
+          $myCollection += $myArray
+
+          $myArray_Count += $Lic.count
+          $myArray_InUse += $Lic.inusecount
+          $myArray_Available += $Lic.pooledavailable
+
+          $i++
         }
-	
-        foreach ($group in $($LicQuery | group pld))
-        {
-            $lics = $group | Select-Object -ExpandProperty group
-            $i = 1
 
-            $myArray_Count = 0
-		    $myArray_InUse = 0
-		    $myArray_Available = 0
-		
-		    foreach ($lic in @($lics))
-		    {
-		    $myArray = "" | Select-Object LicenseServer,LicenceName,Count,InUse,Available
-		    $myArray.LicenseServer = $lsname
-		    $myArray.LicenceName = "$($lics.pld) ($i) Licence"
-		    $myArray.Count = $Lic.count - $Lic.Overdraft
-		    if ($Lic.inusecount -gt $myArray.Count) {$myArray.InUse = $myArray.Count} else {$myArray.InUse = $Lic.inusecount}
-		    $myArray.Available = $myArray.count - $myArray.InUse
-		    $myCollection += $myArray
-		
-		    $myArray = "" | Select-Object LicenseServer,LicenceName,Count,InUse,Available
-		    $myArray.LicenseServer = $lsname
-		    $myArray.LicenceName = "$($lics.pld) ($i) Overdraft"
-		    $myArray.Count = $Lic.Overdraft
-		    if ($Lic.inusecount -gt $($Lic.count - $Lic.Overdraft)) {$myArray.InUse = $Lic.inusecount - $($Lic.count - $Lic.Overdraft)} else {$myArray.InUse = 0}
-		    $myArray.Available = $myArray.count - $myArray.InUse
-		    $myCollection += $myArray
-		
-		    $myArray_Count += $Lic.count
-		    $myArray_InUse += $Lic.inusecount
-		    $myArray_Available += $Lic.pooledavailable
-				
-		    $i++
-		    }
-		
-		    $myArray = "" | Select-Object LicenseServer,LicenceName,Count,InUse,Available
-		    $myArray.LicenseServer = $lsname
-		    $myArray.LicenceName = "$($lics.pld) - Total"
-		    $myArray.Count = $myArray_Count
-		    $myArray.InUse = $myArray_InUse
-		    $myArray.Available = $myArray_Available
-		    $myCollection += $myArray
+        $myArray = "" | Select-Object LicenseServer,LicenceName,Count,InUse,Available
+        $myArray.LicenseServer = $lsname
+        $myArray.LicenceName = "$($lics.pld) - Total"
+        $myArray.Count = $myArray_Count
+        $myArray.InUse = $myArray_InUse
+        $myArray.Available = $myArray_Available
+        $myCollection += $myArray
 
+      }
     }
+    catch {
+      $myArray = "" | Select-Object LicenseServer,LicenceName,Count,InUse,Available
+      $myArray.LicenseServer = $lsname
+      $myArray.LicenceName = "n/a"
+      $myArray.Count = "n/a"
+      $myArray.InUse = "n/a"
+      $myArray.Available = "n/a"
+      $myCollection += $myArray 
     }
-    catch
-    {
-            $myArray = "" | Select-Object LicenseServer,LicenceName,Count,InUse,Available
-		    $myArray.LicenseServer = $lsname
-		    $myArray.LicenceName = "n/a"
-		    $myArray.Count = "n/a"
-		    $myArray.InUse = "n/a"
-		    $myArray.Available = "n/a"
-		    $myCollection += $myArray 
-    }
-    
+
     $CTXLicResults = @{}
 
-    foreach ($line in $myCollection)
-    {
-        $tests = @{}
+    foreach ($line in $myCollection) {
+      $tests = @{}
 
-
-        if ($line.LicenceName -eq "n/a")
-        {
-            $tests.LicenseServer ="error", $line.LicenseServer
-            $tests.Count ="error", $line.Count
-		    $tests.InUse ="error", $line.InUse
-		    $tests.Available ="error", $line.Available
-        }
-        else
-        {
-            $tests.LicenseServer ="NEUTRAL", $line.LicenseServer
-            $tests.Count ="NEUTRAL", $line.Count
-		    $tests.InUse ="NEUTRAL", $line.InUse
-		    $tests.Available ="NEUTRAL", $line.Available}
-            $CTXLicResults.($line.LicenceName) =  $tests
-        }
-  }
-  else {"CTX License Check skipped because ShowCTXLicense = 0 " | LogMe -display -progress }
+      if ($line.LicenceName -eq "n/a") {
+        $tests.LicenseServer ="error", $line.LicenseServer
+        $tests.Count ="error", $line.Count
+        $tests.InUse ="error", $line.InUse
+        $tests.Available ="error", $line.Available
+      } else {
+        $tests.LicenseServer ="NEUTRAL", $line.LicenseServer
+        $tests.Count ="NEUTRAL", $line.Count
+        $tests.InUse ="NEUTRAL", $line.InUse
+        $tests.Available ="NEUTRAL", $line.Available
+      }
+      $CTXLicResults.($line.LicenceName) =  $tests
+    }
+    If ($CTXLicResults.Count -eq 0) {
+      "No license data was returned. This may be because License Activation Service (LAS) is enabled." | LogMe -display -progress
+    }
+  } else {"CTX License Check skipped because ShowCTXLicense = 0 " | LogMe -display -progress } #Close off $ShowCTXLicense
   " --- " | LogMe -display -progress
-}
+} #Close off $CitrixCloudCheck
 
 #== Catalog Check ============================================================================================
 "Check Catalog #################################################################################" | LogMe -display -progress
@@ -4037,92 +4426,123 @@ foreach ($Catalog in $Catalogs) {
     If ($CatalogProvisioningType -eq "MCS") {
       $CatalogProvisioningSchemeId = $Catalog | ForEach-Object{ $_.ProvisioningSchemeId }
 
-       #UsedMcsSnapshot 
-       $UsedMcsSnapshot = ""
-       $MCSInfo = $null
-       $MasterImageVMDate = ""
-       $UseFullDiskClone = ""
-       $UseWriteBackCache = ""
-       $WriteBackCacheMemSize = ""
+      #UsedMcsSnapshot 
+      $UsedMcsSnapshot = ""
+      $MCSInfo = $null
+      $MasterImageVMDate = ""
+      $UseFullDiskClone = ""
+      $UseWriteBackCache = ""
+      $WriteBackCacheMemSize = ""
 
-       "ProvisioningSchemeId: $CatalogProvisioningSchemeId " | LogMe -display -progress
-       Try {
-         If ($CitrixCloudCheck -ne 1) {
-           $MCSInfo = (Get-ProvScheme -AdminAddress $AdminAddress -ProvisioningSchemeUid $CatalogProvisioningSchemeId)
-         } Else {
-           $MCSInfo = (Get-ProvScheme -ProvisioningSchemeUid $CatalogProvisioningSchemeId)
-         }
-         "ProvisioningScheme Info:" | LogMe -display -progress
-         # MachineProfile can be null, so we just wrap it in a try/catch to manage errors.
-         Try {
-           "- MachineProfile: $($MCSInfo.MachineProfile)" | LogMe -display -progress
-         }
-         Catch [system.exception] {
-           #$_.Exception.Message
-         }
-         "- MasterImageVM: $($MCSInfo.MasterImageVM)" | LogMe -display -progress
-         "- MasterImageVMDate: $($MCSInfo.MasterImageVMDate)" | LogMe -display -progress
-         "- UseFullDiskCloneProvisioning: $($MCSInfo.UseFullDiskCloneProvisioning)" | LogMe -display -progress
-         "- UseWriteBackCache: $($MCSInfo.UseWriteBackCache)" | LogMe -display -progress
-         "- WriteBackCacheDiskSize: $($MCSInfo.WriteBackCacheDiskSize)" | LogMe -display -progress
-         "- WriteBackCacheMemorySize:$( $MCSInfo.WriteBackCacheMemorySize)" | LogMe -display -progress
-         "- WriteBackCacheDiskIndex: $($MCSInfo.WriteBackCacheDiskIndex)" | LogMe -display -progress
-         # Note that the Get-ProvScheme cmdlet may does not yet have a parameter for "WriteBackCacheDiskLetter", even though this
-         # was added for the New-ProvScheme cmdlet mid 2024 and supported from VDA version 2305 (CTX575525). This should not be
-         # needed as the drive letter of MCSIO WBC disk is determined by Windows OS and is typically either D or E drive (the next
-         # free drive letter after C). The Base Image Script Framework (BIS-F) should be used to help make this consistent as part
-         # of your imaging standards. So we just wrap it in a try/catch to manage errors.
-         Try {
-           "- WriteBackCacheDiskLetter: $($MCSInfo.WriteBackCacheDiskLetter)" | LogMe -display -progress
-         }
-         Catch [system.exception] {
-           #$_.Exception.Message
-         }
-         # WindowsActivationType is supported from 2303 and successive VDA versions. Any previous VDA version or if the vda is not
-         # of Windows Operating System Type, the field would be "UnsupportedVDA". However, as it can be null, we just wrap it in a
-         # try/catch to manage errors.
-         Try {
-           "- WindowsActivationType: $($MCSInfo.WindowsActivationType)" | LogMe -display -progress
-         }
-         Catch [system.exception] {
-           #$_.Exception.Message
-         }
-         $UsedMcsSnapshot = $MCSInfo.MasterImageVM
-         $UsedMcsSnapshot = $UsedMcsSnapshot.trimstart("XDHyp:\HostingUnits\")
-         $UsedMcsSnapshot = $UsedMcsSnapshot.trimend(".template")
-         $MasterImageVMDate = $MCSInfo.MasterImageVMDate
-         $UseFullDiskClone = $MCSInfo.UseFullDiskCloneProvisioning
-         $UseWriteBackCache = $MCSInfo.UseWriteBackCache
-         $WriteBackCacheMemorySize = $MCSInfo.WriteBackCacheMemorySize
-       }
-       Catch [system.exception] {
-         #$_.Exception.Message
-       }
-       "UsedMcsSnapshot: = $UsedMcsSnapshot"
-       $tests.UsedMcsSnapshot  = "NEUTRAL", $UsedMcsSnapshot
-       If (!([String]::IsNullOrEmpty($MasterImageVMDate))) {
-         # Date format will always be MM/dd/yyyy so we specify that so that PowerShell doesn't parse it incorrectly, interpreting the
-         # day and month around the opposite way.
-         $format = "MM/dd/yyyy HH:mm:ss"
-         $culture = [System.Globalization.CultureInfo]::InvariantCulture
-         $style = [System.Globalization.DateTimeStyles]::None
-         $parsedDate = [datetime]::MinValue
-         $success = [datetime]::TryParseExact($MasterImageVMDate, $format, $culture, $style, [ref]$parsedDate)
-         $thresholdDate = (Get-Date).AddDays(-90)
-         if ($parsedDate -lt $thresholdDate) {
-           "The MasterImageVMDate is more than 90 days old." | LogMe -display -warning
-           $tests.MasterImageVMDate = "WARNING", $MasterImageVMDate
-           $IsSeverityWarningLevel = $True
-         } else {
-           $tests.MasterImageVMDate = "NEUTRAL", $MasterImageVMDate
-         }
-       }
-       $tests.UseFullDiskClone = "NEUTRAL", $UseFullDiskClone
-       $tests.UseWriteBackCache = "NEUTRAL", $UseWriteBackCache
-       $tests.WriteBackCacheMemSize = "NEUTRAL", $WriteBackCacheMemSize
-     } Else {
-       "This is not an MCS provisioned catalog." | LogMe -display -progress
-     }
+      "ProvisioningSchemeId: $CatalogProvisioningSchemeId " | LogMe -display -progress
+      Try {
+        If ($CitrixCloudCheck -ne 1) {
+          $MCSInfo = (Get-ProvScheme -AdminAddress $AdminAddress -ProvisioningSchemeUid $CatalogProvisioningSchemeId)
+        } Else {
+          $MCSInfo = (Get-ProvScheme -ProvisioningSchemeUid $CatalogProvisioningSchemeId)
+        }
+        "ProvisioningScheme Info:" | LogMe -display -progress
+        # MachineProfile can be null, so we just wrap it in a try/catch to manage errors.
+        Try {
+          "- MachineProfile: $($MCSInfo.MachineProfile)" | LogMe -display -progress
+        }
+        Catch [system.exception] {
+          #$_.Exception.Message
+        }
+        "- MasterImageVM: $($MCSInfo.MasterImageVM)" | LogMe -display -progress
+        "- MasterImageVMDate: $($MCSInfo.MasterImageVMDate)" | LogMe -display -progress
+        "- UseFullDiskCloneProvisioning: $($MCSInfo.UseFullDiskCloneProvisioning)" | LogMe -display -progress
+        "- UseWriteBackCache: $($MCSInfo.UseWriteBackCache)" | LogMe -display -progress
+        "- WriteBackCacheDiskSize: $($MCSInfo.WriteBackCacheDiskSize)" | LogMe -display -progress
+        "- WriteBackCacheMemorySize:$( $MCSInfo.WriteBackCacheMemorySize)" | LogMe -display -progress
+        "- WriteBackCacheDiskIndex: $($MCSInfo.WriteBackCacheDiskIndex)" | LogMe -display -progress
+        # Note that the Get-ProvScheme cmdlet may does not yet have a parameter for "WriteBackCacheDiskLetter", even though this
+        # was added for the New-ProvScheme cmdlet mid 2024 and supported from VDA version 2305 (CTX575525). This should not be
+        # needed as the drive letter of MCSIO WBC disk is determined by Windows OS and is typically either D or E drive (the next
+        # free drive letter after C). The Base Image Script Framework (BIS-F) should be used to help make this consistent as part
+        # of your imaging standards. So we just wrap it in a try/catch to manage errors.
+        Try {
+          "- WriteBackCacheDiskLetter: $($MCSInfo.WriteBackCacheDiskLetter)" | LogMe -display -progress
+        }
+        Catch [system.exception] {
+          #$_.Exception.Message
+        }
+        # WindowsActivationType is supported from 2303 and successive VDA versions. Any previous VDA version or if the vda is not
+        # of Windows Operating System Type, the field would be "UnsupportedVDA". However, as it can be null, we just wrap it in a
+        # try/catch to manage errors.
+        Try {
+          "- WindowsActivationType: $($MCSInfo.WindowsActivationType)" | LogMe -display -progress
+        }
+        Catch [system.exception] {
+          #$_.Exception.Message
+        }
+        $UsedMcsSnapshot = $MCSInfo.MasterImageVM
+        $UsedMcsSnapshot = $UsedMcsSnapshot.trimstart("XDHyp:\HostingUnits\")
+        $UsedMcsSnapshot = $UsedMcsSnapshot.trimend(".template")
+        $MasterImageVMDate = $MCSInfo.MasterImageVMDate
+        $UseFullDiskClone = $MCSInfo.UseFullDiskCloneProvisioning
+        $UseWriteBackCache = $MCSInfo.UseWriteBackCache
+        $WriteBackCacheMemorySize = $MCSInfo.WriteBackCacheMemorySize
+      }
+      Catch [system.exception] {
+        #$_.Exception.Message
+      }
+      "UsedMcsSnapshot: = $UsedMcsSnapshot"
+      $tests.UsedMcsSnapshot  = "NEUTRAL", $UsedMcsSnapshot
+      If (!([String]::IsNullOrEmpty($MasterImageVMDate))) {
+        # Date format will always be MM/dd/yyyy so we specify that so that PowerShell doesn't parse it incorrectly, interpreting the
+        # day and month around the opposite way.
+        $format = "MM/dd/yyyy HH:mm:ss"
+        $culture = [System.Globalization.CultureInfo]::InvariantCulture
+        $style = [System.Globalization.DateTimeStyles]::None
+        $parsedDate = [datetime]::MinValue
+        $success = [datetime]::TryParseExact($MasterImageVMDate, $format, $culture, $style, [ref]$parsedDate)
+        $thresholdDate = (Get-Date).AddDays(-90)
+        if ($parsedDate -lt $thresholdDate) {
+          "The MasterImageVMDate is more than 90 days old." | LogMe -display -warning
+          $tests.MasterImageVMDate = "WARNING", $MasterImageVMDate
+          $IsSeverityWarningLevel = $True
+        } else {
+          $tests.MasterImageVMDate = "NEUTRAL", $MasterImageVMDate
+        }
+      }
+      $tests.UseFullDiskClone = "NEUTRAL", $UseFullDiskClone
+      $tests.UseWriteBackCache = "NEUTRAL", $UseWriteBackCache
+      $tests.WriteBackCacheMemSize = "NEUTRAL", $WriteBackCacheMemSize
+    } Else {
+      "This is not an MCS provisioned catalog." | LogMe -display -progress
+    }
+
+    # Get agent versions of machines in the Machine Catalog so that we can see if the MinimumFunctionalLevel can be increased.
+    $MachineAgentVersions = $null
+    If ($CitrixCloudCheck -ne 1) {
+      $MachineAgentVersions = Group-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -Property AgentVersion -CatalogName $FullCatalogNameIncAdminFolder
+    } Else {
+      $MachineAgentVersions = Group-BrokerMachine -MaxRecordCount $maxmachines -Property AgentVersion -CatalogName $FullCatalogNameIncAdminFolder
+    }
+    # We want to get the lowest AgentVersion value in the Machine Catalog and then find if that matches the MinimumFunctionalLevel of the Machine Catalog.
+    $RecommendedMinimumFunctionalLevel = $MinimumFunctionalLevel
+    [version[]]$DerivedMinimumFunctionalLevels = @()
+    ForEach($MachineAgentVersion in $MachineAgentVersions) {
+      if ($null -ne $MachineAgentVersion) {
+        if (![string]::IsNullOrWhiteSpace($MachineAgentVersion.Name)) {
+          $TempMinimumFunctionalLevel = (Find-CitrixVersion -MatchByColumn:"MarketingProductVersion" -VersionToFind:"$($MachineAgentVersion.Name)").MinimumFunctionalLevel
+          If ($TempMinimumFunctionalLevel -ne "N/A") {
+            $DerivedMinimumFunctionalLevels += [version](Convert-FunctionalLevelToVersion $TempMinimumFunctionalLevel)
+          }
+        }
+      }
+    }
+    $LowestSupportedMinimumFunctionalLevel = $DerivedMinimumFunctionalLevels | Sort-Object | Select-Object -First 1
+    If ($LowestSupportedMinimumFunctionalLevel -gt (Convert-FunctionalLevelToVersion $MinimumFunctionalLevel)) {
+      $RecommendedMinimumFunctionalLevel = (Convert-VersionToFunctionalLevel $LowestSupportedMinimumFunctionalLevel)
+      "RecommendedMinimumFunctionalLevel: The recommended minimum functional level for this Machine Catalog should be changed to $RecommendedMinimumFunctionalLevel" | LogMe -display -warning
+      $tests.RecommendedMinimumFunctionalLevel = "WARNING", $RecommendedMinimumFunctionalLevel
+      $IsSeverityWarningLevel = $True
+    } Else {
+      "RecommendedMinimumFunctionalLevel: The minimum functional level for this Machine Catalog must remain at $RecommendedMinimumFunctionalLevel" | LogMe -display -progress
+      $tests.RecommendedMinimumFunctionalLevel = "NEUTRAL", $RecommendedMinimumFunctionalLevel
+    }
 
     # Add the SiteName to the tests for the Syslog output
     $tests.SiteName = "NORMAL", $sitename
@@ -4171,7 +4591,7 @@ If ($CitrixCloudCheck -ne 1) {
 } Else {
   $Assigments = Get-BrokerDesktopGroup
 }
-  
+
 foreach ($Assigment in $Assigments) {
   $IsSeverityErrorLevel = $False
   $IsSeverityWarningLevel = $False
@@ -4221,7 +4641,7 @@ foreach ($Assigment in $Assigments) {
   
     #DesktopsTotal
     $TotalDesktops = $Assigment | ForEach-Object{ $_.TotalDesktops }
-    "DesktopsAvailable: $TotalDesktops" | LogMe -display -progress
+    "TotalDesktops: $TotalDesktops" | LogMe -display -progress
     $tests.TotalMachines = "NEUTRAL", $TotalDesktops
   
     #DesktopsAvailable
@@ -4361,6 +4781,76 @@ foreach ($Assigment in $Assigments) {
       "DesktopsNotUsedLast90Days: $($DesktopsNotUsedLast90Days)" | LogMe -display -warning
       $tests.DesktopsNotUsedLast90Days = "WARNING", $DesktopsNotUsedLast90Days
       $IsSeverityWarningLevel = $True
+    }
+
+    # Get percentage of machines in the Delivery Group that are in Maintenance Mode.
+    # Mark as warning if greater than 0% and error if 50% or greater.
+    $MachinesInMaintMode = 0
+    If ($CitrixCloudCheck -ne 1) {
+      $MachineMaintModeStatus = Group-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -Property InMaintenanceMode -DesktopGroupName $FullDeliveryGroupNameIncAdminFolder
+    } Else {
+      $MachineMaintModeStatus = Group-BrokerMachine -MaxRecordCount $maxmachines -Property InMaintenanceMode -DesktopGroupName $FullDeliveryGroupNameIncAdminFolder
+    }
+    ForEach($MaintModeStatus in $MachineMaintModeStatus) {
+      If ($MaintModeStatus.Name -eq "True") {
+        $MachinesInMaintMode = $MaintModeStatus.Count
+      }
+    }
+    [float]$PercentageOfMachinesInMaintMode = 0.00
+    If ([int]$TotalDesktops -gt 0) {
+      $PercentageOfMachinesInMaintMode = (($MachinesInMaintMode / [int]$TotalDesktops) * 100)
+      [float]$PercentageOfMachinesInMaintMode = "{0:N2}" -f $PercentageOfMachinesInMaintMode
+    }
+    If ($PercentageOfMachinesInMaintMode -lt [float]50.00) {
+      If ($PercentageOfMachinesInMaintMode -eq [float]00.00) {
+        "PercentageOfMachinesInMaintMode: $($PercentageOfMachinesInMaintMode)" | LogMe -display -progress
+        $tests.PercentageOfMachinesInMaintMode = "SUCCESS", $PercentageOfMachinesInMaintMode
+        "MachinesInMaintMode: $($MachinesInMaintMode)" | LogMe -display -progress
+        $tests.MachinesInMaintMode = "SUCCESS", $MachinesInMaintMode
+      } Else {
+        "PercentageOfMachinesInMaintMode: $($PercentageOfMachinesInMaintMode)" | LogMe -display -warning
+        $tests.PercentageOfMachinesInMaintMode = "WARNING", $PercentageOfMachinesInMaintMode
+        "MachinesInMaintMode: $($MachinesInMaintMode)" | LogMe -display -warning
+        $tests.MachinesInMaintMode = "WARNING", $MachinesInMaintMode
+        $IsSeverityWarningLevel = $True
+      }
+    } Else {
+      "PercentageOfMachinesInMaintMode: $($PercentageOfMachinesInMaintMode)" | LogMe -display -error
+      $tests.PercentageOfMachinesInMaintMode = "ERROR", $PercentageOfMachinesInMaintMode
+      "MachinesInMaintMode: $($MachinesInMaintMode)" | LogMe -display -error
+      $tests.MachinesInMaintMode = "ERROR", $MachinesInMaintMode
+      $IsSeverityErrorLevel = $True
+    }
+
+    # Get agent versions of machines in the Delivery Group so that we can see if the MinimumFunctionalLevel can be increased.
+    $MachineAgentVersions = $null
+    If ($CitrixCloudCheck -ne 1) {
+      $MachineAgentVersions = Group-BrokerMachine -MaxRecordCount $maxmachines -AdminAddress $AdminAddress -Property AgentVersion -DesktopGroupName $FullDeliveryGroupNameIncAdminFolder
+    } Else {
+      $MachineAgentVersions = Group-BrokerMachine -MaxRecordCount $maxmachines -Property AgentVersion -DesktopGroupName $FullDeliveryGroupNameIncAdminFolder
+    }
+    # We want to get the lowest AgentVersion value in the Delivery Group and then find if that matches the MinimumFunctionalLevel of the Delivery Group.
+    $RecommendedMinimumFunctionalLevel = $MinimumFunctionalLevel
+    [version[]]$DerivedMinimumFunctionalLevels = @()
+    ForEach($MachineAgentVersion in $MachineAgentVersions) {
+      if ($null -ne $MachineAgentVersion) {
+        if (![string]::IsNullOrWhiteSpace($MachineAgentVersion.Name)) {
+          $TempMinimumFunctionalLevel = (Find-CitrixVersion -MatchByColumn:"MarketingProductVersion" -VersionToFind:"$($MachineAgentVersion.Name)").MinimumFunctionalLevel
+          If ($TempMinimumFunctionalLevel -ne "N/A") {
+            $DerivedMinimumFunctionalLevels += [version](Convert-FunctionalLevelToVersion $TempMinimumFunctionalLevel)
+          }
+        }
+      }
+    }
+    $LowestSupportedMinimumFunctionalLevel = $DerivedMinimumFunctionalLevels | Sort-Object | Select-Object -First 1
+    If ($LowestSupportedMinimumFunctionalLevel -gt (Convert-FunctionalLevelToVersion $MinimumFunctionalLevel)) {
+      $RecommendedMinimumFunctionalLevel = (Convert-VersionToFunctionalLevel $LowestSupportedMinimumFunctionalLevel)
+      "RecommendedMinimumFunctionalLevel: The recommended minimum functional level for this Delivery Group should be changed to $RecommendedMinimumFunctionalLevel" | LogMe -display -warning
+      $tests.RecommendedMinimumFunctionalLevel = "WARNING", $RecommendedMinimumFunctionalLevel
+      $IsSeverityWarningLevel = $True
+    } Else {
+      "RecommendedMinimumFunctionalLevel: The minimum functional level for this Delivery Group must remain at $RecommendedMinimumFunctionalLevel" | LogMe -display -progress
+      $tests.RecommendedMinimumFunctionalLevel = "NEUTRAL", $RecommendedMinimumFunctionalLevel
     }
 
     # Add the SiteName to the tests for the Syslog output
@@ -6102,18 +6592,37 @@ if($ShowXenAppTable -eq 1 ) {
         ################ Start RDS Licensing Details Check SECTION ###############
 
         If ($WinEntMultisession -eq $False) {
-          $return = Get-RDSLicensingDetails -computername:$machineDNS -UseWinRM:$UseWinRM
-          $tests.RDSGracePeriod = $return.Output_For_HTML, $return.GracePeriod
-          if (($return.Output_To_Log -like "*Good*") -OR ($return.Output_To_Log -like "*N/A")) {
-            $return.Output_To_Log | LogMe -display -progress
-          }
-          elseif ($return.Output_To_Log -like "*Warning*") {
-            $return.Output_To_Log | LogMe -display -warning
+          $return = Get-RDLicenseGracePeriodEventErrorsSinceBoot -ComputerName:$machineDNS -UseWinRM:$UseWinRM -LastBootTime:$hostUptime.LBTime
+          $RDSGracePeriodExpired = $False
+          If ($return.Found -AND $Return.Count -gt 0) {
+            $RDSGracePeriodExpired = $True
+            $tests.RDSGracePeriodExpired = "ERROR", $return.Found
+            "RDSGracePeriodExpired: $($return.Found)" | LogMe -display -error
             $ErrorXA = $ErrorXA + 1
-            $IsSeverityWarningLevel = $True
+            $IsSeverityErrorLevel = $True
+          } Else {
+            $tests.RDSGracePeriodExpired = "NEUTRAL", $return.Found
+            "RDSGracePeriodExpired: $($return.Found)" | LogMe -display -progress
           }
-          else {
-            $return.Output_To_Log | LogMe -display -error
+          $return = Get-RDSLicensingDetails -computername:$machineDNS -UseWinRM:$UseWinRM
+          If ($RDSGracePeriodExpired -eq $False) {
+            $tests.RDSGracePeriod = $return.Output_For_HTML, $return.GracePeriod
+            if (($return.Output_To_Log -like "*Good*") -OR ($return.Output_To_Log -like "*N/A")) {
+              $return.Output_To_Log | LogMe -display -progress
+            }
+            elseif ($return.Output_To_Log -like "*Warning*") {
+              $return.Output_To_Log | LogMe -display -warning
+              $ErrorXA = $ErrorXA + 1
+              $IsSeverityWarningLevel = $True
+            }
+            else {
+              $return.Output_To_Log | LogMe -display -error
+              $ErrorXA = $ErrorXA + 1
+              $IsSeverityErrorLevel = $True
+            }
+          } Else {
+            $tests.RDSGracePeriod = "ERROR", $return.GracePeriod
+            "RDSGracePeriod: Expired [ $($return.GracePeriod) ]" | LogMe -display -error
             $ErrorXA = $ErrorXA + 1
             $IsSeverityErrorLevel = $True
           }
@@ -6158,6 +6667,7 @@ if($ShowXenAppTable -eq 1 ) {
           }
         } Else {
           $tests.RDSGracePeriod = "NORMAL", "N/A"
+          $tests.RDSGracePeriodExpired = "NORMAL", "N/A"
           "This is an Azure Windows 10/11 multi-session host. Traditional RDS CALs are not relevant" | LogMe -display -progress
           $tests.TerminalServerMode = "NORMAL","AppServer"
           "TerminalServerMode: AppServer" | LogMe -display -progress
@@ -6967,10 +7477,12 @@ else { "No Storefront output in HTML (CitrixCloud) " | LogMe -display -progress 
 
 # Write Table with the License
 If ($CitrixCloudCheck -ne 1) {
-  "Adding License output to HTML" | LogMe -display -progress 
-  writeTableHeader $resultsHTM $CTXLicFirstheaderName $CTXLicHeaderNames $CTXLicTableWidth
-  $CTXLicResults | ForEach-Object{ writeData $CTXLicResults $resultsHTM $CTXLicHeaderNames }
-  writeTableFooter $resultsHTM
+  If ($CTXLicResults.Count -gt 0) {
+    "Adding License output to HTML" | LogMe -display -progress 
+    writeTableHeader $resultsHTM $CTXLicFirstheaderName $CTXLicHeaderNames $CTXLicTableWidth
+    $CTXLicResults | ForEach-Object{ writeData $CTXLicResults $resultsHTM $CTXLicHeaderNames }
+    writeTableFooter $resultsHTM
+  } Else { "The License output has not been added to the HTML as it contains no data. This may be because it is License Activation Service (LAS) enabled." | LogMe -display -progress }
 }
 else { "No License output in HTML (CitrixCloud) " | LogMe -display -progress }
 
@@ -7565,6 +8077,38 @@ If ($UseRunspace) {
 #            share the same XML params files, avoiding duplication.
 #          - Added XML variable ShowBrokerConnectionFailuresTable to disable the Connection Failure On Machine table. Using the output from the CitrixFailedConnections.ps1 script provides an
 #            improved and thorough output aligned with Citrix Director.
+# - 1.5.8, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+#          - Enhanced the Get-WriteCacheDriveInfo function by also allowing for the CacheDisk label from BISF.
+#          - Fixed a bug with the output of the Get-ProfileAndUserEnvironmentManagementServiceStatus function.
+#          - Added the RDSGracePeriodExpired column to the XenApp/RDS/Multisession host table.
+#          - Added the Get-RDLicenseGracePeriodEventErrorsSinceBoot function to populate the test for RDSGracePeriodExpired, which is done via the Event Log. This will provide more accuracy
+#            than the GetGracePeriodDays method from the Get-RDSLicensingDetails function. If RDSGracePeriodExpired is True, RDSGracePeriod is marked as error to remove confusion.
+#          - Enhanced the Check-NvidiaLicenseStatus function to allow for "Platform detection successful" to check if it is licensed in Azure. When using specific Azure N-series VMs you do not
+#            need a separate NVIDIA vGPU license server. The necessary licensing for the NVIDIA GRID software is included with the Azure service itself. Microsoft redistributes the Azure-
+#            optimized NVIDIA GRID drivers which are pre-licensed for the GRID Virtual GPU Software in the Azure environment. The "Platform detection successful" message indicates that the
+#            NVIDIA driver has correctly recognized it is running on a the supported Microsoft Azure virtual machine instance where a license is automatically provide through the platform.
+#          - Enhanced the Get-RDLicenseGracePeriodEventErrorsSinceBoot function to wrap the Invoke-Command cmdlet in a Start-Job cmdlet so we can use a timeout. This will help to prevent the
+#            Invoke-Command cmdlet getting stuck on unhealthy remote machines.
+#          - A minor update to the Get-WriteCacheDriveInfo function for an additional drive label.
+#          - Added RecommendedMinimumFunctionalLevel to both the DeliveryGroups and Catalogs tables and enhanced the code under the DeliveryGroups and Catalogs Check to derive the recommended
+#            MinimumFunctionalLevel based on VDA Agent Versions in the Delivery Group and Machine Catalog respectively. This required adding the $ProductVersionValues table and
+#            $ProductVersionHashTable hashtable that provides a mapping between the Marketing Product Version, Internal Product Version, and the MinimumFunctionalLevel used by the Delivery
+#            Groups and Machine Catalogs. Used the Group-BrokerMachine cmdlet to help achieve this.
+#            Added the Find-CitrixVersion, Convert-ToComparableVersion, Convert-FunctionalLevelToVersion and Convert-VersionToFunctionalLevel functions so that we can:
+#            1) Get the Internal Product Version and MinimumFunctionalLevel based on the Marketing Product Version
+#            2) Get the Marketing Product Version and MinimumFunctionalLevel based on the Internal Product Version
+#            3) Get the Lowest Supported VDA Version based on the MinimumFunctionalLevel and the Highest VDA Version Before the Next FunctionalLevel
+#            4) Convert the MinimumFunctionalLevel to a version for comparison, and back again for correct output.
+#          - Added MachinesInMaintMode and PercentageOfMachinesInMaintMode to the DeliveryGroups table and enhanced the code under the DeliveryGroups Check to get the count and percentage of
+#            machines in maintenance mode and mark as warning if greater than 0% and error if 50% or greater. This will help alert Admins to potential issues when accidentally placing too many
+#            machines into maintenance mode, or simply forgetting to remove maintenance mode after a maintenance task and/or a reboot. Used the Group-BrokerMachine cmdlet to help achieve this.
+#          - If using an on-prem License server and the output for the license table contains no data, it will be excluded from the HTML report. This may be because it is License Activation
+#            Service (LAS) enabled. With LAS enabled we now have unlimited capacity and no way to get a license count. "LAS provides products with unlimited capacity for the duration of the
+#            entitlement validity. Because LAS does not require a 'check-out' operation to track individual licenses, real-time usage metrics are not available within the License Server or
+#            Citrix Cloud."
+#            A reference to the "Unlimited capacity" point here: https://docs.citrix.com/en-us/licensing/current-release/license-activation-service.html
+#          - Added further variables to the XML params file to support the new Insights script called CitrixInsights.ps1 that I will publish separately. This allows them to share the same XML
+#            params files, avoiding duplication.
 #
 # ==CURRENT KNOWN ISSUES AND/OR LIMITATIONS ==
 # - Any functions that use the Invoke-Command cmdlet "may" cause the script to wait indefinitely when run against an unhealthy machine. This is due to the known timeout issue with this cmdlet.
@@ -7576,7 +8120,8 @@ If ($UseRunspace) {
 # - CREATE Proper functions
 # - Change all functions to allow for Invoke-Command for PS Remoting where possible.
 # - The Invoke-Command cmdlet doesn't have a -Timeout parameter. To force a timeout for the Invoke-Command cmdlet we can put it in a ScriptBlock and run it as background job using Start-Job.
-#   Then use Wait-Job on it with -Timeout specified. It will wait the amount of time we specify and then terminate the job.
+#   Then use Wait-Job on it with -Timeout specified. It will wait the amount of time we specify and then terminate the job. Refer to the Get-RDLicenseGracePeriodEventErrorsSinceBoot function
+#   to see how this has been implemented.
 # - Look to merge the Singlesession and Multisession sections using a for loop to process, as there is quite a bit of code duplication in those two sections.
 # - Look to merge the Delivery Controllers, Cloud Connectors and Storefront Servers sections using a for loop to process, as there is quite a bit of code duplication in those three sections.
 # - Enhance the MCSIO tests, where possible.

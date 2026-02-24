@@ -395,7 +395,7 @@
 			<Type>[long]</Type>
 			<Scope>Script</Scope>
 		</Variable>
-<!-- Logon Duration and Failed Connections Params -->
+<!-- Logon Duration, Failed Connections and Insights Params -->
 		<Variable>
 			<!-- Define a EnvironmentName for the LogonDuration e.g. Integration/Production etc. - this will be used in HTML & Email Subject -->
 			<Name>EnvironmentNameLogonDuration</Name>
@@ -407,6 +407,13 @@
 			<!-- Define a EnvironmentName for the FailedConnections e.g. Integration/Production etc. - this will be used in HTML & Email Subject -->
 			<Name>EnvironmentNameFailedConnections</Name>
 			<Value>Citrix Failed Connections</Value>
+			<Type>[string]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Define a EnvironmentName for the Insights e.g. Integration/Production etc. - this will be used in HTML & Email Subject -->
+			<Name>EnvironmentNameInsights</Name>
+			<Value>Citrix Insights</Value>
 			<Type>[string]</Type>
 			<Scope>Script</Scope>
 		</Variable>
@@ -424,6 +431,14 @@
 			<Type>[string]</Type>
 			<Scope>Script</Scope>
 		</Variable>
+		<Variable>
+			<!-- Define an Output log file for Citrix Insights e.g CTXInsights.log -->
+			<Name>OutputLogInsights</Name>
+			<Value>CTXInsights.log</Value>
+			<Type>[string]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+<!-- Logon Duration and Failed Connections ONLY params -->
 		<Variable>
 			<!-- Set this to how many hours in time you want to look back into the logs from script runtime. -->
 			<Name>HoursToLookBack</Name>
@@ -483,6 +498,13 @@
 			<!-- Define an Output Syslog file for Citrix Failed Connections e.g CTXFailedConnectionsSyslog.log -->
 			<Name>OutputSyslogFailedConnections</Name>
 			<Value>CTXFailedConnectionsSyslog.log</Value>
+			<Type>[string]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Define an Output Syslog file for Citrix Insights e.g CTXInsightsSyslog.log -->
+			<Name>OutputSyslogInsights</Name>
+			<Value>CTXInsightsSyslog.log</Value>
 			<Type>[string]</Type>
 			<Scope>Script</Scope>
 		</Variable>
