@@ -1,5 +1,5 @@
 ﻿#==============================================================================================
-# Created on: 11.2014 modfied 09.2025 Version: 1.5.8
+# Created on: 11.2014 modfied 09.2025 Version: 1.5.9
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -50,6 +50,10 @@
 #   Process ALL parameters files in the same folder as the script in runspaces, so they run in parallel:
 #     powershell -executionpolicy bypass .\XA-and-XD-HealthCheck.ps1 -All -UseRunspace
 #
+#   There is an pptional parameter:
+#   -IgnoreExclusions - This makes it easy to run a full report that includes machines across all Machines Catalogs and Delivery
+#                       Groups, also ignoring Tags, preventing the need to modify the XML params files just to achieve this outcome.
+#
 #==============================================================================================
 
 # Don't change below here if you don't know what you are doing ... 
@@ -57,7 +61,8 @@
 Param (
        [String]$ParamsFile="XA-and-XD-HealthCheck_Parameters.xml",
        [Switch]$All,
-       [Switch]$UseRunspace
+       [Switch]$UseRunspace,
+       [switch]$IgnoreExclusions
       )
 
 #==============================================================================================
@@ -176,6 +181,7 @@ $scriptBlockExecute = {
         [string]$ParameterFilePath,
         [string]$ParameterFile,
         [string]$outputpath,
+        [switch]$IgnoreExclusions,
         [PSObject[]]$SnapIns
        )
 
@@ -190,6 +196,9 @@ $scriptBlockExecute = {
         }
         If ($_.Name -eq "outputpath") {
           [string]$outputpath = $_.Value
+        }
+        If ($_.Name -eq "IgnoreExclusions") {
+          [switch]$IgnoreExclusions = $_.Value
         }
         If ($_.Name -eq "SnapIns") {
           [PSObject[]]$SnapIns = $_.Value
@@ -2029,6 +2038,13 @@ Function Get-RDLicenseGracePeriodEventErrorsSinceBoot {
 
           $events = @()
           $evErr = $null
+
+          if (-not (Get-WinEvent -ListLog $LogName -ErrorAction SilentlyContinue)) {
+            $result.Latest = "log not found: $LogName"
+            $result.Sample = "log not found: $LogName"
+            return $result
+          }
+
           $null = Get-WinEvent -FilterHashtable @{
                     LogName   = $LogName
                     Id        = $EventId
@@ -2080,6 +2096,12 @@ Function Get-RDLicenseGracePeriodEventErrorsSinceBoot {
       $events = @()
       $evErr = $null
 
+      if (-not (Get-WinEvent -ComputerName $ComputerName -ListLog $LogName -ErrorAction SilentlyContinue)) {
+        $result.Latest = "log not found: $LogName"
+        $result.Sample = "log not found: $LogName"
+        return $result
+      }
+
       $null = Get-WinEvent -ComputerName $ComputerName -FilterHashtable @{
                 LogName   = $LogName
                 Id        = $EventId
@@ -2100,10 +2122,13 @@ Function Get-RDLicenseGracePeriodEventErrorsSinceBoot {
 
       if ($events.Count -gt 0) {
         $result.Found = $true
+        $result.Count = $events.Count
+        $result.Latest = ($events | Select-Object -First 1 -ExpandProperty TimeCreated)
+        $result.Sample = $events | Select-Object -First 5 TimeCreated, Id, LevelDisplayName, Message
+      } Else {
+        $result.Latest = "no events found"
+        $result.Sample = "no events found"
       }
-      $result.Count = $events.Count
-      $result.Latest = ($events | Select-Object -First 1 -ExpandProperty TimeCreated)
-      $result.Sample = $events | Select-Object -First 5 TimeCreated, Id, LevelDisplayName, Message
       return $result
     }
     catch {
@@ -3209,7 +3234,7 @@ $thefooter = @"
 <strong>Uptime Threshold: </strong> $maxUpTimeDays days <br>
 <strong>Maximum Disconnect Time Threshold: </strong> $MaxDisconnectTimeInHours hours <br>
 <strong>Database: </strong> $dbinfo <br>
-<strong>LicenseServerName: </strong> $lsname <strong>LicenseServerPort: </strong> $lsport <br>
+<strong>LicenseServerName: </strong> $lsname <strong>LicenseServerPort: </strong> $lsport <strong>LicenseEdition: </strong> $ledition <strong>LicenseModel: </strong> $lmodel <br>
 <strong>ConnectionLeasingEnabled: </strong> $CLeasing <br>
 <strong>LocalHostCacheEnabled: </strong> $LHC <br>
 
@@ -3318,6 +3343,10 @@ $lsname = $brokersiteinfos.LicenseServerName
 "- LicenseServerName: $($lsname)" | LogMe -display -progress
 $lsport = $brokersiteinfos.LicenseServerPort
 "- LicenseServerPort: $($lsport)" | LogMe -display -progress
+$ledition = $brokersiteinfos.LicenseEdition
+"- LicenseEdition: $($ledition)" | LogMe -display -progress
+$lmodel = $brokersiteinfos.LicenseModel
+"- LicenseModel: $($lmodel)" | LogMe -display -progress
 $CLeasing = $brokersiteinfos.ConnectionLeasingEnabled
 "- ConnectionLeasingEnabled: $($CLeasing)" | LogMe -display -progress
 $LHC = $brokersiteinfos.LocalHostCacheEnabled
@@ -4356,20 +4385,23 @@ foreach ($Catalog in $Catalogs) {
   }
 
   $Found = $False
-  If ($ExcludedCatalogs.Count -gt 0) {
-    If (!([String]::IsNullOrEmpty($ExcludedCatalogs[0]))) {
-      ForEach ($ExcludedCatalog in $ExcludedCatalogs) {
-        If ($FullCatalogNameIncAdminFolder -Like $ExcludedCatalog -OR $CatalogName -Like $ExcludedCatalog) {
+  If ($IgnoreExclusions -eq $False) {
+    If ($ExcludedCatalogs.Count -gt 0) {
+      If (!([String]::IsNullOrEmpty($ExcludedCatalogs[0]))) {
+        ForEach ($ExcludedCatalog in $ExcludedCatalogs) {
+          If ($FullCatalogNameIncAdminFolder -Like $ExcludedCatalog -OR $CatalogName -Like $ExcludedCatalog) {
+            $Found = $True
+            break
+          }
+        }
+        If ($ExcludedCatalogs -contains $FullCatalogNameIncAdminFolder -OR $ExcludedCatalogs -contains $CatalogName) {
           $Found = $True
-          break
         }
       }
-      If ($ExcludedCatalogs -contains $FullCatalogNameIncAdminFolder -OR $ExcludedCatalogs -contains $CatalogName) {
-        $Found = $True
-      }
     }
+  } Else {
+    "Skipping Machine Catalog exclusions." | LogMe -display -progress
   }
-
   if ($Found) {
     $ActualExcludedCatalogs += $Catalog.Name
     "Excluded Catalog, skipping" | LogMe -display -progress
@@ -4522,26 +4554,34 @@ foreach ($Catalog in $Catalogs) {
     }
     # We want to get the lowest AgentVersion value in the Machine Catalog and then find if that matches the MinimumFunctionalLevel of the Machine Catalog.
     $RecommendedMinimumFunctionalLevel = $MinimumFunctionalLevel
+    $FoundMinimumFunctionalLevel = $False
     [version[]]$DerivedMinimumFunctionalLevels = @()
     ForEach($MachineAgentVersion in $MachineAgentVersions) {
       if ($null -ne $MachineAgentVersion) {
         if (![string]::IsNullOrWhiteSpace($MachineAgentVersion.Name)) {
-          $TempMinimumFunctionalLevel = (Find-CitrixVersion -MatchByColumn:"MarketingProductVersion" -VersionToFind:"$($MachineAgentVersion.Name)").MinimumFunctionalLevel
+          $FindMinimumFunctionalLevel = (Find-CitrixVersion -MatchByColumn:"MarketingProductVersion" -VersionToFind:"$($MachineAgentVersion.Name)")
+          $TempMinimumFunctionalLevel = $FindMinimumFunctionalLevel.MinimumFunctionalLevel
           If ($TempMinimumFunctionalLevel -ne "N/A") {
+            $FoundMinimumFunctionalLevel = $FindMinimumFunctionalLevel.Found
             $DerivedMinimumFunctionalLevels += [version](Convert-FunctionalLevelToVersion $TempMinimumFunctionalLevel)
           }
         }
       }
     }
-    $LowestSupportedMinimumFunctionalLevel = $DerivedMinimumFunctionalLevels | Sort-Object | Select-Object -First 1
-    If ($LowestSupportedMinimumFunctionalLevel -gt (Convert-FunctionalLevelToVersion $MinimumFunctionalLevel)) {
-      $RecommendedMinimumFunctionalLevel = (Convert-VersionToFunctionalLevel $LowestSupportedMinimumFunctionalLevel)
-      "RecommendedMinimumFunctionalLevel: The recommended minimum functional level for this Machine Catalog should be changed to $RecommendedMinimumFunctionalLevel" | LogMe -display -warning
-      $tests.RecommendedMinimumFunctionalLevel = "WARNING", $RecommendedMinimumFunctionalLevel
-      $IsSeverityWarningLevel = $True
+    If ($FoundMinimumFunctionalLevel) {
+      $LowestSupportedMinimumFunctionalLevel = $DerivedMinimumFunctionalLevels | Sort-Object | Select-Object -First 1
+      If ($LowestSupportedMinimumFunctionalLevel -gt (Convert-FunctionalLevelToVersion $MinimumFunctionalLevel)) {
+        $RecommendedMinimumFunctionalLevel = (Convert-VersionToFunctionalLevel $LowestSupportedMinimumFunctionalLevel)
+        "RecommendedMinimumFunctionalLevel: The recommended minimum functional level for this Machine Catalog should be changed to $RecommendedMinimumFunctionalLevel" | LogMe -display -warning
+        $tests.RecommendedMinimumFunctionalLevel = "WARNING", $RecommendedMinimumFunctionalLevel
+        $IsSeverityWarningLevel = $True
+      } Else {
+        "RecommendedMinimumFunctionalLevel: The minimum functional level for this Machine Catalog must remain at $RecommendedMinimumFunctionalLevel" | LogMe -display -progress
+        $tests.RecommendedMinimumFunctionalLevel = "NEUTRAL", $RecommendedMinimumFunctionalLevel
+      }
     } Else {
-      "RecommendedMinimumFunctionalLevel: The minimum functional level for this Machine Catalog must remain at $RecommendedMinimumFunctionalLevel" | LogMe -display -progress
-      $tests.RecommendedMinimumFunctionalLevel = "NEUTRAL", $RecommendedMinimumFunctionalLevel
+      "RecommendedMinimumFunctionalLevel: The ProductVersionValues table needs to be updated in order to determine the correct MinimumFunctionalLevel for the VDA agent versions in this Machine Catalog." | LogMe -display -progress
+      $tests.RecommendedMinimumFunctionalLevel = "NEUTRAL", "Unable to determine"
     }
 
     # Add the SiteName to the tests for the Syslog output
@@ -4615,18 +4655,22 @@ foreach ($Assigment in $Assigments) {
   }
 
   $Found = $False
-  If ($ExcludedDeliveryGroups.Count -gt 0) {
-    If (!([String]::IsNullOrEmpty($ExcludedDeliveryGroups[0]))) {
-      ForEach ($ExcludedDeliveryGroup in $ExcludedDeliveryGroups) {
-        If ($FullDeliveryGroupNameIncAdminFolder -Like $ExcludedDeliveryGroup -OR $PublishedName -Like $ExcludedDeliveryGroup -OR $DesktopGroupName -Like $ExcludedDeliveryGroup) {
+  If ($IgnoreExclusions -eq $False) {
+    If ($ExcludedDeliveryGroups.Count -gt 0) {
+      If (!([String]::IsNullOrEmpty($ExcludedDeliveryGroups[0]))) {
+        ForEach ($ExcludedDeliveryGroup in $ExcludedDeliveryGroups) {
+          If ($FullDeliveryGroupNameIncAdminFolder -Like $ExcludedDeliveryGroup -OR $PublishedName -Like $ExcludedDeliveryGroup -OR $DesktopGroupName -Like $ExcludedDeliveryGroup) {
+            $Found = $True
+            break
+          }
+        }
+        if ($ExcludedDeliveryGroups -contains $FullDeliveryGroupNameIncAdminFolder -OR $ExcludedDeliveryGroups -contains $PublishedName -OR $ExcludedDeliveryGroups -contains $DesktopGroupName) {
           $Found = $True
-          break
         }
       }
-      if ($ExcludedDeliveryGroups -contains $FullDeliveryGroupNameIncAdminFolder -OR $ExcludedDeliveryGroups -contains $PublishedName -OR $ExcludedDeliveryGroups -contains $DesktopGroupName) {
-        $Found = $True
-      }
     }
+  } Else {
+    "Skipping Delivery Group exclusions." | LogMe -display -progress
   }
   if ($Found) {
     $ActualExcludedDeliveryGroups += $Assigment.Name
@@ -4831,26 +4875,34 @@ foreach ($Assigment in $Assigments) {
     }
     # We want to get the lowest AgentVersion value in the Delivery Group and then find if that matches the MinimumFunctionalLevel of the Delivery Group.
     $RecommendedMinimumFunctionalLevel = $MinimumFunctionalLevel
+    $FoundMinimumFunctionalLevel = $False
     [version[]]$DerivedMinimumFunctionalLevels = @()
     ForEach($MachineAgentVersion in $MachineAgentVersions) {
       if ($null -ne $MachineAgentVersion) {
         if (![string]::IsNullOrWhiteSpace($MachineAgentVersion.Name)) {
-          $TempMinimumFunctionalLevel = (Find-CitrixVersion -MatchByColumn:"MarketingProductVersion" -VersionToFind:"$($MachineAgentVersion.Name)").MinimumFunctionalLevel
+          $FindMinimumFunctionalLevel = (Find-CitrixVersion -MatchByColumn:"MarketingProductVersion" -VersionToFind:"$($MachineAgentVersion.Name)")
+          $TempMinimumFunctionalLevel = $FindMinimumFunctionalLevel.MinimumFunctionalLevel
           If ($TempMinimumFunctionalLevel -ne "N/A") {
+            $FoundMinimumFunctionalLevel = $FindMinimumFunctionalLevel.Found
             $DerivedMinimumFunctionalLevels += [version](Convert-FunctionalLevelToVersion $TempMinimumFunctionalLevel)
           }
         }
       }
     }
-    $LowestSupportedMinimumFunctionalLevel = $DerivedMinimumFunctionalLevels | Sort-Object | Select-Object -First 1
-    If ($LowestSupportedMinimumFunctionalLevel -gt (Convert-FunctionalLevelToVersion $MinimumFunctionalLevel)) {
-      $RecommendedMinimumFunctionalLevel = (Convert-VersionToFunctionalLevel $LowestSupportedMinimumFunctionalLevel)
-      "RecommendedMinimumFunctionalLevel: The recommended minimum functional level for this Delivery Group should be changed to $RecommendedMinimumFunctionalLevel" | LogMe -display -warning
-      $tests.RecommendedMinimumFunctionalLevel = "WARNING", $RecommendedMinimumFunctionalLevel
-      $IsSeverityWarningLevel = $True
+    If ($FoundMinimumFunctionalLevel) {
+      $LowestSupportedMinimumFunctionalLevel = $DerivedMinimumFunctionalLevels | Sort-Object | Select-Object -First 1
+      If ($LowestSupportedMinimumFunctionalLevel -gt (Convert-FunctionalLevelToVersion $MinimumFunctionalLevel)) {
+        $RecommendedMinimumFunctionalLevel = (Convert-VersionToFunctionalLevel $LowestSupportedMinimumFunctionalLevel)
+        "RecommendedMinimumFunctionalLevel: The recommended minimum functional level for this Delivery Group should be changed to $RecommendedMinimumFunctionalLevel" | LogMe -display -warning
+        $tests.RecommendedMinimumFunctionalLevel = "WARNING", $RecommendedMinimumFunctionalLevel
+        $IsSeverityWarningLevel = $True
+      } Else {
+        "RecommendedMinimumFunctionalLevel: The minimum functional level for this Delivery Group must remain at $RecommendedMinimumFunctionalLevel" | LogMe -display -progress
+        $tests.RecommendedMinimumFunctionalLevel = "NEUTRAL", $RecommendedMinimumFunctionalLevel
+      }
     } Else {
-      "RecommendedMinimumFunctionalLevel: The minimum functional level for this Delivery Group must remain at $RecommendedMinimumFunctionalLevel" | LogMe -display -progress
-      $tests.RecommendedMinimumFunctionalLevel = "NEUTRAL", $RecommendedMinimumFunctionalLevel
+      "RecommendedMinimumFunctionalLevel: The ProductVersionValues table needs to be updated in order to determine the correct MinimumFunctionalLevel for the VDA agent versions in this Delivery Group." | LogMe -display -progress
+      $tests.RecommendedMinimumFunctionalLevel = "NEUTRAL", "Unable to determine"
     }
 
     # Add the SiteName to the tests for the Syslog output
@@ -4912,18 +4964,22 @@ If ($null -ne $BrkrTags) {
     "Tag: $Tag" | LogMe -display -progress
 
     $Found = $False
-    If ($ExcludedTags.Count -gt 0) {
-      If (!([String]::IsNullOrEmpty($ExcludedTags[0]))) {
-        ForEach ($ExcludedTag in $ExcludedTags) {
-          If ($Tag -Like $ExcludedTag) {
+    If ($IgnoreExclusions -eq $False) {
+      If ($ExcludedTags.Count -gt 0) {
+        If (!([String]::IsNullOrEmpty($ExcludedTags[0]))) {
+          ForEach ($ExcludedTag in $ExcludedTags) {
+            If ($Tag -Like $ExcludedTag) {
+              $Found = $True
+              break
+            }
+          }
+          if ($ExcludedTags -contains $Tag) {
             $Found = $True
-            break
           }
         }
-        if ($ExcludedTags -contains $Tag) {
-          $Found = $True
-        }
       }
+    } Else {
+      "Skipping Tag exclusions." | LogMe -display -progress
     }
     if ($Found) {
       $ActualExcludedBrokerTags += $BrkrTag.Name
@@ -5582,7 +5638,7 @@ if($ShowDesktopTable -eq 1 ) {
           If ($IsUNCPathAccessible) {
             $return = Check-NvidiaLicenseStatus -computername:$machineDNS
             $tests.nvidiaLicense = $return.Output_For_HTML, $return.Licensed
-            if (($return.Output_To_Log -like "*successfully") -OR ($return.Output_To_Log -like "*does not exist") -OR ($return.Output_To_Log -like "*N/A")) {
+            if (($return.Output_To_Log -like "*successfully") -OR ($return.Output_To_Log -like "*successful") -OR ($return.Output_To_Log -like "*does not exist") -OR ($return.Output_To_Log -like "*N/A")) {
               $return.Output_To_Log | LogMe -display -progress
             } else {
               $return.Output_To_Log | LogMe -display -error
@@ -6570,7 +6626,7 @@ if($ShowXenAppTable -eq 1 ) {
           If ($IsUNCPathAccessible) {
             $return = Check-NvidiaLicenseStatus -computername:$machineDNS
             $tests.nvidiaLicense = $return.Output_For_HTML, $return.Licensed
-            if (($return.Output_To_Log -like "*successfully") -OR ($return.Output_To_Log -like "*does not exist") -OR ($return.Output_To_Log -like "*N/A")) {
+            if (($return.Output_To_Log -like "*successfully") -OR ($return.Output_To_Log -like "*successful") -OR ($return.Output_To_Log -like "*does not exist") -OR ($return.Output_To_Log -like "*N/A")) {
               $return.Output_To_Log | LogMe -display -progress
             } else {
               $return.Output_To_Log | LogMe -display -error
@@ -7618,7 +7674,7 @@ else{
 } # Close off $scriptBlockExecute
 
 If ($UseRunspace) {
-  $PSinstance = [PowerShell]::Create().AddScript($scriptBlockExecute).AddParameter('ParameterFilePath', "$ParameterFilePath").AddParameter('ParameterFile', "$ParameterFile").AddParameter('outputpath', "$outputpath").AddParameter('snapins', $SnapIns)
+  $PSinstance = [PowerShell]::Create().AddScript($scriptBlockExecute).AddParameter('ParameterFilePath', "$ParameterFilePath").AddParameter('ParameterFile', "$ParameterFile").AddParameter('outputpath', "$outputpath").AddParameter('IgnoreExclusions', $IgnoreExclusions).AddParameter('snapins', $SnapIns)
   $PSinstance.RunspacePool = $RunspacePool
   $runspaces.Add(([pscustomobject]@{
         Id = $ParameterFile
@@ -7641,6 +7697,7 @@ If ($UseRunspace) {
     ParameterFilePath = $ParameterFilePath
     ParameterFile     = $ParameterFile
     OutputPath        = $OutputPath
+    IgnoreExclusions  = $IgnoreExclusions
     Snapins           = $Snapins
   }
   # Use the following for local execution.
@@ -7655,6 +7712,7 @@ If ($UseRunspace) {
     ParameterFilePath = $ParameterFilePath
     ParameterFile     = $ParameterFile
     OutputPath        = $OutputPath
+    IgnoreExclusions  = $IgnoreExclusions
     Snapins           = $Snapins
   }
   # Then we use -ArgumentList to pass it as one object, which passes it to the first parameter of the scriptblock that much be defined
@@ -8078,7 +8136,7 @@ If ($UseRunspace) {
 #          - Added XML variable ShowBrokerConnectionFailuresTable to disable the Connection Failure On Machine table. Using the output from the CitrixFailedConnections.ps1 script provides an
 #            improved and thorough output aligned with Citrix Director.
 # - 1.5.8, by Jeremy Saunders (jeremy@jhouseconsulting.com)
-#          - Enhanced the Get-WriteCacheDriveInfo function by also allowing for the CacheDisk label from BISF.
+#          - Enhanced the Get-WriteCacheDriveInfo function by also allowing for the CacheDisk label from BISF and WRcache label used by another community member.
 #          - Fixed a bug with the output of the Get-ProfileAndUserEnvironmentManagementServiceStatus function.
 #          - Added the RDSGracePeriodExpired column to the XenApp/RDS/Multisession host table.
 #          - Added the Get-RDLicenseGracePeriodEventErrorsSinceBoot function to populate the test for RDSGracePeriodExpired, which is done via the Event Log. This will provide more accuracy
@@ -8089,7 +8147,6 @@ If ($UseRunspace) {
 #            NVIDIA driver has correctly recognized it is running on a the supported Microsoft Azure virtual machine instance where a license is automatically provide through the platform.
 #          - Enhanced the Get-RDLicenseGracePeriodEventErrorsSinceBoot function to wrap the Invoke-Command cmdlet in a Start-Job cmdlet so we can use a timeout. This will help to prevent the
 #            Invoke-Command cmdlet getting stuck on unhealthy remote machines.
-#          - A minor update to the Get-WriteCacheDriveInfo function for an additional drive label.
 #          - Added RecommendedMinimumFunctionalLevel to both the DeliveryGroups and Catalogs tables and enhanced the code under the DeliveryGroups and Catalogs Check to derive the recommended
 #            MinimumFunctionalLevel based on VDA Agent Versions in the Delivery Group and Machine Catalog respectively. This required adding the $ProductVersionValues table and
 #            $ProductVersionHashTable hashtable that provides a mapping between the Marketing Product Version, Internal Product Version, and the MinimumFunctionalLevel used by the Delivery
@@ -8109,6 +8166,16 @@ If ($UseRunspace) {
 #            A reference to the "Unlimited capacity" point here: https://docs.citrix.com/en-us/licensing/current-release/license-activation-service.html
 #          - Added further variables to the XML params file to support the new Insights script called CitrixInsights.ps1 that I will publish separately. This allows them to share the same XML
 #            params files, avoiding duplication.
+# - 1.5.9, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+#          - Added LicenseEdition and LicenseModel to the footer table for on-prem CVAD deployments.
+#          - Improved the code so that if the VDA Agent Versions for Machine Catalog and Delivery Group cannot be found in the ProductVersionValues table, it reports that it is unable to
+#            determine the RecommendedMinimumFunctionalLevel. This prevents misleading results and advises that the ProductVersionValues table needs to be updated in order to achieve a valid
+#            outcome.
+#          - Added the IgnoreExclusions parameter which makes it easy to run a full report that includes machines across all Machines Catalogs and Delivery Groups, also ignoring Tags,
+#            preventing the need to modify the XML params files just to achieve this outcome.
+#          - Fixed a bug in the log output for the NVidia license check where it would log an error for "nvidiaLicense: Platform detection successful".
+#          - Fixed a bug with the Get-RDLicenseGracePeriodEventErrorsSinceBoot function that would cause it to fail if the "Microsoft-Windows-TerminalServices-RemoteConnectionManager/Admin"
+#            Event Log cannot be found.
 #
 # ==CURRENT KNOWN ISSUES AND/OR LIMITATIONS ==
 # - Any functions that use the Invoke-Command cmdlet "may" cause the script to wait indefinitely when run against an unhealthy machine. This is due to the known timeout issue with this cmdlet.
