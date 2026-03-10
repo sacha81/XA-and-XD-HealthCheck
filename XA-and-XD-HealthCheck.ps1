@@ -1,5 +1,5 @@
 ﻿#==============================================================================================
-# Created on: 11.2014 modfied 09.2025 Version: 1.5.9
+# Created on: 11.2014 modfied 09.2025 Version: 1.6.0
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -4580,8 +4580,13 @@ foreach ($Catalog in $Catalogs) {
         $tests.RecommendedMinimumFunctionalLevel = "NEUTRAL", $RecommendedMinimumFunctionalLevel
       }
     } Else {
-      "RecommendedMinimumFunctionalLevel: The ProductVersionValues table needs to be updated in order to determine the correct MinimumFunctionalLevel for the VDA agent versions in this Machine Catalog." | LogMe -display -progress
-      $tests.RecommendedMinimumFunctionalLevel = "NEUTRAL", "Unable to determine"
+      If ($null -ne $MachineAgentVersions) {
+        "RecommendedMinimumFunctionalLevel: The ProductVersionValues table needs to be updated in order to determine the correct MinimumFunctionalLevel for the VDA agent versions in this Machine Catalog." | LogMe -display -progress
+        $tests.RecommendedMinimumFunctionalLevel = "NEUTRAL", "Unable to determine"
+      } Else {
+        "RecommendedMinimumFunctionalLevel: There are no machines in this Machine Catalog so we are unable to determine the correct MinimumFunctionalLevel." | LogMe -display -progress
+        $tests.RecommendedMinimumFunctionalLevel = "NEUTRAL", "No machines in this catalog"
+      }
     }
 
     # Add the SiteName to the tests for the Syslog output
@@ -4743,7 +4748,7 @@ foreach ($Assigment in $Assigments) {
           $tests.DesktopsFree = "SUCCESS", "N/A"
         } else {
           $tests.DesktopsFree = "WARNING", $AssigmentDesktopsFree
-          "DesktopsFree > 0 ! ($AssigmentDesktopsFree)" | LogMe -display -progress
+          "DesktopsFree > 0 ! ($AssigmentDesktopsFree)" | LogMe -display -warning
           $IsSeverityWarningLevel = $True
         }
       } else {
@@ -4758,8 +4763,8 @@ foreach ($Assigment in $Assigments) {
 
     #inMaintenanceMode
     $AssigmentDesktopsinMaintenanceMode = $Assigment | ForEach-Object{ $_.inMaintenanceMode }
-    "inMaintenanceMode: $AssigmentDesktopsinMaintenanceMode" | LogMe -display -progress
     if ($AssigmentDesktopsinMaintenanceMode) {
+      "inMaintenanceMode: $AssigmentDesktopsinMaintenanceMode" | LogMe -display -warning
       $objMaintenance = $null
       Try {
         $objMaintenance = $Maintenance | Where-Object { $_.TargetName.ToUpper() -eq $Assigment.Name.ToUpper() } | Select-Object -First 1
@@ -4777,19 +4782,26 @@ foreach ($Assigment in $Assigments) {
           $AssigmentDesktopsinMaintenanceModeOn = $AssigmentDesktopsinMaintenanceModeOn + ", " + $MetadataMapDictionary[$key]
         }
       }
-      "MaintenanceModeInfo: $AssigmentDesktopsinMaintenanceModeOn" | LogMe -display -progress
+      "MaintenanceModeInfo: $AssigmentDesktopsinMaintenanceModeOn" | LogMe -display -warning
       $tests.MaintenanceMode = "WARNING", $AssigmentDesktopsinMaintenanceModeOn
       $IsSeverityWarningLevel = $True
+    } else {
+      "inMaintenanceMode: $AssigmentDesktopsinMaintenanceMode" | LogMe -display -progress
+      $tests.MaintenanceMode = "SUCCESS", "OFF"
     }
-    else { $tests.MaintenanceMode = "SUCCESS", "OFF" }
 
     #DesktopsUnregistered
     $AssigmentDesktopsUnregistered = $Assigment | ForEach-Object{ $_.DesktopsUnregistered }
     "DesktopsUnregistered: $AssigmentDesktopsUnregistered" | LogMe -display -progress    
     if ($AssigmentDesktopsUnregistered -gt 0 ) {
-      "DesktopsUnregistered > 0 ! ($AssigmentDesktopsUnregistered)" | LogMe -display -warning
-      $tests.DesktopsUnregistered = "WARNING", $AssigmentDesktopsUnregistered
-      $IsSeverityWarningLevel = $True
+      If ($AssigmentDesktopsinMaintenanceMode -eq $False) {
+        "DesktopsUnregistered > 0 ! ($AssigmentDesktopsUnregistered)" | LogMe -display -warning
+        $tests.DesktopsUnregistered = "WARNING", $AssigmentDesktopsUnregistered
+        $IsSeverityWarningLevel = $True
+      } Else {
+        "DesktopsUnregistered > 0 ! ($AssigmentDesktopsUnregistered)" | LogMe -display -progress
+        $tests.DesktopsUnregistered = "NEUTRAL", $AssigmentDesktopsUnregistered
+      }
     } else {
       $tests.DesktopsUnregistered = "SUCCESS", $AssigmentDesktopsUnregistered
       "DesktopsUnregistered <= 0 ! ($AssigmentDesktopsUnregistered)" | LogMe -display -progress
@@ -4901,8 +4913,13 @@ foreach ($Assigment in $Assigments) {
         $tests.RecommendedMinimumFunctionalLevel = "NEUTRAL", $RecommendedMinimumFunctionalLevel
       }
     } Else {
-      "RecommendedMinimumFunctionalLevel: The ProductVersionValues table needs to be updated in order to determine the correct MinimumFunctionalLevel for the VDA agent versions in this Delivery Group." | LogMe -display -progress
-      $tests.RecommendedMinimumFunctionalLevel = "NEUTRAL", "Unable to determine"
+      If ($null -ne $MachineAgentVersions) {
+        "RecommendedMinimumFunctionalLevel: The ProductVersionValues table needs to be updated in order to determine the correct MinimumFunctionalLevel for the VDA agent versions in this Delivery Group." | LogMe -display -progress
+        $tests.RecommendedMinimumFunctionalLevel = "NEUTRAL", "Unable to determine"
+      } Else {
+        "RecommendedMinimumFunctionalLevel: There are no machines in this Delivery Group so we are unable to determine the correct MinimumFunctionalLevel." | LogMe -display -progress
+        $tests.RecommendedMinimumFunctionalLevel = "NEUTRAL", "No machines in this group"
+      }
     }
 
     # Add the SiteName to the tests for the Syslog output
@@ -8164,6 +8181,7 @@ If ($UseRunspace) {
 #            entitlement validity. Because LAS does not require a 'check-out' operation to track individual licenses, real-time usage metrics are not available within the License Server or
 #            Citrix Cloud."
 #            A reference to the "Unlimited capacity" point here: https://docs.citrix.com/en-us/licensing/current-release/license-activation-service.html
+#            LAS phones home every 8 hours. If it misses 3 in a row it goes into grace for 30 days for on-prem CVAD and 15 days for DaaS.
 #          - Added further variables to the XML params file to support the new Insights script called CitrixInsights.ps1 that I will publish separately. This allows them to share the same XML
 #            params files, avoiding duplication.
 # - 1.5.9, by Jeremy Saunders (jeremy@jhouseconsulting.com)
@@ -8176,6 +8194,10 @@ If ($UseRunspace) {
 #          - Fixed a bug in the log output for the NVidia license check where it would log an error for "nvidiaLicense: Platform detection successful".
 #          - Fixed a bug with the Get-RDLicenseGracePeriodEventErrorsSinceBoot function that would cause it to fail if the "Microsoft-Windows-TerminalServices-RemoteConnectionManager/Admin"
 #            Event Log cannot be found.
+# - 1.6.0, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+#          - Improved the output for RecommendedMinimumFunctionalLevel when there are no machines either the Machine Catalog or Delivery Group.
+#          - If the Delivery Group is in maintenance mode we don't mark the MachinesInMaintMode and PercentageOfMachinesInMaintMode with a warning.
+#          - Mark the inMaintenanceMode and MaintenanceModeInfo log output as warning if they are set to True and ON respectively.
 #
 # ==CURRENT KNOWN ISSUES AND/OR LIMITATIONS ==
 # - Any functions that use the Invoke-Command cmdlet "may" cause the script to wait indefinitely when run against an unhealthy machine. This is due to the known timeout issue with this cmdlet.
