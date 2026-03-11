@@ -1,5 +1,5 @@
 ﻿#==============================================================================================
-# Created on: 11.2014 modfied 09.2025 Version: 1.6.0
+# Created on: 11.2014 modfied 09.2025 Version: 1.6.1
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -708,11 +708,12 @@ If ($ShowCrowdStrikeTests -eq 1) {
 #$CTXFailureHeaderNames = "#", "in Percentage", "CauseServiceInterruption", "CausePartialServiceInterruption"
 #$CTXFailureTableWidth= 1200
 
-#Header for Table "CTX Licenses" Get-BrokerController
+#Header for Table "CTX Licenses"
 $CTXLicFirstheaderName = "LicenseName"
 $CTXLicHeaderNames = "LicenseServer", "Count", "InUse", "Available"
+$CTXLicHeaderNamesLAS = "LicenseServer", "Edition", "Model", "GracePeriodActive"
 $CTXLicTableWidth= 1200
-  
+ 
 #Header for Table "MachineCatalogs" Get-BrokerCatalog
 $CatalogHeaderName = "CatalogName"
 $CatalogHeaderNames = "AssignedToUser", "AssignedToDG", "NotToUserAssigned", "Unassigned", "ProvisioningType", "AllocationType", "MinimumFunctionalLevel", "RecommendedMinimumFunctionalLevel", "UsedMCSSnapshot", "MasterImageVMDate", "UseFullDiskClone", "UseWriteBackCache", "WriteBackCacheMemSize"
@@ -3234,7 +3235,7 @@ $thefooter = @"
 <strong>Uptime Threshold: </strong> $maxUpTimeDays days <br>
 <strong>Maximum Disconnect Time Threshold: </strong> $MaxDisconnectTimeInHours hours <br>
 <strong>Database: </strong> $dbinfo <br>
-<strong>LicenseServerName: </strong> $lsname <strong>LicenseServerPort: </strong> $lsport <strong>LicenseEdition: </strong> $ledition <strong>LicenseModel: </strong> $lmodel <br>
+<strong>LicenseServerName: </strong> $lsname <strong>LicenseServerPort: </strong> $lsport <strong>LicenseEdition: </strong> $ledition <strong>LicenseModel: </strong> $lmodel <strong>GracePeriodActive: </strong> $LicensingGracePeriodActive <br>
 <strong>ConnectionLeasingEnabled: </strong> $CLeasing <br>
 <strong>LocalHostCacheEnabled: </strong> $LHC <br>
 
@@ -3347,6 +3348,8 @@ $ledition = $brokersiteinfos.LicenseEdition
 "- LicenseEdition: $($ledition)" | LogMe -display -progress
 $lmodel = $brokersiteinfos.LicenseModel
 "- LicenseModel: $($lmodel)" | LogMe -display -progress
+$LicensingGracePeriodActive = $brokersiteinfos.LicensingGracePeriodActive
+"- LicensingGracePeriodActive: $($LicensingGracePeriodActive)" | LogMe -display -progress
 $CLeasing = $brokersiteinfos.ConnectionLeasingEnabled
 "- ConnectionLeasingEnabled: $($CLeasing)" | LogMe -display -progress
 $LHC = $brokersiteinfos.LocalHostCacheEnabled
@@ -4264,7 +4267,8 @@ If ($CitrixCloudCheck -ne 1) {
   "Check Citrix Licensing ######################################################################" | LogMe -display -progress
   # ======= License Check ========
   if ($ShowCTXLicense -eq 1 ) {
-
+    $LASEnabled = $False
+    $IsConnectionToLicenseServerSuccessful = $False
     $UseWinRM = $True
     $myCollection = @()
     try {
@@ -4273,6 +4277,7 @@ If ($CitrixCloudCheck -ne 1) {
       } Else {
         $LicQuery = Get-WmiObject -namespace "ROOT\CitrixLicensing" -ComputerName $lsname -query "select * from Citrix_GT_License_Pool" -ErrorAction Stop | ? {$_.PLD -in $CTXLicenseMode}
       }
+      $IsConnectionToLicenseServerSuccessful = $True
 
       foreach ($group in $($LicQuery | group pld)) {
         $lics = $group | Select-Object -ExpandProperty group
@@ -4345,7 +4350,23 @@ If ($CitrixCloudCheck -ne 1) {
       $CTXLicResults.($line.LicenceName) =  $tests
     }
     If ($CTXLicResults.Count -eq 0) {
-      "No license data was returned. This may be because License Activation Service (LAS) is enabled." | LogMe -display -progress
+      If ($IsConnectionToLicenseServerSuccessful) {
+        "No license data was returned, but connection to the licensing server was successful. We assume that License Activation Service (LAS) is enabled." | LogMe -display -progress
+        $LASEnabled = $True
+        $LicenceName = "License Activation Service (LAS) Enabled"
+        $tests = @{}
+        $tests.LicenseServer = "NEUTRAL", $lsname
+        $tests.Edition = "NEUTRAL", $ledition
+        $tests.Model = "NEUTRAL", $lmodel
+        If ($LicensingGracePeriodActive -eq $False) {
+          $tests.GracePeriodActive = "SUCCESS", $LicensingGracePeriodActive
+        } Else {
+          $tests.GracePeriodActive = "WARNING", $LicensingGracePeriodActive
+        }
+        $CTXLicResults.($LicenceName) =  $tests
+      } Else {
+        "No license data was returned." | LogMe -display -progress
+      }
     }
   } else {"CTX License Check skipped because ShowCTXLicense = 0 " | LogMe -display -progress } #Close off $ShowCTXLicense
   " --- " | LogMe -display -progress
@@ -7551,11 +7572,16 @@ else { "No Storefront output in HTML (CitrixCloud) " | LogMe -display -progress 
 # Write Table with the License
 If ($CitrixCloudCheck -ne 1) {
   If ($CTXLicResults.Count -gt 0) {
-    "Adding License output to HTML" | LogMe -display -progress 
-    writeTableHeader $resultsHTM $CTXLicFirstheaderName $CTXLicHeaderNames $CTXLicTableWidth
-    $CTXLicResults | ForEach-Object{ writeData $CTXLicResults $resultsHTM $CTXLicHeaderNames }
+    "Adding License output to HTML" | LogMe -display -progress
+    If ($LASEnabled) {
+      writeTableHeader $resultsHTM $CTXLicFirstheaderName $CTXLicHeaderNamesLAS $CTXLicTableWidth
+      $CTXLicResults | ForEach-Object{ writeData $CTXLicResults $resultsHTM $CTXLicHeaderNamesLAS }
+    } Else {
+      writeTableHeader $resultsHTM $CTXLicFirstheaderName $CTXLicHeaderNames $CTXLicTableWidth
+      $CTXLicResults | ForEach-Object{ writeData $CTXLicResults $resultsHTM $CTXLicHeaderNames }
+    }
     writeTableFooter $resultsHTM
-  } Else { "The License output has not been added to the HTML as it contains no data. This may be because it is License Activation Service (LAS) enabled." | LogMe -display -progress }
+  } Else { "The License output has not been added to the HTML as it contains no data." | LogMe -display -progress }
 }
 else { "No License output in HTML (CitrixCloud) " | LogMe -display -progress }
 
@@ -8198,6 +8224,11 @@ If ($UseRunspace) {
 #          - Improved the output for RecommendedMinimumFunctionalLevel when there are no machines either the Machine Catalog or Delivery Group.
 #          - If the Delivery Group is in maintenance mode we don't mark the MachinesInMaintMode and PercentageOfMachinesInMaintMode with a warning.
 #          - Mark the inMaintenanceMode and MaintenanceModeInfo log output as warning if they are set to True and ON respectively.
+# - 1.6.1, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+#          - The Citrix Product Management team have confirmed that we should be using the LicensingGracePeriodActive property at the CVAD site level for monitoring LAS GracePeriod using the
+#            Get-BrokerSite cmdlet. To facilitate this, have created a new variable called $LicensingGracePeriodActive and a new $CTXLicHeaderNamesLAS for the license table. Have updated the
+#            $CTXLicResults accordingly. This will provide the best data possible to ensure the Site is not running in grace mode.
+#            Also Added GracePeriodActive to the footer table for on-prem CVAD deployments.
 #
 # ==CURRENT KNOWN ISSUES AND/OR LIMITATIONS ==
 # - Any functions that use the Invoke-Command cmdlet "may" cause the script to wait indefinitely when run against an unhealthy machine. This is due to the known timeout issue with this cmdlet.
