@@ -1,5 +1,5 @@
 ﻿#==============================================================================================
-# Created on: 11.2014 modfied 09.2025 Version: 1.6.1
+# Created on: 11.2014 modfied 09.2025 Version: 1.6.2
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -62,7 +62,9 @@ Param (
        [String]$ParamsFile="XA-and-XD-HealthCheck_Parameters.xml",
        [Switch]$All,
        [Switch]$UseRunspace,
-       [switch]$IgnoreExclusions
+       [switch]$IgnoreExclusions,
+       [switch]$FullReport,
+       [switch]$ErrorsOnly
       )
 
 #==============================================================================================
@@ -182,6 +184,8 @@ $scriptBlockExecute = {
         [string]$ParameterFile,
         [string]$outputpath,
         [switch]$IgnoreExclusions,
+        [switch]$FullReport,
+        [switch]$ErrorsOnly,
         [PSObject[]]$SnapIns
        )
 
@@ -199,6 +203,12 @@ $scriptBlockExecute = {
         }
         If ($_.Name -eq "IgnoreExclusions") {
           [switch]$IgnoreExclusions = $_.Value
+        }
+        If ($_.Name -eq "FullReport") {
+          [switch]$FullReport = $_.Value
+        }
+        If ($_.Name -eq "ErrorsOnly") {
+          [switch]$ErrorsOnly = $_.Value
         }
         If ($_.Name -eq "SnapIns") {
           [PSObject[]]$SnapIns = $_.Value
@@ -267,6 +277,20 @@ $citrixCloudRegionBaseUrl = "https://" + $CCRegion
 $SyslogMessageStart = "$LogonDurationInSeconds second logon duration exceeded"
 $SyslogAppName = ($EnvironmentName -replace ' ','')
 $StructuredDataID = $StructuredDataIDPrefix + "@" + $PrivateEnterpriseNumber
+
+#==============================================================================================
+
+# These variables override the XML or constant variables.
+
+# If both FullReport and ErrorsOnly are set to True or False (not specified), it will use whatever is set in the XML params file.
+If ($FullReport -AND $ErrorsOnly -eq $False) {
+  $ShowOnlyErrorVDI = 0
+  $ShowOnlyErrorXA = 0
+}
+If ($ErrorsOnly -AND $FullReport -eq $False) {
+  $ShowOnlyErrorVDI = 1
+  $ShowOnlyErrorXA = 1
+}
 
 #==============================================================================================
 
@@ -711,7 +735,7 @@ If ($ShowCrowdStrikeTests -eq 1) {
 #Header for Table "CTX Licenses"
 $CTXLicFirstheaderName = "LicenseName"
 $CTXLicHeaderNames = "LicenseServer", "Count", "InUse", "Available"
-$CTXLicHeaderNamesLAS = "LicenseServer", "Edition", "Model", "GracePeriodActive"
+$CTXLicHeaderNamesLAS = "LicenseServer", "Edition", "Model", "GracePeriodActive","GraceHoursLeft"
 $CTXLicTableWidth= 1200
  
 #Header for Table "MachineCatalogs" Get-BrokerCatalog
@@ -2414,6 +2438,7 @@ Function Get-WriteCacheDriveInfo {
   # For MCSIO:
   # - The size of the mcsdif.vhdx write-cache file and available free space on the write-cache drive.
   # - The write cache drive is labeled "MCSWCDisk" or "CacheDisk" (BISF).
+  # Note that MCSIO with persistent disk is supported from VDA 1903 (7.21) and above.
   # Written by Jeremy Saunders
   param (
          [switch]$UseWinRM,
@@ -3235,7 +3260,7 @@ $thefooter = @"
 <strong>Uptime Threshold: </strong> $maxUpTimeDays days <br>
 <strong>Maximum Disconnect Time Threshold: </strong> $MaxDisconnectTimeInHours hours <br>
 <strong>Database: </strong> $dbinfo <br>
-<strong>LicenseServerName: </strong> $lsname <strong>LicenseServerPort: </strong> $lsport <strong>LicenseEdition: </strong> $ledition <strong>LicenseModel: </strong> $lmodel <strong>GracePeriodActive: </strong> $LicensingGracePeriodActive <br>
+<strong>LicenseServerName: </strong> $lsname <strong>LicenseServerPort: </strong> $lsport <strong>LicenseEdition: </strong> $ledition <strong>LicenseModel: </strong> $lmodel <strong>GracePeriodActive: </strong> $LicensingGracePeriodActive <strong>GraceHoursLeft: </strong> $LicensingGraceHoursLeft <br>
 <strong>ConnectionLeasingEnabled: </strong> $CLeasing <br>
 <strong>LocalHostCacheEnabled: </strong> $LHC <br>
 
@@ -3349,7 +3374,15 @@ $ledition = $brokersiteinfos.LicenseEdition
 $lmodel = $brokersiteinfos.LicenseModel
 "- LicenseModel: $($lmodel)" | LogMe -display -progress
 $LicensingGracePeriodActive = $brokersiteinfos.LicensingGracePeriodActive
+if (([string]::IsNullOrWhiteSpace($LicensingGracePeriodActive))) {
+  $LicensingGracePeriodActive = $False
+}
 "- LicensingGracePeriodActive: $($LicensingGracePeriodActive)" | LogMe -display -progress
+$LicensingGraceHoursLeft = $brokersiteinfos.LicensingGraceHoursLeft
+if (([string]::IsNullOrWhiteSpace($LicensingGraceHoursLeft))) {
+  $LicensingGraceHoursLeft = "n/a"
+}
+"- LicensingGraceHoursLeft: $($LicensingGraceHoursLeft)" | LogMe -display -progress
 $CLeasing = $brokersiteinfos.ConnectionLeasingEnabled
 "- ConnectionLeasingEnabled: $($CLeasing)" | LogMe -display -progress
 $LHC = $brokersiteinfos.LocalHostCacheEnabled
@@ -4362,6 +4395,11 @@ If ($CitrixCloudCheck -ne 1) {
           $tests.GracePeriodActive = "SUCCESS", $LicensingGracePeriodActive
         } Else {
           $tests.GracePeriodActive = "WARNING", $LicensingGracePeriodActive
+        }
+        If ($LicensingGraceHoursLeft -eq "n/a") {
+          $tests.GraceHoursLeft = "NEUTRAL", $LicensingGraceHoursLeft
+        } Else {
+          $tests.GraceHoursLeft = "WARNING", $LicensingGraceHoursLeft
         }
         $CTXLicResults.($LicenceName) =  $tests
       } Else {
@@ -6178,35 +6216,38 @@ if($ShowDesktopTable -eq 1 ) {
 
     # Fill $tests into array if error occured OR $ShowOnlyErrorVDI = 0
     # Check if error exists on this vdi
+    $OutputToSyslog = $True
     if ($ShowOnlyErrorVDI -eq 0 ) { $allResults.$machineDNS = $tests }
     else {
       if ($ErrorVDI -gt 0) { $allResults.$machineDNS = $tests }
-      else { "$machineDNS is ok, no output into HTML-File" | LogMe -display -progress }
+      else { $OutputToSyslog = $False ; "$machineDNS is ok, no output into HTML-File" | LogMe -display -progress }
     }
 
-    If ($tests.Count -gt 0) {
-      If ($CheckOutputSyslog) {
-        # Set up the severity of the log entry based on the output of each test.
-        $Severity = "Informational"
-        If ($IsSeverityWarningLevel) { $Severity = "Warning" }
-        If ($IsSeverityErrorLevel) { $Severity = "Error" }
-        # Setup the PSCustomObject that will become the Data within the Structured Data
-        $Data = [PSCustomObject]@{
-          'SingleSessionHost' = $machineDNS
-        }
-        $allResults.$machineDNS.GetEnumerator() | ForEach-Object {
-          $MyKey = $_.Key -replace " ", ""
-          $Data | Add-Member -MemberType NoteProperty $MyKey -Value $_.Value[1]
-        }
-        $sdString = ConvertTo-StructuredData -Id $StructuredDataID -Data $Data -AllowMoreParamChars
-        If ($SyslogFileOnly) {
-          Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$machineDNS" `
-                                -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
-                                -LogFilePath "$resultsSyslog" -FileOnly
-        } Else {
-          Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$machineDNS" `
-                                -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
-                                -LogFilePath "$resultsSyslog" -SyslogServer $SyslogServer
+    If ($OutputToSyslog) {
+      If ($tests.Count -gt 0) {
+        If ($CheckOutputSyslog) {
+          # Set up the severity of the log entry based on the output of each test.
+          $Severity = "Informational"
+          If ($IsSeverityWarningLevel) { $Severity = "Warning" }
+          If ($IsSeverityErrorLevel) { $Severity = "Error" }
+          # Setup the PSCustomObject that will become the Data within the Structured Data
+          $Data = [PSCustomObject]@{
+            'SingleSessionHost' = $machineDNS
+          }
+          $allResults.$machineDNS.GetEnumerator() | ForEach-Object {
+            $MyKey = $_.Key -replace " ", ""
+            $Data | Add-Member -MemberType NoteProperty $MyKey -Value $_.Value[1]
+          }
+          $sdString = ConvertTo-StructuredData -Id $StructuredDataID -Data $Data -AllowMoreParamChars
+          If ($SyslogFileOnly) {
+            Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$machineDNS" `
+                                  -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                                  -LogFilePath "$resultsSyslog" -FileOnly
+          } Else {
+            Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$machineDNS" `
+                                  -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                                  -LogFilePath "$resultsSyslog" -SyslogServer $SyslogServer
+          }
         }
       }
     }
@@ -7204,35 +7245,38 @@ if($ShowXenAppTable -eq 1 ) {
   
     # Fill $tests into array if error occured OR $ShowOnlyErrorXA = 0
     # Check if error exists on this vdi
+    $OutputToSyslog = $True
     if ($ShowOnlyErrorXA -eq 0 ) { $allXenAppResults.$machineDNS = $tests }
     else {
       if ($ErrorXA -gt 0) { $allXenAppResults.$machineDNS = $tests }
-      else { "$machineDNS is ok, no output into HTML-File" | LogMe -display -progress }
+      else { $OutputToSyslog = $False ; "$machineDNS is ok, no output into HTML-File" | LogMe -display -progress }
     }
 
-    If ($tests.Count -gt 0) {
-      If ($CheckOutputSyslog) {
-        # Set up the severity of the log entry based on the output of each test.
-        $Severity = "Informational"
-        If ($IsSeverityWarningLevel) { $Severity = "Warning" }
-        If ($IsSeverityErrorLevel) { $Severity = "Error" }
-        # Setup the PSCustomObject that will become the Data within the Structured Data
-        $Data = [PSCustomObject]@{
-          'MultiSessionHost' = $machineDNS
-        }
-        $allXenAppResults.$machineDNS.GetEnumerator() | ForEach-Object {
-          $MyKey = $_.Key -replace " ", ""
-          $Data | Add-Member -MemberType NoteProperty $MyKey -Value $_.Value[1]
-        }
-        $sdString = ConvertTo-StructuredData -Id $StructuredDataID -Data $Data -AllowMoreParamChars
-        If ($SyslogFileOnly) {
-          Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$machineDNS" `
-                                -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
-                                -LogFilePath "$resultsSyslog" -FileOnly
-        } Else {
-          Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$machineDNS" `
-                                -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
-                                -LogFilePath "$resultsSyslog" -SyslogServer $SyslogServer
+    If ($OutputToSyslog) {
+      If ($tests.Count -gt 0) {
+        If ($CheckOutputSyslog) {
+          # Set up the severity of the log entry based on the output of each test.
+          $Severity = "Informational"
+          If ($IsSeverityWarningLevel) { $Severity = "Warning" }
+          If ($IsSeverityErrorLevel) { $Severity = "Error" }
+          # Setup the PSCustomObject that will become the Data within the Structured Data
+          $Data = [PSCustomObject]@{
+            'MultiSessionHost' = $machineDNS
+          }
+          $allXenAppResults.$machineDNS.GetEnumerator() | ForEach-Object {
+            $MyKey = $_.Key -replace " ", ""
+            $Data | Add-Member -MemberType NoteProperty $MyKey -Value $_.Value[1]
+          }
+          $sdString = ConvertTo-StructuredData -Id $StructuredDataID -Data $Data -AllowMoreParamChars
+          If ($SyslogFileOnly) {
+            Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$machineDNS" `
+                                  -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                                  -LogFilePath "$resultsSyslog" -FileOnly
+          } Else {
+            Write-IetfSyslogEntry -AppName "$SyslogAppName" -Severity $Severity -Message "$machineDNS" `
+                                  -StructuredData $sdString -MsgId "$SyslogMsgId" -CollectorType Syslog `
+                                  -LogFilePath "$resultsSyslog" -SyslogServer $SyslogServer
+          }
         }
       }
     }
@@ -7717,7 +7761,7 @@ else{
 } # Close off $scriptBlockExecute
 
 If ($UseRunspace) {
-  $PSinstance = [PowerShell]::Create().AddScript($scriptBlockExecute).AddParameter('ParameterFilePath', "$ParameterFilePath").AddParameter('ParameterFile', "$ParameterFile").AddParameter('outputpath', "$outputpath").AddParameter('IgnoreExclusions', $IgnoreExclusions).AddParameter('snapins', $SnapIns)
+  $PSinstance = [PowerShell]::Create().AddScript($scriptBlockExecute).AddParameter('ParameterFilePath', "$ParameterFilePath").AddParameter('ParameterFile', "$ParameterFile").AddParameter('outputpath', "$outputpath").AddParameter('IgnoreExclusions', $IgnoreExclusions).AddParameter('FullReport', $FullReport).AddParameter('ErrorsOnly', $ErrorsOnly).AddParameter('snapins', $SnapIns)
   $PSinstance.RunspacePool = $RunspacePool
   $runspaces.Add(([pscustomobject]@{
         Id = $ParameterFile
@@ -7741,6 +7785,8 @@ If ($UseRunspace) {
     ParameterFile     = $ParameterFile
     OutputPath        = $OutputPath
     IgnoreExclusions  = $IgnoreExclusions
+    FullReport        = $FullReport
+    ErrorsOnly        = $ErrorsOnly
     Snapins           = $Snapins
   }
   # Use the following for local execution.
@@ -7756,6 +7802,8 @@ If ($UseRunspace) {
     ParameterFile     = $ParameterFile
     OutputPath        = $OutputPath
     IgnoreExclusions  = $IgnoreExclusions
+    FullReport        = $FullReport
+    ErrorsOnly        = $ErrorsOnly
     Snapins           = $Snapins
   }
   # Then we use -ArgumentList to pass it as one object, which passes it to the first parameter of the scriptblock that much be defined
@@ -8229,6 +8277,15 @@ If ($UseRunspace) {
 #            Get-BrokerSite cmdlet. To facilitate this, have created a new variable called $LicensingGracePeriodActive and a new $CTXLicHeaderNamesLAS for the license table. Have updated the
 #            $CTXLicResults accordingly. This will provide the best data possible to ensure the Site is not running in grace mode.
 #            Also Added GracePeriodActive to the footer table for on-prem CVAD deployments.
+# - 1.6.2, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+#          - Added the two new parameters:
+#            - FullReport - The makes it easy to run a full report and override the XML values for ShowOnlyErrorVDI and ShowOnlyErrorXA if they are set to 1.
+#            - ErrorsOnly - The makes it easy to run a report for errors only and override the XML values for ShowOnlyErrorVDI and ShowOnlyErrorXA if they are set to 0.
+#            If both FullReport and ErrorsOnly are set to True or False (not specified), it will use whatever is set in the XML params file.
+#          - Created a new variable called $LicensingGraceHoursLeft and added the GraceHoursLeft column to the $CTXLicHeaderNamesLAS for the license table. This will further enhance the data
+#            to provide the hours left in grace period if the grace period is active.
+#            Also Added GraceHoursLeft to the footer table for on-prem CVAD deployments.
+#          - Fixed a bug when either ShowOnlyErrorVDI or ShowOnlyErrorXA are set to 1, the Syslog output will fail because the machine is not added to the test HashTable.
 #
 # ==CURRENT KNOWN ISSUES AND/OR LIMITATIONS ==
 # - Any functions that use the Invoke-Command cmdlet "may" cause the script to wait indefinitely when run against an unhealthy machine. This is due to the known timeout issue with this cmdlet.
