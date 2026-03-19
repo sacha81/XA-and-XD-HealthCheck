@@ -1,5 +1,5 @@
 ﻿#==============================================================================================
-# Created on: 11.2014 modfied 09.2025 Version: 1.6.2
+# Created on: 11.2014 modfied 09.2025 Version: 1.6.3
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -50,9 +50,15 @@
 #   Process ALL parameters files in the same folder as the script in runspaces, so they run in parallel:
 #     powershell -executionpolicy bypass .\XA-and-XD-HealthCheck.ps1 -All -UseRunspace
 #
-#   There is an pptional parameter:
-#   -IgnoreExclusions - This makes it easy to run a full report that includes machines across all Machines Catalogs and Delivery
-#                       Groups, also ignoring Tags, preventing the need to modify the XML params files just to achieve this outcome.
+#   There are optional parameters:
+#     -IgnoreExclusions - This makes it easy to run a full report that includes machines across all Machines Catalogs and Delivery
+#                         Groups, also ignoring Tags, preventing the need to modify the XML params files just to achieve this outcome.
+#     -FullReport - This makes it easy to run a full report and override the XML values for ShowOnlyErrorVDI and ShowOnlyErrorXA if
+#                   they are set to 1.
+#     -ErrorsOnly - This makes it easy to run a report for errors only and override the XML values for ShowOnlyErrorVDI and
+#                   ShowOnlyErrorXA if they are set to 0.
+#     Note that if both FullReport and ErrorsOnly are set to True or False (not specified), it will use whatever is set in the XML
+#     params file.
 #
 #==============================================================================================
 
@@ -3252,7 +3258,7 @@ param([string]$fileName,[switch]$cloud)
 If ($cloud -eq $False) {
 $thefooter = @"
 </table>
-<table width='1200'>
+<table width='1500'>
 <tr bgcolor='#CCCCCC'>
 <td colspan='7' height='25' align='left'>
 <font face='courier' color='#000000' size='2'>
@@ -8279,13 +8285,16 @@ If ($UseRunspace) {
 #            Also Added GracePeriodActive to the footer table for on-prem CVAD deployments.
 # - 1.6.2, by Jeremy Saunders (jeremy@jhouseconsulting.com)
 #          - Added the two new parameters:
-#            - FullReport - The makes it easy to run a full report and override the XML values for ShowOnlyErrorVDI and ShowOnlyErrorXA if they are set to 1.
-#            - ErrorsOnly - The makes it easy to run a report for errors only and override the XML values for ShowOnlyErrorVDI and ShowOnlyErrorXA if they are set to 0.
+#            - FullReport - This makes it easy to run a full report and override the XML values for ShowOnlyErrorVDI and ShowOnlyErrorXA if they are set to 1.
+#            - ErrorsOnly - This makes it easy to run a report for errors only and override the XML values for ShowOnlyErrorVDI and ShowOnlyErrorXA if they are set to 0.
 #            If both FullReport and ErrorsOnly are set to True or False (not specified), it will use whatever is set in the XML params file.
 #          - Created a new variable called $LicensingGraceHoursLeft and added the GraceHoursLeft column to the $CTXLicHeaderNamesLAS for the license table. This will further enhance the data
 #            to provide the hours left in grace period if the grace period is active.
 #            Also Added GraceHoursLeft to the footer table for on-prem CVAD deployments.
 #          - Fixed a bug when either ShowOnlyErrorVDI or ShowOnlyErrorXA are set to 1, the Syslog output will fail because the machine is not added to the test HashTable.
+# - 1.6.3, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+#          - Increased width of the footer in the writeHtmlFooter function.
+#          - Improved/corrected some of the documentation within the script.
 #
 # ==CURRENT KNOWN ISSUES AND/OR LIMITATIONS ==
 # - Any functions that use the Invoke-Command cmdlet "may" cause the script to wait indefinitely when run against an unhealthy machine. This is due to the known timeout issue with this cmdlet.
