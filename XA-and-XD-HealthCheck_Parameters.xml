@@ -347,6 +347,66 @@
 			<Type>[array]</Type>
 			<Scope>Script</Scope>
 		</Variable>
+
+		<Variable>
+			<!-- Set to true if LAS (License Activation Service) is enabled.
+			     In LAS mode, the license server exposes DOUBLE the contracted quantity (normal CCS behaviour).
+			     Set to true to display a reminder note in the report.
+			     Example: contracted 190 licenses, LAS reports 380. -->
+			<Name>LicLasDoubleCount</Name>
+			<Value>false</Value>
+			<Type>[bool]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Number of days before product license expiration to trigger a WARNING alert in the report.
+			     Default: 90 days (3 months). -->
+			<Name>LicExpiryWarnDays</Name>
+			<Value>90</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Number of days before product license expiration to trigger a CRITICAL alert in the report.
+			     Default: 30 days (1 month). -->
+			<Name>LicExpiryErrorDays</Name>
+			<Value>30</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Number of days before Subscription Advantage (CSS) date expiration to trigger a WARNING.
+			     Applies to the LAS Status summary row only. Default: 10 days. -->
+			<Name>LicSubAdvWarnDays</Name>
+			<Value>10</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Number of days before Subscription Advantage (CSS) date expiration to trigger a CRITICAL alert.
+			     Applies to the LAS Status summary row only. Default: 3 days. -->
+			<Name>LicSubAdvErrorDays</Name>
+			<Value>3</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Number of days before LAS activation expiry to trigger a WARNING alert.
+			     LAS activation renews automatically every ~7 days. A WARNING at 10 days means
+			     the automatic renewal has already failed at least once. Default: 10 days. -->
+			<Name>LicActivWarnDays</Name>
+			<Value>10</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Number of days before LAS activation expiry to trigger a CRITICAL alert.
+			     A CRITICAL at 3 days means renewal has failed multiple consecutive cycles. Default: 3 days. -->
+			<Name>LicActivErrorDays</Name>
+			<Value>3</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
 <!-- Stuck Sessions Options -->
 		<Variable>
 			<!-- Set to 1 if you want to process and display the Stuck Sessions Table -->
