@@ -232,6 +232,24 @@
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
+			<!-- # Set to 1 to SHOW the MCS-related columns, 0 to HIDE them.
+			     Affects: IsMCS, MCSImageOutOfDate (VDI & XenApp/RDS tables) and
+			     UsedMCSSnapshot, MasterImageVMDate, UseFullDiskClone, UseWriteBackCache, WriteBackCacheMemSize
+			     (Machine Catalog table). Set to 0 in PVS-only environments where these columns are always empty. -->
+			<Name>ShowMCSColumns</Name>
+			<Value>1</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- # Set to 1 to SHOW the Nvidia columns (NvidiaLicense, NvidiaDriverVer) in the VDI and
+			     XenApp/RDS tables, 0 to HIDE them when no Nvidia vGPU is in use. -->
+			<Name>ShowNvidiaColumns</Name>
+			<Value>1</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
 			<!-- Mark failed Spooler and CitrixPrint services as warning only.
 				 It reduces the red (errors) in the reports in environments where these services are
 				 not required for normal operation -->

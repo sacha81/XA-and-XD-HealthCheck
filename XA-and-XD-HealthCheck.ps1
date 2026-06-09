@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 modfied 05.2026 Version: 1.6.4
+# Created on: 11.2014 modfied 05.2026 Version: 1.6.5
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -689,6 +689,14 @@ If ($CitrixCloudCheck -ne 1) {
 " " | LogMe -display -progress
 
 #==============================================================================================
+# Backward compatibility for the column toggles introduced for the MCS and Nvidia columns.
+# If these toggles are not present in an older XML params file, default them to 1 (enabled) so the
+# report behaviour is unchanged. Set them to 0 in the XML params file to hide the respective columns,
+# e.g. in PVS-only environments where the MCS columns would otherwise be empty.
+If (-not (Test-Path variable:ShowMCSColumns))    { $ShowMCSColumns = 1 }
+If (-not (Test-Path variable:ShowNvidiaColumns)) { $ShowNvidiaColumns = 1 }
+
+#==============================================================================================
 
 If ($CitrixCloudCheck -ne 1) {
   #Header for Table "XD/XA Controllers" Get-BrokerController
@@ -748,7 +756,10 @@ $CTXLicTableWidth= 1200
  
 #Header for Table "MachineCatalogs" Get-BrokerCatalog
 $CatalogHeaderName = "CatalogName"
-$CatalogHeaderNames = "AssignedToUser", "AssignedToDG", "NotToUserAssigned", "Unassigned", "ProvisioningType", "AllocationType", "MinimumFunctionalLevel", "RecommendedMinimumFunctionalLevel", "UsedMCSSnapshot", "MasterImageVMDate", "UseFullDiskClone", "UseWriteBackCache", "WriteBackCacheMemSize"
+$CatalogHeaderNames = "AssignedToUser", "AssignedToDG", "NotToUserAssigned", "Unassigned", "ProvisioningType", "AllocationType", "MinimumFunctionalLevel", "RecommendedMinimumFunctionalLevel"
+If ($ShowMCSColumns -eq 1) {
+  $CatalogHeaderNames += "UsedMCSSnapshot", "MasterImageVMDate", "UseFullDiskClone", "UseWriteBackCache", "WriteBackCacheMemSize"
+}
 $CatalogTablewidth = 1200
 
 #Header for Table "DeliveryGroups" Get-BrokerDesktopGroup
@@ -775,8 +786,14 @@ If ($ShowCrowdStrikeTests -eq 1) {
 }
 $VDIHeaderNames += "AssociatedUserNames"
 $VDIHeaderNames += "displaymode", "EDT_MTU"
-$VDIHeaderNames += "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace"
-$VDIHeaderNames += "NvidiaLicense","NvidiaDriverVer"
+$VDIHeaderNames += "IsPVS"
+If ($ShowMCSColumns -eq 1) { $VDIHeaderNames += "IsMCS" }
+$VDIHeaderNames += "DiskMode"
+If ($ShowMCSColumns -eq 1) { $VDIHeaderNames += "MCSImageOutOfDate" }
+$VDIHeaderNames += "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace"
+If ($ShowNvidiaColumns -eq 1) {
+  $VDIHeaderNames += "NvidiaLicense","NvidiaDriverVer"
+}
 $VDIHeaderNames += "LogicalProcessors", "Sockets", "CoresPerSocket", "TotalPhysicalMemoryinGB"
 $VDIHeaderNames += "Tags", "HostedOn"
 $VDItablewidth = 2400
@@ -789,7 +806,11 @@ If ($ShowCrowdStrikeTests -eq 1) {
   $XenAppHeaderNames += "CSEnabled", "CSGroupTags"
 }
 $XenAppHeaderNames += "RDSGracePeriod", "RDSGracePeriodExpired", "TerminalServerMode", "LicensingName", "LicensingType", "LicenseServerList"
-$XenAppHeaderNames += "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace"
+$XenAppHeaderNames += "IsPVS"
+If ($ShowMCSColumns -eq 1) { $XenAppHeaderNames += "IsMCS" }
+$XenAppHeaderNames += "DiskMode"
+If ($ShowMCSColumns -eq 1) { $XenAppHeaderNames += "MCSImageOutOfDate" }
+$XenAppHeaderNames += "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace"
 foreach ($disk in $diskLettersWorkers)
 {
   $XenAppHeaderNames += "$($disk)Freespace"
@@ -800,7 +821,9 @@ if ($ShowConnectedXenAppUsers -eq "1") {
 else {
   $XenAppHeaderNames += "ActiveSessions"
 }
-$XenAppHeaderNames += "NvidiaLicense","NvidiaDriverVer"
+If ($ShowNvidiaColumns -eq 1) {
+  $XenAppHeaderNames += "NvidiaLicense","NvidiaDriverVer"
+}
 $XenAppHeaderNames += "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg"
 $XenAppHeaderNames += "Tags", "HostedOn"
 $XenApptablewidth = 2400
