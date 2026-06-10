@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 modfied 05.2026 Version: 1.6.5
+# Created on: 11.2014 modfied 05.2026 Version: 1.6.6
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -695,6 +695,7 @@ If ($CitrixCloudCheck -ne 1) {
 # e.g. in PVS-only environments where the MCS columns would otherwise be empty.
 If (-not (Test-Path variable:ShowMCSColumns))    { $ShowMCSColumns = 1 }
 If (-not (Test-Path variable:ShowNvidiaColumns)) { $ShowNvidiaColumns = 1 }
+If (-not (Test-Path variable:MailOnlyOnFridayAndError)) { $MailOnlyOnFridayAndError = "no" }
 
 #==============================================================================================
 
@@ -2531,22 +2532,22 @@ Function Get-WriteCacheDriveInfo {
           $ResultProps.WCdrivefreespace = "$PercentageDS %"
           $ResultProps.Output_For_HTML2 = "WARNING"
         } ElseIf ([int]$PercentageDS -lt 10) {
-          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free is Critical [ $PercentageDS % ]"
+          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free is Critical [ $PercentageDS % ] - flagged as WARNING only (never ERROR)"
           $ResultProps.WCdrivefreespace = "$PercentageDS %"
-          $ResultProps.Output_For_HTML2 = "ERROR"
+          $ResultProps.Output_For_HTML2 = "WARNING"
         } ElseIf ([int]$PercentageDS -eq 0) {
-          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free test failed"
+          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free test failed - flagged as WARNING only (never ERROR)"
           $ResultProps.WCdrivefreespace = "$PercentageDS %"
-          $ResultProps.Output_For_HTML2 = "ERROR"
+          $ResultProps.Output_For_HTML2 = "WARNING"
         } Else {
-          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free is Critical [ $PercentageDS % ]"
+          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free is Critical [ $PercentageDS % ] - flagged as WARNING only (never ERROR)"
           $ResultProps.WCdrivefreespace = "$PercentageDS %"
-          $ResultProps.Output_For_HTML2 = "ERROR"
+          $ResultProps.Output_For_HTML2 = "WARNING"
         }
       } Else {
-        $ResultProps.Output_To_Log2 = "WCdrivefreespace: Failed to connect"
+        $ResultProps.Output_To_Log2 = "WCdrivefreespace: Failed to connect - flagged as WARNING only (never ERROR)"
         $ResultProps.WCdrivefreespace = "Failed to connect"
-        $ResultProps.Output_For_HTML2 = "ERROR"
+        $ResultProps.Output_For_HTML2 = "WARNING"
       }
     }
     Catch [system.exception] {
@@ -3319,6 +3320,7 @@ $thefooter = @"
 <td colspan='7' height='25' align='left'>
 <font face='courier' color='#000000' size='2'>
 
+<strong>Infrastructure Health Score: </strong> $InfrastructureHealthScore % <br>
 <strong>Uptime Threshold: </strong> $maxUpTimeDays days <br>
 <strong>Maximum Disconnect Time Threshold: </strong> $MaxDisconnectTimeInHours hours <br>
 <strong>Database: </strong> $dbinfo <br>
@@ -3340,6 +3342,7 @@ $thefooter = @"
 <td colspan='7' height='25' align='left'>
 <font face='courier' color='#000000' size='2'>
 
+<strong>Infrastructure Health Score: </strong> $InfrastructureHealthScore % <br>
 <strong>Uptime Threshold: </strong> $maxUpTimeDays days <br>
 <strong>Maximum Disconnect Time Threshold: </strong> $MaxDisconnectTimeInHours hours <br>
 <strong>ConnectionLeasingEnabled: </strong> $CLeasing <br>
@@ -3353,6 +3356,38 @@ $thefooter = @"
 "@
 }
 $thefooter | Out-File $FileName -append
+}
+
+# ==============================================================================================
+
+Function Get-InfrastructureHealthScore
+{
+  # Calculates a simple Infrastructure Health Score from the collected result tables.
+  # Score = 100 - (ERROR cells / checked cells * 100). Only cells with a SUCCESS, WARNING or ERROR
+  # status are counted as "checked"; purely informational (NEUTRAL) cells are ignored. Only ERROR
+  # lowers the score, matching the behaviour of the Citrix PVS Farm HealthCheck.
+  param([System.Collections.Hashtable[]]$ResultSets)
+  $totalChecked = 0
+  $errorFields  = 0
+  foreach ($rs in $ResultSets) {
+    if ($null -eq $rs) { continue }
+    foreach ($entityKey in @($rs.Keys)) {
+      $entity = $rs[$entityKey]
+      if ($null -eq $entity) { continue }
+      foreach ($testKey in @($entity.Keys)) {
+        $val = $entity[$testKey]
+        if (($val -is [System.Array]) -and ($val.Count -ge 1)) {
+          $status = ("" + $val[0]).ToUpper()
+          if ($status -eq "SUCCESS" -or $status -eq "WARNING" -or $status -eq "ERROR") {
+            $totalChecked++
+            if ($status -eq "ERROR") { $errorFields++ }
+          }
+        }
+      }
+    }
+  }
+  if ($totalChecked -eq 0) { return 100 }
+  return [int](100 - [math]::Round(($errorFields / $totalChecked) * 100, 0))
 }
 
 # ==============================================================================================
@@ -5969,11 +6004,11 @@ if($ShowDesktopTable -eq 1 ) {
                 $IsSeverityWarningLevel = $True
               }
               else {
-                # Flag as an error when 80% or greater
-                "WriteCache file size is high" | LogMe -display -error
-                $tests.vhdxSize_inGB = "ERROR", "{0:n3} GB" -f($CacheDiskGB)
+                # WriteCache file is 80% or greater of the max size - flagged as a WARNING only (never ERROR)
+                "WriteCache file size is high" | LogMe -display -warning
+                $tests.vhdxSize_inGB = "WARNING", "{0:n3} GB" -f($CacheDiskGB)
                 $ErrorVDI = $ErrorVDI + 1
-                $IsSeverityErrorLevel = $True
+                $IsSeverityWarningLevel = $True
               }
             } Else {
               $tests.vhdxSize_inGB = $WriteCacheDriveInfo.Output_For_HTML3, $WriteCacheDriveInfo.vhdxSize_inMB
@@ -6960,11 +6995,11 @@ if($ShowXenAppTable -eq 1 ) {
                 $IsSeverityWarningLevel = $True
               }
               else {
-                # Flag as an error when 80% or greater
-                "WriteCache file size is high" | LogMe -display -error
-                $tests.vhdxSize_inGB = "ERROR", ("{0:n3} GB" -f($CacheDiskGB))
+                # WriteCache file is 80% or greater of the max size - flagged as a WARNING only (never ERROR)
+                "WriteCache file size is high" | LogMe -display -warning
+                $tests.vhdxSize_inGB = "WARNING", ("{0:n3} GB" -f($CacheDiskGB))
                 $ErrorXA = $ErrorXA + 1
-                $IsSeverityErrorLevel = $True
+                $IsSeverityWarningLevel = $True
               }
             } Else {
               $tests.vhdxSize_inGB = $WriteCacheDriveInfo.Output_For_HTML3, $WriteCacheDriveInfo.vhdxSize_inMB
@@ -8011,6 +8046,18 @@ if ($ShowStuckSessionsTable -eq 1 ) {
 }
 else { "No Stuck Session output in HTML " | LogMe -display -progress }
 
+# Calculate the Infrastructure Health Score across all collected result tables. Used both for the
+# footer output and for the optional "only send email on errors / Friday" logic below.
+$healthResultSets = @()
+foreach ($rsName in @('ControllerResults','CCResults','SFResults','CTXLicResults','CatalogResults','AssigmentsResults','BrkrTagsResults','BrokerConnectionLogResults','HypervisorConnectionResults','allResults','allXenAppResults','allStuckSessionResults')) {
+  If (Test-Path "variable:$rsName") {
+    $rsValue = (Get-Variable -Name $rsName).Value
+    If ($null -ne $rsValue) { $healthResultSets += ,$rsValue }
+  }
+}
+$InfrastructureHealthScore = Get-InfrastructureHealthScore -ResultSets $healthResultSets
+"Infrastructure Health Score: $InfrastructureHealthScore %" | LogMe -display -progress
+
 "Adding footer output to HTML" | LogMe -display -progress
 If ($CitrixCloudCheck -ne 1) {
   writeHtmlFooter -fileName $resultsHTM
@@ -8028,6 +8075,18 @@ $scriptruntimeInSeconds = $scriptruntime.TotalSeconds
 
 #Only Send Email if Variable in XML file is equal to 1
 if ($CheckSendMail -eq 1){
+
+$todayIsFriday = (Get-Date).DayOfWeek -eq 'Friday'
+$doSendMail = $true
+If ($MailOnlyOnFridayAndError -eq "yes") {
+  If (($InfrastructureHealthScore -lt 100) -or $todayIsFriday) {
+    "Initiate send of email (Infrastructure Health Score < 100 or it is Friday)" | LogMe -display -progress
+  } Else {
+    $doSendMail = $false
+    "Report not sent via email: Infrastructure Health Score is 100 (no errors) and it is not Friday" | LogMe -display -progress
+  }
+}
+If ($doSendMail) {
 
 #send email
 $emailMessage = New-Object System.Net.Mail.MailMessage
@@ -8061,6 +8120,7 @@ $smtpClient.Send( $emailMessage )
 
     "Report sent via email" | LogMe -display -progress
 
+}#end of If doSendMail
 }#end of IF CheckSendMail
 else{
 

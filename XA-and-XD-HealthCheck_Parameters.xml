@@ -630,6 +630,16 @@
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
+			<!-- "yes" = send the email report only when there is at least one ERROR
+			     (Infrastructure Health Score < 100) OR when it is Friday. "no" = send on every run
+			     (as long as CheckSendMail = 1). The Infrastructure Health Score is always shown in
+			     the HTML report footer regardless of this setting. -->
+			<Name>MailOnlyOnFridayAndError</Name>
+			<Value>no</Value>
+			<Type>[string]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
 			<!-- Address of the sender -->
 			<Name>emailFrom</Name>
 			<Value>citrix@mycompany.ch</Value>
