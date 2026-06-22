@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 modfied 05.2026 Version: 1.6.6
+# Created on: 11.2014 modfied 05.2026 Version: 1.6.7
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -587,7 +587,7 @@ if ( $CitrixCloudCheck -eq "1" ) {
           $BearerToken = $Global:XDAuthToken
         }
         Catch {
-         "- The Global XDSDKProxy variable cannot be retrieved" | LogMe -display -warning
+         "- The Global XDAuthToken variable cannot be retrieved" | LogMe -display -warning
         }
       }
       If ([string]::IsNullOrEmpty($AdminAddress)) {
@@ -780,7 +780,7 @@ $HypervisorConnectiontablewidth = 1200
 
 #Header for Table "VDI Singlesession Checks" Get-BrokerMachine
 $VDIfirstheaderName = "virtualDesktops"
-$VDIHeaderNames = "IPv4Address", "CatalogName", "DeliveryGroup", "Ping", "WinRM", "WMI", "UNC", "MaintMode", "Uptime", "RegState", "PowerState", "LastConnectionTime", "VDAVersion", "OSCaption", "OSBuild"
+$VDIHeaderNames = "IPv4Address", "CatalogName", "DeliveryGroup", "Tags", "Ping", "WinRM", "WMI", "UNC", "MaintMode", "Uptime", "RegState", "PowerState", "LastConnectionTime", "VDAVersion", "OSCaption", "OSBuild"
 $VDIHeaderNames += "Spooler", "CitrixPrint", "UPMEnabled", "FSLogixEnabled", "WEMEnabled"
 If ($ShowCrowdStrikeTests -eq 1) {
   $VDIHeaderNames += "CSEnabled", "CSGroupTags"
@@ -796,12 +796,12 @@ If ($ShowNvidiaColumns -eq 1) {
   $VDIHeaderNames += "NvidiaLicense","NvidiaDriverVer"
 }
 $VDIHeaderNames += "LogicalProcessors", "Sockets", "CoresPerSocket", "TotalPhysicalMemoryinGB"
-$VDIHeaderNames += "Tags", "HostedOn"
+$VDIHeaderNames += "HostedOn"
 $VDItablewidth = 2400
 
 #Header for Table "XenApp/RDS/Multisession Checks" Get-BrokerMachine
 $XenAppfirstheaderName = "virtualApp-Servers"
-$XenAppHeaderNames = "IPv4Address", "CatalogName", "DeliveryGroup", "Ping", "WinRM", "WMI", "UNC", "Serverload", "MaintMode", "Uptime", "RegState", "PowerState", "LastConnectionTime", "VDAVersion", "OSCaption", "OSBuild"
+$XenAppHeaderNames = "IPv4Address", "CatalogName", "DeliveryGroup", "Tags", "Ping", "WinRM", "WMI", "UNC", "Serverload", "MaintMode", "Uptime", "RegState", "PowerState", "LastConnectionTime", "VDAVersion", "OSCaption", "OSBuild"
 $XenAppHeaderNames += "Spooler", "CitrixPrint", "UPMEnabled", "FSLogixEnabled", "WEMEnabled"
 If ($ShowCrowdStrikeTests -eq 1) {
   $XenAppHeaderNames += "CSEnabled", "CSGroupTags"
@@ -826,7 +826,7 @@ If ($ShowNvidiaColumns -eq 1) {
   $XenAppHeaderNames += "NvidiaLicense","NvidiaDriverVer"
 }
 $XenAppHeaderNames += "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg"
-$XenAppHeaderNames += "Tags", "HostedOn"
+$XenAppHeaderNames += "HostedOn"
 $XenApptablewidth = 2400
 
 #Header for Table "StuckSessions"  Get-BrokerSession
@@ -3019,6 +3019,145 @@ Function Get-CrowdStrikeServiceStatus {
     # to process the given request. Make sure the WSMan provider host server and proxy are properly registered". I suspect it happens only when a
     # machine is interrogated whilst it's still starting up after a reboot.
     return $result
+  }
+}
+
+#==============================================================================================
+
+Function ConvertFrom-CtxSessionVerbose {
+  # This funtion will convert the output from ctxsession.exe and return nested objects.
+  [CmdletBinding()]
+  param(
+        [Parameter(ValueFromPipeline)]
+        [string]$InputObject
+  )
+
+  begin {
+        $result = [ordered]@{
+            SessionId         = $null
+            Connection        = [ordered]@{}
+            Security          = [ordered]@{}
+            ICAStatistics     = [ordered]@{}
+            EDT               = [ordered]@{}
+            RendezvousVersion = $null
+            HDXDirectState    = $null
+            ReducerVersion    = $null
+        }
+
+        $currentSection = $null
+
+        function ConvertTo-CtxPropertyName {
+            param([string]$Name)
+
+            $Name = $Name.Trim()
+
+            if ($Name -match '^(.*?)\s*\((.*?)\)$') {
+                $Name = "$($matches[1]) $($matches[2])"
+            }
+
+            return (($Name -replace '[^A-Za-z0-9 ]', '') -replace '\s+', '')
+        }
+
+        function ConvertTo-CtxValue {
+            param([string]$Value)
+
+            $Value = $Value.Trim()
+
+            if ($Value -match '^\d+$') {
+                return [int64]$Value
+            }
+
+            if ($Value -match '^\d+\.\d+$') {
+                return [double]$Value
+            }
+
+            return $Value
+        }
+  }
+
+  process {
+        $line = $InputObject
+
+        if ($line -match '^\s*Session Id\s+(\d+):') {
+            $result.SessionId = [int]$matches[1]
+            return
+        }
+
+        if ($line -match '^\s*(ICA Statistics):\s*$') {
+            $currentSection = 'ICAStatistics'
+            return
+        }
+
+        if ($line -match '^\s*EDT\s+(.+?)\s+Statistics:\s*$') {
+            $currentSection = "EDT_$($matches[1] -replace '\s+', '')"
+            return
+        }
+
+        if (
+            $currentSection -like 'EDT_*' -and
+            $line -match 'Bandwidth\s+([\d.]+)\s+(\w+),\s+RTT\s+([\d.]+)\s+(\w+),\s+EDT MTU:\s+(\d+)'
+        ) {
+            $name = $currentSection -replace '^EDT_', ''
+
+            $result.EDT[$name] = [pscustomobject]@{
+                Bandwidth     = [double]$matches[1]
+                BandwidthUnit = $matches[2]
+                RTT           = [double]$matches[3]
+                RTTUnit       = $matches[4]
+                MTU           = [int]$matches[5]
+            }
+
+            return
+        }
+
+        if ($line -match '^\s*(.+?)\s*:\s*(.+?)\s*$') {
+            $key = ConvertTo-CtxPropertyName $matches[1]
+            $value = ConvertTo-CtxValue $matches[2]
+
+            switch ($key) {
+                'TransportProtocols' { $result.Connection[$key] = $value }
+                'LocalAddress'       { $result.Connection[$key] = $value }
+                'RemoteAddress'      { $result.Connection[$key] = $value }
+                'ClientAddress'      { $result.Connection[$key] = $value }
+
+                'SecurityProtocol'   { $result.Security[$key] = $value }
+                'SecurityCipher'     { $result.Security[$key] = $value }
+                'CipherStrength'     { $result.Security[$key] = $value }
+                'ICAEncryption'      { $result.Security[$key] = $value }
+
+                'RendezvousVersion'  { $result.RendezvousVersion = $value }
+                'HDXDirectState'     { $result.HDXDirectState = $value }
+                'ReducerVersion'     { $result.ReducerVersion = $value }
+
+                default              { $result[$key] = $value }
+            }
+
+            return
+        }
+
+        if (
+            $currentSection -eq 'ICAStatistics' -and
+            $line -match '^\s*(.+?)\s*=\s*(.+?)\s*$'
+        ) {
+            $name = ConvertTo-CtxPropertyName $matches[1]
+            $value = ConvertTo-CtxValue $matches[2]
+
+            $result.ICAStatistics[$name] = $value
+            return
+        }
+  }
+
+  end {
+        [pscustomobject]@{
+            SessionId         = $result.SessionId
+            Connection        = [pscustomobject]$result.Connection
+            Security          = [pscustomobject]$result.Security
+            ICAStatistics     = [pscustomobject]$result.ICAStatistics
+            EDT               = [pscustomobject]$result.EDT
+            RendezvousVersion = $result.RendezvousVersion
+            HDXDirectState    = $result.HDXDirectState
+            ReducerVersion    = $result.ReducerVersion
+       }
   }
 }
 
@@ -6321,25 +6460,39 @@ if($ShowDesktopTable -eq 1 ) {
 
         ## EDT MTU (set by default.ica or MTUDiscovery)
         If ($UseWinRM) {
-          # Execute the "C:\Program Files (x86)\Citrix\HDX\bin\CtxSession.exe" in the remote session
+          # ctxsession returns no data or null, such as for RDP sessions, so we check for that instead of failing the test.
+          # Execute the "C:\Program Files (x86)\Citrix\HDX\bin\CtxSession.exe" in the remote session and then use the
+          # ConvertFrom-CtxSessionVerbose funtion to convert the output from ctxsession.exe and return nested objects.
           $EDTMTU = ""
           Try {
-            $ctxsession = Invoke-Command -ComputerName $machineDNS -ErrorAction Stop -ScriptBlock { ctxsession -v }
-            # ctxsession returns no data or null, such as for RDP sessions, so we check for that instead of failing the test.
-            If (($ctxsession | Measure-Object).Count -eq 0) {
-              $EDTMTU = ($ctxsession | findstr "EDT MTU:" | select -Last 1)
+            $ctxsession = Invoke-Command -ComputerName $machineDNS -ErrorAction Stop -ScriptBlock {
+              try {
+                & ctxsession.exe /v 2>&1
+              }
+              catch {
+              write-warning "ctxsession.exe failed: $($_.Exception.Message)" -verbose
+              }
+            } | ConvertFrom-CtxSessionVerbose
+            If ($ctxsession.Connection.TransportProtocols -like "UDP*") {
+              $EDTMTU = $ctxsession.EDT.Reliable.MTU
+              $tests.EDT_MTU = "NEUTRAL", $EDTMTU
               if (!([string]::IsNullOrWhiteSpace($EDTMTU))) {
-                $EDTMTU = ($ctxsession).split(":")[1].trimstart()
-              } else {
-                $EDTMTU = "Not set"
+                "EDT MTU Size is set to $EDTMTU" | LogMe -display -progress
+              } Else {
+                "EDT is not set" | LogMe -display -progress
               }
             }
-            $tests.EDT_MTU = "NEUTRAL", $EDTMTU
-            "EDT MTU Size is set to $EDTMTU" | LogMe -display -progress
+            If ($ctxsession.Connection.TransportProtocols -like "TCP*") {
+              "EDT is not in use" | LogMe -display -progress
+            }
           }
           Catch {
-            $tests.EDT_MTU = "ERROR", "Failed"
-            "EDT MTU Size failed to return data" | LogMe -display -progress
+            $tests.EDT_MTU = "NEUTRAL", $EDTMTU
+            If ($_.Exception.Message -Like "*The following error occurred while using Kerberos authentication*") {
+              "EDT MTU Size could not be checked. There may be a Kerberos permissions issue here" | LogMe -display -error
+            } Else {
+              "EDT MTU Size failed to return data" | LogMe -display -error
+            }
           }
         } Else {
           "EDT MTU Size cannot be checked" | LogMe -display -progress
@@ -8659,7 +8812,6 @@ If ($UseRunspace) {
 # - 1.6.3, by Jeremy Saunders (jeremy@jhouseconsulting.com)
 #          - Increased width of the footer in the writeHtmlFooter function.
 #          - Improved/corrected some of the documentation within the script.
-#
 # - 1.6.4, by Xavier Coulon (xixtu) 05/2026
 #          - Added LAS (License Activation Service) support in the license check section.
 #            The traditional WMI-based query against ROOT\CitrixLicensing is used first.
@@ -8695,6 +8847,15 @@ If ($UseRunspace) {
 #            installed product version (always in the past, not an expiry date).
 #          - Fixed the HTML footer to display the human-readable edition label (e.g. Premium)
 #            instead of the raw edition code (e.g. PLT).
+# - 1.6.5, by S.Thomet
+#          - Introduce health score and ability to only send on friday or on error
+# - 1.6.6, by S.Thomet
+#          - add ShowMCSColumns/ShowNvidiaColumns toggles
+# - 1.6.7, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+#          - Added the ConvertFrom-CtxSessionVerbose function to convert the output from ctxsession.exe and return nested objects.
+#          - Used the ConvertFrom-CtxSessionVerbose function to fix the output of the EDTMTU check using the CtxSession command line tool.
+#          - Moved the Tags column for both the VDI Singlesession and XenApp/RDS/Multisession Checks to just after the DeliveryGroup column. This helps visualize which Delivery Groups and Tags
+#            each machine is in.
 #
 # ==CURRENT KNOWN ISSUES AND/OR LIMITATIONS ==
 # - Any functions that use the Invoke-Command cmdlet "may" cause the script to wait indefinitely when run against an unhealthy machine. This is due to the known timeout issue with this cmdlet.
@@ -8703,7 +8864,8 @@ If ($UseRunspace) {
 # == FUTURE ==
 # #  1.5.x
 # Version changes by S.Thomet & J.Saunders
-# - CREATE Proper functions
+# - The Get-BrokerMachine cmdlet has been depreciated from June 2025 in favor of the new Get-BrokerMachineV2 cmdlet, which was introduced in Citrix Virtual Apps and Desktop 7 2511.
+# - Create proper functions
 # - Change all functions to allow for Invoke-Command for PS Remoting where possible.
 # - The Invoke-Command cmdlet doesn't have a -Timeout parameter. To force a timeout for the Invoke-Command cmdlet we can put it in a ScriptBlock and run it as background job using Start-Job.
 #   Then use Wait-Job on it with -Timeout specified. It will wait the amount of time we specify and then terminate the job. Refer to the Get-RDLicenseGracePeriodEventErrorsSinceBoot function

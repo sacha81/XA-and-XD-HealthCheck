@@ -220,7 +220,7 @@
 				  as a warning. Leave blank to ignore this.
 				  Supports wildcards -->
 			<Name>SupportedVDAVersions</Name>
-			<Value>2203.*,2402.*,2507.*</Value>
+			<Value>2203.*,2402.*,2507.*,2603.*</Value>
 			<Type>[array]</Type>
 			<Scope>Script</Scope>
 		</Variable>
@@ -365,7 +365,6 @@
 			<Type>[array]</Type>
 			<Scope>Script</Scope>
 		</Variable>
-
 		<Variable>
 			<!-- Set to true if LAS (License Activation Service) is enabled.
 			     In LAS mode, the license server exposes DOUBLE the contracted quantity (normal CCS behaviour).
