@@ -1,5 +1,5 @@
-﻿#==============================================================================================
-# Created on: 11.2014 modfied 09.2025 Version: 1.6.4
+#==============================================================================================
+# Created on: 11.2014 modfied 05.2026 Version: 1.6.7
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -94,7 +94,9 @@ $SnapIns += (Get-PSSnapin "Citrix.*" -EA silentlycontinue)
 
 #==============================================================================================
 
-If (![string]::IsNullOrEmpty($hostinvocation)) {
+$_hostinvocationValue = $null
+try { $_hostinvocationValue = $hostinvocation } catch { }
+If (![string]::IsNullOrEmpty($_hostinvocationValue)) {
 	[string]$Global:ScriptPath = [System.IO.Path]::GetDirectoryName([System.Windows.Forms.Application]::ExecutablePath)
 	[string]$Global:ScriptFile = [System.IO.Path]::GetFileName([System.Windows.Forms.Application]::ExecutablePath)
 	[string]$global:ScriptName = [System.IO.Path]::GetFileNameWithoutExtension([System.Windows.Forms.Application]::ExecutablePath)
@@ -585,7 +587,7 @@ if ( $CitrixCloudCheck -eq "1" ) {
           $BearerToken = $Global:XDAuthToken
         }
         Catch {
-         "- The Global XDSDKProxy variable cannot be retrieved" | LogMe -display -warning
+         "- The Global XDAuthToken variable cannot be retrieved" | LogMe -display -warning
         }
       }
       If ([string]::IsNullOrEmpty($AdminAddress)) {
@@ -687,6 +689,15 @@ If ($CitrixCloudCheck -ne 1) {
 " " | LogMe -display -progress
 
 #==============================================================================================
+# Backward compatibility for the column toggles introduced for the MCS and Nvidia columns.
+# If these toggles are not present in an older XML params file, default them to 1 (enabled) so the
+# report behaviour is unchanged. Set them to 0 in the XML params file to hide the respective columns,
+# e.g. in PVS-only environments where the MCS columns would otherwise be empty.
+If (-not (Test-Path variable:ShowMCSColumns))    { $ShowMCSColumns = 1 }
+If (-not (Test-Path variable:ShowNvidiaColumns)) { $ShowNvidiaColumns = 1 }
+If (-not (Test-Path variable:MailOnlyOnFridayAndError)) { $MailOnlyOnFridayAndError = "no" }
+
+#==============================================================================================
 
 If ($CitrixCloudCheck -ne 1) {
   #Header for Table "XD/XA Controllers" Get-BrokerController
@@ -741,12 +752,15 @@ If ($ShowCrowdStrikeTests -eq 1) {
 #Header for Table "CTX Licenses"
 $CTXLicFirstheaderName = "LicenseName"
 $CTXLicHeaderNames = "LicenseServer", "Count", "InUse", "Available"
-$CTXLicHeaderNamesLAS = "LicenseServer", "Edition", "Model", "GracePeriodActive","GraceHoursLeft"
+$CTXLicHeaderNamesLAS = "LicenseServer","Product","Edition","LicenseType","Quantity","InUse","Available","ExpirationDate","SubAdvDate","GracePeriodActive","GraceHoursLeft","LASConnected","ActivationStatus","ActivationExpiry"
 $CTXLicTableWidth= 1200
  
 #Header for Table "MachineCatalogs" Get-BrokerCatalog
 $CatalogHeaderName = "CatalogName"
-$CatalogHeaderNames = "AssignedToUser", "AssignedToDG", "NotToUserAssigned", "Unassigned", "ProvisioningType", "AllocationType", "MinimumFunctionalLevel", "RecommendedMinimumFunctionalLevel", "UsedMCSSnapshot", "MasterImageVMDate", "UseFullDiskClone", "UseWriteBackCache", "WriteBackCacheMemSize"
+$CatalogHeaderNames = "AssignedToUser", "AssignedToDG", "NotToUserAssigned", "Unassigned", "ProvisioningType", "AllocationType", "MinimumFunctionalLevel", "RecommendedMinimumFunctionalLevel"
+If ($ShowMCSColumns -eq 1) {
+  $CatalogHeaderNames += "UsedMCSSnapshot", "MasterImageVMDate", "UseFullDiskClone", "UseWriteBackCache", "WriteBackCacheMemSize"
+}
 $CatalogTablewidth = 1200
 
 #Header for Table "DeliveryGroups" Get-BrokerDesktopGroup
@@ -773,8 +787,14 @@ If ($ShowCrowdStrikeTests -eq 1) {
 }
 $VDIHeaderNames += "AssociatedUserNames"
 $VDIHeaderNames += "displaymode", "EDT_MTU"
-$VDIHeaderNames += "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace"
-$VDIHeaderNames += "NvidiaLicense","NvidiaDriverVer"
+$VDIHeaderNames += "IsPVS"
+If ($ShowMCSColumns -eq 1) { $VDIHeaderNames += "IsMCS" }
+$VDIHeaderNames += "DiskMode"
+If ($ShowMCSColumns -eq 1) { $VDIHeaderNames += "MCSImageOutOfDate" }
+$VDIHeaderNames += "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace"
+If ($ShowNvidiaColumns -eq 1) {
+  $VDIHeaderNames += "NvidiaLicense","NvidiaDriverVer"
+}
 $VDIHeaderNames += "LogicalProcessors", "Sockets", "CoresPerSocket", "TotalPhysicalMemoryinGB"
 $VDIHeaderNames += "HostedOn"
 $VDItablewidth = 2400
@@ -787,7 +807,11 @@ If ($ShowCrowdStrikeTests -eq 1) {
   $XenAppHeaderNames += "CSEnabled", "CSGroupTags"
 }
 $XenAppHeaderNames += "RDSGracePeriod", "RDSGracePeriodExpired", "TerminalServerMode", "LicensingName", "LicensingType", "LicenseServerList"
-$XenAppHeaderNames += "IsPVS", "IsMCS", "DiskMode", "MCSImageOutOfDate", "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace"
+$XenAppHeaderNames += "IsPVS"
+If ($ShowMCSColumns -eq 1) { $XenAppHeaderNames += "IsMCS" }
+$XenAppHeaderNames += "DiskMode"
+If ($ShowMCSColumns -eq 1) { $XenAppHeaderNames += "MCSImageOutOfDate" }
+$XenAppHeaderNames += "PVSvDiskName", "WriteCacheType", "vhdxSize_inGB", "WCdrivefreespace"
 foreach ($disk in $diskLettersWorkers)
 {
   $XenAppHeaderNames += "$($disk)Freespace"
@@ -798,7 +822,9 @@ if ($ShowConnectedXenAppUsers -eq "1") {
 else {
   $XenAppHeaderNames += "ActiveSessions"
 }
-$XenAppHeaderNames += "NvidiaLicense","NvidiaDriverVer"
+If ($ShowNvidiaColumns -eq 1) {
+  $XenAppHeaderNames += "NvidiaLicense","NvidiaDriverVer"
+}
 $XenAppHeaderNames += "LogicalProcessors", "Sockets", "CoresPerSocket", "AvgCPU", "TotalPhysicalMemoryinGB", "MemUsg"
 $XenAppHeaderNames += "HostedOn"
 $XenApptablewidth = 2400
@@ -2506,22 +2532,22 @@ Function Get-WriteCacheDriveInfo {
           $ResultProps.WCdrivefreespace = "$PercentageDS %"
           $ResultProps.Output_For_HTML2 = "WARNING"
         } ElseIf ([int]$PercentageDS -lt 10) {
-          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free is Critical [ $PercentageDS % ]"
+          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free is Critical [ $PercentageDS % ] - flagged as WARNING only (never ERROR)"
           $ResultProps.WCdrivefreespace = "$PercentageDS %"
-          $ResultProps.Output_For_HTML2 = "ERROR"
+          $ResultProps.Output_For_HTML2 = "WARNING"
         } ElseIf ([int]$PercentageDS -eq 0) {
-          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free test failed"
+          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free test failed - flagged as WARNING only (never ERROR)"
           $ResultProps.WCdrivefreespace = "$PercentageDS %"
-          $ResultProps.Output_For_HTML2 = "ERROR"
+          $ResultProps.Output_For_HTML2 = "WARNING"
         } Else {
-          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free is Critical [ $PercentageDS % ]"
+          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free is Critical [ $PercentageDS % ] - flagged as WARNING only (never ERROR)"
           $ResultProps.WCdrivefreespace = "$PercentageDS %"
-          $ResultProps.Output_For_HTML2 = "ERROR"
+          $ResultProps.Output_For_HTML2 = "WARNING"
         }
       } Else {
-        $ResultProps.Output_To_Log2 = "WCdrivefreespace: Failed to connect"
+        $ResultProps.Output_To_Log2 = "WCdrivefreespace: Failed to connect - flagged as WARNING only (never ERROR)"
         $ResultProps.WCdrivefreespace = "Failed to connect"
-        $ResultProps.Output_For_HTML2 = "ERROR"
+        $ResultProps.Output_For_HTML2 = "WARNING"
       }
     }
     Catch [system.exception] {
@@ -2996,7 +3022,6 @@ Function Get-CrowdStrikeServiceStatus {
   }
 }
 
-
 #==============================================================================================
 
 Function ConvertFrom-CtxSessionVerbose {
@@ -3275,6 +3300,37 @@ $head | Out-File $fileName
   
 # ==============================================================================================
 
+# ==============================================================================================
+
+Function writeHtmlLicenseAlert {
+  param($fileName, $licInventory, $warnDays, $errorDays)
+  $alerts = @()
+  foreach ($lic in $licInventory) {
+    $expStr = $lic.ExpirationDate
+    if ($null -eq $expStr -OR $expStr -eq "N/A" -OR $expStr -eq "") { continue }
+    Try {
+      $expDt    = [datetime]::ParseExact($expStr, "dd/MM/yyyy", $null)
+      $daysLeft = ($expDt - (Get-Date)).Days
+      if    ($daysLeft -lt 0)               { $alerts += [PSCustomObject]@{ Product=$lic.Product; Days=$daysLeft; Date=$expStr; Level="ERROR" } }
+      elseif($daysLeft -le $errorDays)      { $alerts += [PSCustomObject]@{ Product=$lic.Product; Days=$daysLeft; Date=$expStr; Level="ERROR" } }
+      elseif($daysLeft -le $warnDays)       { $alerts += [PSCustomObject]@{ Product=$lic.Product; Days=$daysLeft; Date=$expStr; Level="WARNING" } }
+    } Catch {}
+  }
+  if ($alerts.Count -eq 0) { return }
+  $bannerHtml = "<table width='1500'>`n"
+  foreach ($a in $alerts) {
+    $bgColor = if ($a.Level -eq "ERROR") { "#FF0000" } else { "#FF7700" }
+    $msg     = if ($a.Days -lt 0) {
+      "&#9888; ALERT: License <strong>$($a.Product)</strong> EXPIRED on $($a.Date)!"
+    } else {
+      "&#9888; ALERT: License <strong>$($a.Product)</strong> expires on $($a.Date) (in $($a.Days) days)"
+    }
+    $bannerHtml += "<tr bgcolor='$bgColor'><td colspan='7' height='32' align='center'><font face='tahoma' color='#FFFFFF' size='3'><strong>$msg</strong></font></td></tr>`n"
+  }
+  $bannerHtml += "</table>`n"
+  $bannerHtml | Out-File $fileName -Append
+}
+
 Function writeTableHeader
 {
 param($fileName, $firstheaderName, $headerNames, $tablewidth)
@@ -3403,10 +3459,11 @@ $thefooter = @"
 <td colspan='7' height='25' align='left'>
 <font face='courier' color='#000000' size='2'>
 
+<strong>Infrastructure Health Score: </strong> $InfrastructureHealthScore % <br>
 <strong>Uptime Threshold: </strong> $maxUpTimeDays days <br>
 <strong>Maximum Disconnect Time Threshold: </strong> $MaxDisconnectTimeInHours hours <br>
 <strong>Database: </strong> $dbinfo <br>
-<strong>LicenseServerName: </strong> $lsname <strong>LicenseServerPort: </strong> $lsport <strong>LicenseEdition: </strong> $ledition <strong>LicenseModel: </strong> $lmodel <strong>GracePeriodActive: </strong> $LicensingGracePeriodActive <strong>GraceHoursLeft: </strong> $LicensingGraceHoursLeft <br>
+<strong>LicenseServerName: </strong> $lsname <strong>LicenseServerPort: </strong> $lsport <strong>LicenseEdition: </strong> $leditionLabel <strong>LicenseModel: </strong> $lmodel <strong>GracePeriodActive: </strong> $LicensingGracePeriodActive <strong>GraceHoursLeft: </strong> $LicensingGraceHoursLeft <br>
 <strong>ConnectionLeasingEnabled: </strong> $CLeasing <br>
 <strong>LocalHostCacheEnabled: </strong> $LHC <br>
 
@@ -3424,6 +3481,7 @@ $thefooter = @"
 <td colspan='7' height='25' align='left'>
 <font face='courier' color='#000000' size='2'>
 
+<strong>Infrastructure Health Score: </strong> $InfrastructureHealthScore % <br>
 <strong>Uptime Threshold: </strong> $maxUpTimeDays days <br>
 <strong>Maximum Disconnect Time Threshold: </strong> $MaxDisconnectTimeInHours hours <br>
 <strong>ConnectionLeasingEnabled: </strong> $CLeasing <br>
@@ -3437,6 +3495,38 @@ $thefooter = @"
 "@
 }
 $thefooter | Out-File $FileName -append
+}
+
+# ==============================================================================================
+
+Function Get-InfrastructureHealthScore
+{
+  # Calculates a simple Infrastructure Health Score from the collected result tables.
+  # Score = 100 - (ERROR cells / checked cells * 100). Only cells with a SUCCESS, WARNING or ERROR
+  # status are counted as "checked"; purely informational (NEUTRAL) cells are ignored. Only ERROR
+  # lowers the score, matching the behaviour of the Citrix PVS Farm HealthCheck.
+  param([System.Collections.Hashtable[]]$ResultSets)
+  $totalChecked = 0
+  $errorFields  = 0
+  foreach ($rs in $ResultSets) {
+    if ($null -eq $rs) { continue }
+    foreach ($entityKey in @($rs.Keys)) {
+      $entity = $rs[$entityKey]
+      if ($null -eq $entity) { continue }
+      foreach ($testKey in @($entity.Keys)) {
+        $val = $entity[$testKey]
+        if (($val -is [System.Array]) -and ($val.Count -ge 1)) {
+          $status = ("" + $val[0]).ToUpper()
+          if ($status -eq "SUCCESS" -or $status -eq "WARNING" -or $status -eq "ERROR") {
+            $totalChecked++
+            if ($status -eq "ERROR") { $errorFields++ }
+          }
+        }
+      }
+    }
+  }
+  if ($totalChecked -eq 0) { return 100 }
+  return [int](100 - [math]::Round(($errorFields / $totalChecked) * 100, 0))
 }
 
 # ==============================================================================================
@@ -3517,6 +3607,9 @@ $lsport = $brokersiteinfos.LicenseServerPort
 "- LicenseServerPort: $($lsport)" | LogMe -display -progress
 $ledition = $brokersiteinfos.LicenseEdition
 "- LicenseEdition: $($ledition)" | LogMe -display -progress
+$_EditionMap   = @{ 'PLT'='Premium'; 'ENT'='Advanced'; 'ADV'='Advanced'; 'STD'='Standard'; 'APP'='App' } # LAS edition code to display label mapping
+$leditionLabel = if ($_EditionMap.ContainsKey($ledition)) { $_EditionMap[$ledition] } else { $ledition }
+"- LicenseEditionLabel: $($leditionLabel)" | LogMe -display -progress
 $lmodel = $brokersiteinfos.LicenseModel
 "- LicenseModel: $($lmodel)" | LogMe -display -progress
 $LicensingGracePeriodActive = $brokersiteinfos.LicensingGracePeriodActive
@@ -4445,114 +4538,351 @@ If ($ShowStorefrontTable -eq 1) {
 If ($CitrixCloudCheck -ne 1) {
   "Check Citrix Licensing ######################################################################" | LogMe -display -progress
   # ======= License Check ========
-  if ($ShowCTXLicense -eq 1 ) {
-    $LASEnabled = $False
-    $IsConnectionToLicenseServerSuccessful = $False
-    $UseWinRM = $True
-    $myCollection = @()
-    try {
-      If ($UseWinRM) {
-        $LicQuery = Get-CimInstance -namespace "ROOT\CitrixLicensing" -ComputerName $lsname -query "select * from Citrix_GT_License_Pool" -ErrorAction Stop | ? {$_.PLD -in $CTXLicenseMode}
-      } Else {
-        $LicQuery = Get-WmiObject -namespace "ROOT\CitrixLicensing" -ComputerName $lsname -query "select * from Citrix_GT_License_Pool" -ErrorAction Stop | ? {$_.PLD -in $CTXLicenseMode}
+
+if ($ShowCTXLicense -eq 1 ) {
+ 
+  $LASEnabled   = $False
+  $LASConnected = $False
+  $IsConnectionToLicenseServerSuccessful = $False
+  $myCollection  = @{}
+  $CTXLicResults = @{}
+ 
+  # leditionLabel computed globally after Get-BrokerSite (e.g. PLT -> Premium)
+ 
+  # CSS date from BrokerSite (already loaded in $brokersiteinfos)
+  $CSSDate = "N/A"
+  Try {
+    if (![string]::IsNullOrEmpty($brokersiteinfos.LicensingBurnInDate)) {
+      $CSSDate = ($brokersiteinfos.LicensingBurnInDate).ToString("dd/MM/yyyy")
+      "CSS Date (LicensingBurnInDate) : $CSSDate" | LogMe -display -progress
+    } ElseIf (![string]::IsNullOrEmpty($brokersiteinfos.LicensingBurnIn)) {
+      # Format "2025.0615" → "15/06/2025"
+      $bi = $brokersiteinfos.LicensingBurnIn -replace '\.', ''  # "20250615"
+      if ($bi.Length -eq 8) {
+        $CSSDate = "$($bi.Substring(6,2))/$($bi.Substring(4,2))/$($bi.Substring(0,4))"
       }
+      "CSS Date (LicensingBurnIn) : $CSSDate" | LogMe -display -progress
+    }
+  } Catch {}
+ 
+  # ------------------------------------------------------------------
+  # ETAPE 1 : WMI classique (licences traditionnelles non-LAS)
+  # ------------------------------------------------------------------
+  try {
+    $LicQuery = Get-CimInstance `
+        -Namespace "ROOT\CitrixLicensing" `
+        -ComputerName $lsname `
+        -Query "select * from Citrix_GT_License_Pool" `
+        -ErrorAction Stop |
+        Where-Object { $_.PLD -in $CTXLicenseMode }
+ 
+    $IsConnectionToLicenseServerSuccessful = $True
+ 
+    foreach ($group in ($LicQuery | Group-Object pld)) {
+      $lics = $group.Group; $i = 1
+      $t_Count = 0; $t_InUse = 0; $t_Avail = 0
+ 
+      foreach ($lic in @($lics)) {
+        $cnt  = $lic.count - $lic.Overdraft
+        $used = [math]::Min($lic.inusecount, $cnt)
+        $myCollection["$($lics[0].pld) ($i) Licence"] = [PSCustomObject]@{
+          LicenseServer = $lsname; LicenceName = "$($lics[0].pld) ($i) Licence"
+          Count = $cnt; InUse = $used; Available = $cnt - $used
+        }
+        $od_used = [math]::Max(0, $lic.inusecount - $cnt)
+        $myCollection["$($lics[0].pld) ($i) Overdraft"] = [PSCustomObject]@{
+          LicenseServer = $lsname; LicenceName = "$($lics[0].pld) ($i) Overdraft"
+          Count = $lic.Overdraft; InUse = $od_used; Available = $lic.Overdraft - $od_used
+        }
+        $t_Count += $lic.count; $t_InUse += $lic.inusecount; $t_Avail += $lic.pooledavailable; $i++
+      }
+      $myCollection["$($lics[0].pld) - Total"] = [PSCustomObject]@{
+        LicenseServer = $lsname; LicenceName = "$($lics[0].pld) - Total"
+        Count = $t_Count; InUse = $t_InUse; Available = $t_Avail
+      }
+    }
+  } catch {
+    "WMI Licensing namespace not accessible on $lsname (expected in LAS mode)." | LogMe -display -warning
+  }
+ 
+  # ------------------------------------------------------------------
+  # ETAPE 2 : SDK Licensing HTTPS:8083 (LAS)
+  # ------------------------------------------------------------------
+  if ($myCollection.Count -eq 0) {
+    $LicServerUrl = "https://${lsname}:8083/"
+    "Licensing: connecting via Citrix Licensing SDK (LAS) on $LicServerUrl" | LogMe -display -progress
+    Try {
+      $LicCert = Get-LicCertificate -AdminAddress $LicServerUrl -ErrorAction Stop
+      "- Certificate retrieved successfully" | LogMe -display -progress
       $IsConnectionToLicenseServerSuccessful = $True
+      $LASEnabled   = $True
+      $LASConnected = $True
+ 
+      # -- Get-LicLasInventory: LAS-specific inventory (product licenses with expiration date) --
+      # LAS Note: the license server exposes DOUBLE the contracted quantity (normal CCS behaviour).
+      Try {
+        $LasInventory = Get-LicLasInventory `
+            -AdminAddress $LicServerUrl `
+            -CertHash ($LicCert.CertHash) `
+            -ErrorAction Stop
+        "- LasInventory: $(@($LasInventory).Count) entries" | LogMe -display -progress
+        foreach ($lic in @($LasInventory)) {
+          $licName    = if (![string]::IsNullOrEmpty($lic.LocalizedLicenseProductName)) { $lic.LocalizedLicenseProductName } else { $lic.LicenseProductName }
+          $licEdition = if (![string]::IsNullOrEmpty($lic.LicenseLocalizedEdition))    { $lic.LicenseLocalizedEdition }    elseif (![string]::IsNullOrEmpty($lic.LicenseEdition)) { $lic.LicenseEdition } else { "N/A" }
+          $licType    = if (![string]::IsNullOrEmpty($lic.LocalizedLicenseType))       { $lic.LocalizedLicenseType }       else { $lic.LicenseType }
+          $licModel   = if (![string]::IsNullOrEmpty($lic.LocalizedLicenseModel))      { $lic.LocalizedLicenseModel }      else { $lic.LicenseModel }
+          $totalCount = ($lic.LicensesAvailable + $lic.LicensesInUse)
 
-      foreach ($group in $($LicQuery | group pld)) {
-        $lics = $group | Select-Object -ExpandProperty group
-        $i = 1
+          # License expiration date and Subscription Advantage date
+          $licExpiryStr   = "N/A"
+          $licSubAdvStr   = "N/A"
+          if ($null -ne $lic.LicenseExpirationDate -AND "$($lic.LicenseExpirationDate)" -ne "") {
+            Try {
+              $licExpiryStr = ([datetime]$lic.LicenseExpirationDate).ToString("dd/MM/yyyy")
+              $daysToExp = ([datetime]$lic.LicenseExpirationDate - (Get-Date)).Days
+              if    ($daysToExp -lt 0)                       { "ALERTE LICENCE EXPIREE : '$licName' !" | LogMe -display -error }
+              elseif($daysToExp -le $LicExpiryErrorDays)     { "ALERT: '$licName' expires in $daysToExp days!" | LogMe -display -error }
+              elseif($daysToExp -le $LicExpiryWarnDays)      { "WARNING: '$licName' expires in $daysToExp days." | LogMe -display -warning }
+              else                                            { "License '$licName' expires on $licExpiryStr ($daysToExp days)." | LogMe -display -progress }
+            } Catch {}
+          }
+          if ($null -ne $lic.LicenseSubscriptionAdvantageDate -AND "$($lic.LicenseSubscriptionAdvantageDate)" -ne "") {
+            Try { $licSubAdvStr = ([datetime]$lic.LicenseSubscriptionAdvantageDate).ToString("dd/MM/yyyy") } Catch {}
+          }
 
-        $myArray_Count = 0
-        $myArray_InUse = 0
-        $myArray_Available = 0
+          $doubleNote = if ($LicLasDoubleCount) { "* 2x contracted qty (actual: $([math]::Round($totalCount/2)))" } else { "" }
+          $qtyDisplay = if ($LicLasDoubleCount) { "$totalCount  $doubleNote" } else { "$totalCount" }
 
-        foreach ($lic in @($lics)) {
-          $myArray = "" | Select-Object LicenseServer,LicenceName,Count,InUse,Available
-          $myArray.LicenseServer = $lsname
-          $myArray.LicenceName = "$($lics.pld) ($i) Licence"
-          $myArray.Count = $Lic.count - $Lic.Overdraft
-          if ($Lic.inusecount -gt $myArray.Count) {$myArray.InUse = $myArray.Count} else {$myArray.InUse = $Lic.inusecount}
-          $myArray.Available = $myArray.count - $myArray.InUse
-          $myCollection += $myArray
-
-          $myArray = "" | Select-Object LicenseServer,LicenceName,Count,InUse,Available
-          $myArray.LicenseServer = $lsname
-          $myArray.LicenceName = "$($lics.pld) ($i) Overdraft"
-          $myArray.Count = $Lic.Overdraft
-          if ($Lic.inusecount -gt $($Lic.count - $Lic.Overdraft)) {$myArray.InUse = $Lic.inusecount - $($Lic.count - $Lic.Overdraft)} else {$myArray.InUse = 0}
-          $myArray.Available = $myArray.count - $myArray.InUse
-          $myCollection += $myArray
-
-          $myArray_Count += $Lic.count
-          $myArray_InUse += $Lic.inusecount
-          $myArray_Available += $Lic.pooledavailable
-
-          $i++
+          $myCollection[$licName] = [PSCustomObject]@{
+            LicenseServer = $lsname
+            LicenceName   = $licName
+            Product       = $licName
+            Edition       = $licEdition
+            LicenseType   = $licType
+            LicenseModel  = $licModel
+            Quantity      = $totalCount
+            QtyDisplay    = $qtyDisplay
+            InUse         = $lic.LicensesInUse
+            Available     = $lic.LicensesAvailable
+            ExpirationDate = $licExpiryStr
+            SubAdvDate    = $licSubAdvStr
+          }
         }
-
-        $myArray = "" | Select-Object LicenseServer,LicenceName,Count,InUse,Available
-        $myArray.LicenseServer = $lsname
-        $myArray.LicenceName = "$($lics.pld) - Total"
-        $myArray.Count = $myArray_Count
-        $myArray.InUse = $myArray_InUse
-        $myArray.Available = $myArray_Available
-        $myCollection += $myArray
-
+        # Store for the HTML alert banner and for the CSS date used in ETAPE 4
+        $Global:LasInventoryForAlert = @($myCollection.Values) | Where-Object { $_.ExpirationDate -ne "N/A" }
+        # Real CSS date = LicenseSubscriptionAdvantageDate from the first LasInventory product entry
+        $Global:LasRealSubAdvDate = "N/A"
+        $firstLasRaw = @($LasInventory) | Select-Object -First 1
+        if ($null -ne $firstLasRaw -AND $null -ne $firstLasRaw.LicenseSubscriptionAdvantageDate) {
+          Try { $Global:LasRealSubAdvDate = ([datetime]$firstLasRaw.LicenseSubscriptionAdvantageDate).ToString("dd/MM/yyyy") } Catch {}
+        }
+        "LAS - CSS expiry (LicenseSubscriptionAdvantageDate): $($Global:LasRealSubAdvDate)" | LogMe -display -progress
+      } Catch {
+        "- Get-LicLasInventory : $($_.Exception.Message)" | LogMe -display -warning
       }
+
+      # -- Fallback : Get-LicInventory standard si LasInventory vide --
+      if ($myCollection.Count -eq 0) {
+        $LicInventory = Get-LicInventory `
+            -AdminAddress $LicServerUrl `
+            -CertHash ($LicCert.CertHash) `
+            -ErrorAction Stop
+        "- Standard LicInventory: $(@($LicInventory).Count) entries" | LogMe -display -progress
+        foreach ($lic in @($LicInventory)) {
+          $myCollection[$lic.LocalizedLicenseProductName] = [PSCustomObject]@{
+            LicenseServer  = $lsname
+            LicenceName    = $lic.LocalizedLicenseProductName
+            Product        = $lic.LocalizedLicenseProductName
+            Edition        = "N/A"
+            LicenseType    = "N/A"
+            LicenseModel   = "N/A"
+            Quantity       = $lic.LicensesAvailable
+            QtyDisplay     = "$($lic.LicensesAvailable)"
+            InUse          = $lic.LicensesInUse
+            Available      = $lic.LicensesAvailable - $lic.LicensesInUse
+            ExpirationDate = "N/A"
+            SubAdvDate     = "N/A"
+          }
+        }
+      }
+
+    } Catch {
+      "- SDK Licensing connection failed: $($_.Exception.Message)" | LogMe -display -error
     }
-    catch {
-      $myArray = "" | Select-Object LicenseServer,LicenceName,Count,InUse,Available
-      $myArray.LicenseServer = $lsname
-      $myArray.LicenceName = "n/a"
-      $myArray.Count = "n/a"
-      $myArray.InUse = "n/a"
-      $myArray.Available = "n/a"
-      $myCollection += $myArray 
+  }
+
+  # ------------------------------------------------------------------
+  # ETAPE 3 : construction $CTXLicResults - lignes produit (LasInventory)
+  # ------------------------------------------------------------------
+  foreach ($key in $myCollection.Keys) {
+    $line  = $myCollection[$key]
+    $tests = @{}
+
+    $tests.LicenseServer = "NEUTRAL", $line.LicenseServer
+    $tests.Product       = "NEUTRAL", $line.Product
+
+    # Edition
+    $tests.Edition = "NEUTRAL", $line.Edition
+
+    # LicenseType
+    $tests.LicenseType = "NEUTRAL", $line.LicenseType
+
+    # Quantity
+    $tests.Quantity = "NEUTRAL", $line.QtyDisplay
+
+    # InUse: alert if >= 90% of the real contracted quantity (accounting for LAS double-count if enabled)
+    $realQty  = if ($LicLasDoubleCount) { [math]::Round($line.Quantity / 2) } else { $line.Quantity }
+    $inUseInt = [int]"$($line.InUse)"
+    if ($realQty -gt 0 -AND $inUseInt -ge $realQty) {
+      $tests.InUse = "ERROR", $line.InUse
+    } elseif ($realQty -gt 0 -AND $inUseInt -ge [int]($realQty * 0.9)) {
+      $tests.InUse = "WARNING", $line.InUse
+    } else {
+      $tests.InUse = "NEUTRAL", $line.InUse
     }
 
-    $CTXLicResults = @{}
+    # Available
+    $availInt = [int]"$($line.Available)"
+    if ($availInt -le 0 -AND $line.Quantity -gt 0) {
+      $tests.Available = "ERROR", $line.Available
+    } else {
+      $tests.Available = "SUCCESS", $line.Available
+    }
 
-    foreach ($line in $myCollection) {
-      $tests = @{}
+    # ExpirationDate: apply threshold-based coloring for product license rows
+    $expStr = $line.ExpirationDate
+    if ($expStr -ne "N/A" -AND ![string]::IsNullOrEmpty($expStr)) {
+      Try {
+        $expDt    = [datetime]::ParseExact($expStr, "dd/MM/yyyy", $null)
+        $daysLeft = ($expDt - (Get-Date)).Days
+        if    ($daysLeft -lt 0)                  { $tests.ExpirationDate = "ERROR",   "$expStr (EXPIREE)" }
+        elseif($daysLeft -le $LicExpiryErrorDays){ $tests.ExpirationDate = "ERROR",   "$expStr ($daysLeft j)" }
+        elseif($daysLeft -le $LicExpiryWarnDays) { $tests.ExpirationDate = "WARNING", "$expStr ($daysLeft j)" }
+        else                                     { $tests.ExpirationDate = "SUCCESS", $expStr }
+      } Catch { $tests.ExpirationDate = "NEUTRAL", $expStr }
+    } else {
+      $tests.ExpirationDate = "NEUTRAL", "N/A"
+    }
 
-      if ($line.LicenceName -eq "n/a") {
-        $tests.LicenseServer ="error", $line.LicenseServer
-        $tests.Count ="error", $line.Count
-        $tests.InUse ="error", $line.InUse
-        $tests.Available ="error", $line.Available
+    # SubAdvDate: informational only for product rows (thresholds only apply to LAS Status row)
+    $tests.SubAdvDate = "NEUTRAL", $line.SubAdvDate
+
+    $CTXLicResults.($line.LicenceName) = $tests
+  }
+
+  # ------------------------------------------------------------------
+  # STEP 4: LAS summary row (activation status + site info)
+  # ------------------------------------------------------------------
+  if ($LASEnabled -OR $CTXLicResults.Count -eq 0) {
+
+    # Get LAS activation details from BrokerController
+    $activStatus = "N/A"; $activExpiry = "N/A"; $lasConnStatus = "N/A"
+    Try {
+      $ctrlList = if ($CitrixCloudCheck -ne 1) {
+        Get-BrokerController -AdminAddress $AdminAddress -ErrorAction Stop
       } else {
-        $tests.LicenseServer ="NEUTRAL", $line.LicenseServer
-        $tests.Count ="NEUTRAL", $line.Count
-        $tests.InUse ="NEUTRAL", $line.InUse
-        $tests.Available ="NEUTRAL", $line.Available
+        Get-BrokerController -ErrorAction Stop
       }
-      $CTXLicResults.($line.LicenceName) =  $tests
-    }
-    If ($CTXLicResults.Count -eq 0) {
-      If ($IsConnectionToLicenseServerSuccessful) {
-        "No license data was returned, but connection to the licensing server was successful. We assume that License Activation Service (LAS) is enabled." | LogMe -display -progress
-        $LASEnabled = $True
-        $LicenceName = "License Activation Service (LAS) Enabled"
-        $tests = @{}
-        $tests.LicenseServer = "NEUTRAL", $lsname
-        $tests.Edition = "NEUTRAL", $ledition
-        $tests.Model = "NEUTRAL", $lmodel
-        If ($LicensingGracePeriodActive -eq $False) {
-          $tests.GracePeriodActive = "SUCCESS", $LicensingGracePeriodActive
-        } Else {
-          $tests.GracePeriodActive = "WARNING", $LicensingGracePeriodActive
-        }
-        If ($LicensingGraceHoursLeft -eq "n/a") {
-          $tests.GraceHoursLeft = "NEUTRAL", $LicensingGraceHoursLeft
-        } Else {
-          $tests.GraceHoursLeft = "WARNING", $LicensingGraceHoursLeft
-        }
-        $CTXLicResults.($LicenceName) =  $tests
-      } Else {
-        "No license data was returned." | LogMe -display -progress
+      $activeCtrl = $ctrlList | Where-Object { $_.State -eq 'Active' } | Select-Object -First 1
+      if ($null -eq $activeCtrl) { $activeCtrl = $ctrlList | Select-Object -First 1 }
+      if ($null -ne $activeCtrl) {
+        $activStatus   = if ($null -ne $activeCtrl.LasActivationStatus)  { "$($activeCtrl.LasActivationStatus)" }  else { "N/A" }
+        $lasConnStatus = if ($null -ne $activeCtrl.LasConnectionStatus)  { "$($activeCtrl.LasConnectionStatus)" }  else { "N/A" }
+        # Format date as dd/MM/yyyy HH:mm
+        $activExpiry = if ($null -ne $activeCtrl.LasActivationExpiry) {
+          Try { ([datetime]$activeCtrl.LasActivationExpiry).ToString("dd/MM/yyyy HH:mm") } Catch { "$($activeCtrl.LasActivationExpiry)" }
+        } else { "N/A" }
+        "LAS - ActivationStatus: $activStatus"   | LogMe -display -progress
+        "LAS - ActivationExpiry: $activExpiry"   | LogMe -display -progress
+        "LAS - ConnectionStatus: $lasConnStatus" | LogMe -display -progress
       }
+    } Catch {
+      "- Lecture BrokerController LAS : $($_.Exception.Message)" | LogMe -display -warning
     }
-  } else {"CTX License Check skipped because ShowCTXLicense = 0 " | LogMe -display -progress } #Close off $ShowCTXLicense
+
+    # Real CSS Date = LicenseSubscriptionAdvantageDate from LasInventory (e.g. 15/11/2026)
+    # NOTE: BrokerSite.LicensingBurnInDate is the REQUIRED CSS date (minimum prerequisite),
+    #       NOT the contract expiry date. We therefore use LasInventory instead.
+    $effectiveCSSDate = if ($null -ne $Global:LasRealSubAdvDate -AND $Global:LasRealSubAdvDate -ne "N/A") {
+      $Global:LasRealSubAdvDate
+    } else {
+      # Fallback: BrokerSite LicensingBurnInDate (indicative only - this is the required CSS date, not expiry)
+      $fb = "N/A"
+      Try {
+        if (![string]::IsNullOrEmpty($brokersiteinfos.LicensingBurnInDate)) {
+          $fb = ($brokersiteinfos.LicensingBurnInDate).ToString("dd/MM/yyyy")
+        } ElseIf (![string]::IsNullOrEmpty($brokersiteinfos.LicensingBurnIn)) {
+          $bi = $brokersiteinfos.LicensingBurnIn -replace '\.', ''
+          if ($bi.Length -eq 8) { $fb = "$($bi.Substring(6,2))/$($bi.Substring(4,2))/$($bi.Substring(0,4))" }
+        }
+      } Catch {}
+      $fb
+    }
+    "LAS Status - CSS date used for display: $effectiveCSSDate" | LogMe -display -progress
+
+    $LicenceName = "--- LAS Status: $leditionLabel ---"
+    $tests = @{}
+
+    $tests.LicenseServer = "NEUTRAL", $lsname
+    $tests.Product       = "NEUTRAL", "LAS/CCS $lmodel"
+    $tests.Edition       = "NEUTRAL", $leditionLabel
+    $tests.LicenseType   = "NEUTRAL", "LAS"
+    $tests.Quantity      = "NEUTRAL", "Unlimited"
+    $tests.InUse         = "NEUTRAL", "$($brokersiteinfos.LicensedSessionsActive)"
+    $tests.Available     = "NEUTRAL", "Unlimited"
+    $tests.ExpirationDate = "NEUTRAL", "N/A (LAS)"
+    # SubAdvDate (Subscription Advantage / CSS Date) - thresholds: LicSubAdvWarnDays, LicSubAdvErrorDays
+    if ($effectiveCSSDate -ne "N/A" -AND ![string]::IsNullOrEmpty($effectiveCSSDate)) {
+      Try {
+        $cssP     = [datetime]::ParseExact($effectiveCSSDate, "dd/MM/yyyy", $null)
+        $cssDays  = ($cssP - (Get-Date)).Days
+        if    ($cssDays -lt 0)                    { $tests.SubAdvDate = "WARNING", "$effectiveCSSDate (expired)" }
+        elseif($cssDays -le $LicSubAdvErrorDays)  { $tests.SubAdvDate = "ERROR",   "$effectiveCSSDate ($cssDays j)" }
+        elseif($cssDays -le $LicSubAdvWarnDays)   { $tests.SubAdvDate = "WARNING", "$effectiveCSSDate ($cssDays j)" }
+        else                                      { $tests.SubAdvDate = "SUCCESS", $effectiveCSSDate }
+      } Catch { $tests.SubAdvDate = "NEUTRAL", $effectiveCSSDate }
+    } else {
+      $tests.SubAdvDate = "NEUTRAL", "N/A"
+    }
+
+    if ($LicensingGracePeriodActive -eq $False) {
+      $tests.GracePeriodActive = "SUCCESS", $LicensingGracePeriodActive
+    } else {
+      $tests.GracePeriodActive = "ERROR",   $LicensingGracePeriodActive
+    }
+    $tests.GraceHoursLeft = if ([string]::IsNullOrEmpty($LicensingGraceHoursLeft) -OR $LicensingGraceHoursLeft -eq "n/a") {
+      "NEUTRAL", "n/a"
+    } else { "WARNING", $LicensingGraceHoursLeft }
+
+    if ($LASConnected -AND $lasConnStatus -eq "OK") { $tests.LASConnected = "SUCCESS", "OK" }
+    elseif ($LASConnected)                          { $tests.LASConnected = "WARNING", $lasConnStatus }
+    else                                            { $tests.LASConnected = "ERROR",   "Inaccessible" }
+
+    if    ($activStatus -match 'Activat')  { $tests.ActivationStatus = "SUCCESS", $activStatus }
+    elseif($activStatus -eq "N/A")         { $tests.ActivationStatus = "NEUTRAL", $activStatus }
+    else                                   { $tests.ActivationStatus = "WARNING", $activStatus }
+
+    if ($activExpiry -ne "N/A" -AND ![string]::IsNullOrEmpty($activExpiry)) {
+      Try {
+        $expDate  = [datetime]::ParseExact($activExpiry.Substring(0,[math]::Min(16,$activExpiry.Length)), "dd/MM/yyyy HH:mm", $null)
+        $daysLeft = ($expDate - (Get-Date)).Days
+        $expFmt   = $expDate.ToString("dd/MM/yyyy")
+        if    ($daysLeft -lt 0)                   { $tests.ActivationExpiry = "ERROR",   "$expFmt (EXPIREE)" }
+        elseif($daysLeft -le $LicActivErrorDays)   { $tests.ActivationExpiry = "ERROR",   "$expFmt ($daysLeft j restants)" }
+        elseif($daysLeft -le $LicActivWarnDays)    { $tests.ActivationExpiry = "WARNING", "$expFmt ($daysLeft j restants)" }
+        else                                       { $tests.ActivationExpiry = "SUCCESS", $expFmt }
+      } Catch { $tests.ActivationExpiry = "NEUTRAL", $activExpiry }
+    } else {
+      $tests.ActivationExpiry = "NEUTRAL", "N/A"
+    }
+
+    $CTXLicResults.($LicenceName) = $tests
+  }
+
+} else {
+  "CTX License Check skipped because ShowCTXLicense = 0 " | LogMe -display -progress
+}
+ 
   " --- " | LogMe -display -progress
 } #Close off $CitrixCloudCheck
 
@@ -5813,11 +6143,11 @@ if($ShowDesktopTable -eq 1 ) {
                 $IsSeverityWarningLevel = $True
               }
               else {
-                # Flag as an error when 80% or greater
-                "WriteCache file size is high" | LogMe -display -error
-                $tests.vhdxSize_inGB = "ERROR", "{0:n3} GB" -f($CacheDiskGB)
+                # WriteCache file is 80% or greater of the max size - flagged as a WARNING only (never ERROR)
+                "WriteCache file size is high" | LogMe -display -warning
+                $tests.vhdxSize_inGB = "WARNING", "{0:n3} GB" -f($CacheDiskGB)
                 $ErrorVDI = $ErrorVDI + 1
-                $IsSeverityErrorLevel = $True
+                $IsSeverityWarningLevel = $True
               }
             } Else {
               $tests.vhdxSize_inGB = $WriteCacheDriveInfo.Output_For_HTML3, $WriteCacheDriveInfo.vhdxSize_inMB
@@ -6818,11 +7148,11 @@ if($ShowXenAppTable -eq 1 ) {
                 $IsSeverityWarningLevel = $True
               }
               else {
-                # Flag as an error when 80% or greater
-                "WriteCache file size is high" | LogMe -display -error
-                $tests.vhdxSize_inGB = "ERROR", ("{0:n3} GB" -f($CacheDiskGB))
+                # WriteCache file is 80% or greater of the max size - flagged as a WARNING only (never ERROR)
+                "WriteCache file size is high" | LogMe -display -warning
+                $tests.vhdxSize_inGB = "WARNING", ("{0:n3} GB" -f($CacheDiskGB))
                 $ErrorXA = $ErrorXA + 1
-                $IsSeverityErrorLevel = $True
+                $IsSeverityWarningLevel = $True
               }
             } Else {
               $tests.vhdxSize_inGB = $WriteCacheDriveInfo.Output_For_HTML3, $WriteCacheDriveInfo.vhdxSize_inMB
@@ -7740,6 +8070,14 @@ $emailSubject = ("$EnvironmentNameOut Report - " + $ReportDate)
 Write-Host ("Saving results to html report: " + $resultsHTM)
 writeHtmlHeader "$EnvironmentNameOut Report" $resultsHTM
 
+# Alert banner: display if any product license is approaching expiration
+If ($ShowCTXLicense -eq 1 -AND $LASEnabled -AND $null -ne $Global:LasInventoryForAlert -AND (@($Global:LasInventoryForAlert)).Count -gt 0) {
+  writeHtmlLicenseAlert -fileName $resultsHTM `
+      -licInventory $Global:LasInventoryForAlert `
+      -warnDays $LicExpiryWarnDays `
+      -errorDays $LicExpiryErrorDays
+}
+
 # Write Table with the Failures #FUTURE !!!!
 #"Adding Failures output to HTML" | LogMe -display -progress 
 #writeTableHeader $resultsHTM $CTXFailureFirstheaderName $CTXFailureHeaderNames $CTXFailureTableWidth
@@ -7861,6 +8199,18 @@ if ($ShowStuckSessionsTable -eq 1 ) {
 }
 else { "No Stuck Session output in HTML " | LogMe -display -progress }
 
+# Calculate the Infrastructure Health Score across all collected result tables. Used both for the
+# footer output and for the optional "only send email on errors / Friday" logic below.
+$healthResultSets = @()
+foreach ($rsName in @('ControllerResults','CCResults','SFResults','CTXLicResults','CatalogResults','AssigmentsResults','BrkrTagsResults','BrokerConnectionLogResults','HypervisorConnectionResults','allResults','allXenAppResults','allStuckSessionResults')) {
+  If (Test-Path "variable:$rsName") {
+    $rsValue = (Get-Variable -Name $rsName).Value
+    If ($null -ne $rsValue) { $healthResultSets += ,$rsValue }
+  }
+}
+$InfrastructureHealthScore = Get-InfrastructureHealthScore -ResultSets $healthResultSets
+"Infrastructure Health Score: $InfrastructureHealthScore %" | LogMe -display -progress
+
 "Adding footer output to HTML" | LogMe -display -progress
 If ($CitrixCloudCheck -ne 1) {
   writeHtmlFooter -fileName $resultsHTM
@@ -7878,6 +8228,18 @@ $scriptruntimeInSeconds = $scriptruntime.TotalSeconds
 
 #Only Send Email if Variable in XML file is equal to 1
 if ($CheckSendMail -eq 1){
+
+$todayIsFriday = (Get-Date).DayOfWeek -eq 'Friday'
+$doSendMail = $true
+If ($MailOnlyOnFridayAndError -eq "yes") {
+  If (($InfrastructureHealthScore -lt 100) -or $todayIsFriday) {
+    "Initiate send of email (Infrastructure Health Score < 100 or it is Friday)" | LogMe -display -progress
+  } Else {
+    $doSendMail = $false
+    "Report not sent via email: Infrastructure Health Score is 100 (no errors) and it is not Friday" | LogMe -display -progress
+  }
+}
+If ($doSendMail) {
 
 #send email
 $emailMessage = New-Object System.Net.Mail.MailMessage
@@ -7911,6 +8273,7 @@ $smtpClient.Send( $emailMessage )
 
     "Report sent via email" | LogMe -display -progress
 
+}#end of If doSendMail
 }#end of IF CheckSendMail
 else{
 
@@ -8449,7 +8812,46 @@ If ($UseRunspace) {
 # - 1.6.3, by Jeremy Saunders (jeremy@jhouseconsulting.com)
 #          - Increased width of the footer in the writeHtmlFooter function.
 #          - Improved/corrected some of the documentation within the script.
-# - 1.6.4, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+# - 1.6.4, by Xavier Coulon (xixtu) 05/2026
+#          - Added LAS (License Activation Service) support in the license check section.
+#            The traditional WMI-based query against ROOT\CitrixLicensing is used first.
+#            If it returns no data (expected in LAS environments), the script falls back to
+#            the Citrix Licensing PowerShell SDK cmdlets (Get-LicCertificate, Get-LicLasInventory).
+#          - Added Get-LicLasInventory to retrieve LAS product licenses with their expiration dates,
+#            localized product names, localized edition labels, license type and Subscription
+#            Advantage (CSS) date.
+#          - LAS license table now shows per-product rows (e.g. Citrix Virtual Apps and Desktops,
+#            Citrix Provisioning Service) with: Product, Edition, LicenseType, Quantity, InUse,
+#            Available, ExpirationDate, SubAdvDate, plus a summary LAS Status row with:
+#            GracePeriodActive, GraceHoursLeft, LASConnected, ActivationStatus, ActivationExpiry.
+#          - Added $CTXLicHeaderNamesLAS with the new column set for LAS environments.
+#          - Added configurable alert thresholds for LAS (all variabilised in the XML params file):
+#            - LicExpiryWarnDays  / LicExpiryErrorDays  : product license expiration alerts
+#            - LicSubAdvWarnDays  / LicSubAdvErrorDays  : Subscription Advantage (CSS) date alerts
+#            - LicActivWarnDays   / LicActivErrorDays   : LAS activation expiry alerts
+#          - Added LicLasDoubleCount boolean: in LAS/CCS mode the license server reports double the
+#            contracted quantity. When true, displays a reminder note showing the real contracted
+#            quantity (e.g. "380 * 2x contracted qty (actual: 190)").
+#          - Added writeHtmlLicenseAlert function: writes a coloured alert banner at the top of the
+#            HTML report when any product license approaches expiration. Orange = within
+#            LicExpiryWarnDays, Red = within LicExpiryErrorDays.
+#          - Added leditionLabel: translates the license edition code (PLT, ENT, STD...) to a
+#            human-readable label (Premium, Advanced, Standard...) using an edition map. The label
+#            is used in both the license table and the HTML footer instead of the raw code.
+#          - The LAS activation expiry (LasActivationExpiry) is retrieved from Get-BrokerController
+#            and formatted as dd/MM/yyyy HH:mm. Colour thresholds applied via LicActivWarnDays
+#            and LicActivErrorDays.
+#          - The Subscription Advantage date shown in the LAS Status row uses
+#            LicenseSubscriptionAdvantageDate from Get-LicLasInventory (real contract expiry),
+#            NOT BrokerSite.LicensingBurnInDate which is the minimum required CSS date for the
+#            installed product version (always in the past, not an expiry date).
+#          - Fixed the HTML footer to display the human-readable edition label (e.g. Premium)
+#            instead of the raw edition code (e.g. PLT).
+# - 1.6.5, by S.Thomet
+#          - Introduce health score and ability to only send on friday or on error
+# - 1.6.6, by S.Thomet
+#          - add ShowMCSColumns/ShowNvidiaColumns toggles
+# - 1.6.7, by Jeremy Saunders (jeremy@jhouseconsulting.com)
 #          - Added the ConvertFrom-CtxSessionVerbose function to convert the output from ctxsession.exe and return nested objects.
 #          - Used the ConvertFrom-CtxSessionVerbose function to fix the output of the EDTMTU check using the CtxSession command line tool.
 #          - Moved the Tags column for both the VDI Singlesession and XenApp/RDS/Multisession Checks to just after the DeliveryGroup column. This helps visualize which Delivery Groups and Tags

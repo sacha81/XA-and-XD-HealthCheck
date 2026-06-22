@@ -220,13 +220,31 @@
 				  as a warning. Leave blank to ignore this.
 				  Supports wildcards -->
 			<Name>SupportedVDAVersions</Name>
-			<Value>2203.*,2402.*,2507.*</Value>
+			<Value>2203.*,2402.*,2507.*,2603.*</Value>
 			<Type>[array]</Type>
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
 			<!-- # Set to 1 if you want to Show and Check the CrowdStrike Tests in all tables -->
 			<Name>ShowCrowdStrikeTests</Name>
+			<Value>1</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- # Set to 1 to SHOW the MCS-related columns, 0 to HIDE them.
+			     Affects: IsMCS, MCSImageOutOfDate (VDI & XenApp/RDS tables) and
+			     UsedMCSSnapshot, MasterImageVMDate, UseFullDiskClone, UseWriteBackCache, WriteBackCacheMemSize
+			     (Machine Catalog table). Set to 0 in PVS-only environments where these columns are always empty. -->
+			<Name>ShowMCSColumns</Name>
+			<Value>1</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- # Set to 1 to SHOW the Nvidia columns (NvidiaLicense, NvidiaDriverVer) in the VDI and
+			     XenApp/RDS tables, 0 to HIDE them when no Nvidia vGPU is in use. -->
+			<Name>ShowNvidiaColumns</Name>
 			<Value>1</Value>
 			<Type>[int]</Type>
 			<Scope>Script</Scope>
@@ -345,6 +363,65 @@
 			<Name>CTXLicenseMode</Name>
 			<Value>XDT_PLT_CCS,XDT_PLT_UD,PVSD_STD_CCS</Value>
 			<Type>[array]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Set to true if LAS (License Activation Service) is enabled.
+			     In LAS mode, the license server exposes DOUBLE the contracted quantity (normal CCS behaviour).
+			     Set to true to display a reminder note in the report.
+			     Example: contracted 190 licenses, LAS reports 380. -->
+			<Name>LicLasDoubleCount</Name>
+			<Value>false</Value>
+			<Type>[bool]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Number of days before product license expiration to trigger a WARNING alert in the report.
+			     Default: 90 days (3 months). -->
+			<Name>LicExpiryWarnDays</Name>
+			<Value>90</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Number of days before product license expiration to trigger a CRITICAL alert in the report.
+			     Default: 30 days (1 month). -->
+			<Name>LicExpiryErrorDays</Name>
+			<Value>30</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Number of days before Subscription Advantage (CSS) date expiration to trigger a WARNING.
+			     Applies to the LAS Status summary row only. Default: 10 days. -->
+			<Name>LicSubAdvWarnDays</Name>
+			<Value>10</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Number of days before Subscription Advantage (CSS) date expiration to trigger a CRITICAL alert.
+			     Applies to the LAS Status summary row only. Default: 3 days. -->
+			<Name>LicSubAdvErrorDays</Name>
+			<Value>3</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Number of days before LAS activation expiry to trigger a WARNING alert.
+			     LAS activation renews automatically every ~7 days. A WARNING at 10 days means
+			     the automatic renewal has already failed at least once. Default: 10 days. -->
+			<Name>LicActivWarnDays</Name>
+			<Value>10</Value>
+			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- Number of days before LAS activation expiry to trigger a CRITICAL alert.
+			     A CRITICAL at 3 days means renewal has failed multiple consecutive cycles. Default: 3 days. -->
+			<Name>LicActivErrorDays</Name>
+			<Value>3</Value>
+			<Type>[int]</Type>
 			<Scope>Script</Scope>
 		</Variable>
 <!-- Stuck Sessions Options -->
@@ -549,6 +626,16 @@
 			<Name>CheckSendMail</Name>
 			<Value>1</Value>
 			<Type>[int]</Type>
+			<Scope>Script</Scope>
+		</Variable>
+		<Variable>
+			<!-- "yes" = send the email report only when there is at least one ERROR
+			     (Infrastructure Health Score < 100) OR when it is Friday. "no" = send on every run
+			     (as long as CheckSendMail = 1). The Infrastructure Health Score is always shown in
+			     the HTML report footer regardless of this setting. -->
+			<Name>MailOnlyOnFridayAndError</Name>
+			<Value>no</Value>
+			<Type>[string]</Type>
 			<Scope>Script</Scope>
 		</Variable>
 		<Variable>
