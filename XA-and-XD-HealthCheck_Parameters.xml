@@ -472,6 +472,14 @@
 			<Type>[long]</Type>
 			<Scope>Script</Scope>
 		</Variable>
+		<Variable>
+			<!-- Set to true to flag issues with free space on the write-cache drive as a warning instead of an error.
+			     Set to false to flag issues with free space on the write-cache drive as an error. -->
+			<Name>FlagWCErrorAsWarning</Name>
+			<Value>true</Value>
+			<Type>[bool]</Type>
+			<Scope>Script</Scope>
+		</Variable>
 <!-- Logon Duration, Failed Connections and Insights Params -->
 		<Variable>
 			<!-- Define a EnvironmentName for the LogonDuration e.g. Integration/Production etc. - this will be used in HTML & Email Subject -->
