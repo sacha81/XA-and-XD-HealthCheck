@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 11.2014 modfied 05.2026 Version: 1.6.7
+# Created on: 11.2014 modfied 05.2026 Version: 1.6.8
 # Created by: Sacha / sachathomet.ch & Contributers (see changelog at EOF)
 # File name: XA-and-XD-HealthCheck.ps1
 #
@@ -696,6 +696,7 @@ If ($CitrixCloudCheck -ne 1) {
 If (-not (Test-Path variable:ShowMCSColumns))    { $ShowMCSColumns = 1 }
 If (-not (Test-Path variable:ShowNvidiaColumns)) { $ShowNvidiaColumns = 1 }
 If (-not (Test-Path variable:MailOnlyOnFridayAndError)) { $MailOnlyOnFridayAndError = "no" }
+If (-not (Test-Path variable:FlagWCErrorAsWarning)) { $FlagWCErrorAsWarning = $true }
 
 #==============================================================================================
 
@@ -2478,7 +2479,8 @@ Function Get-WriteCacheDriveInfo {
          [string]$computername = "$env:computername",
          [switch]$IsPVS,
          [switch]$IsMCS,
-         [string]$wcdrive = "D"
+         [string]$wcdrive = "D",
+         [switch]$FlagWCErrorAsWarning
         )
   $results = @()
   $wcvolumename = @("MCSWCDisk","WCDisk","Cache","WriteCache","Write Cache","CacheDisk","WRcache")
@@ -2532,22 +2534,42 @@ Function Get-WriteCacheDriveInfo {
           $ResultProps.WCdrivefreespace = "$PercentageDS %"
           $ResultProps.Output_For_HTML2 = "WARNING"
         } ElseIf ([int]$PercentageDS -lt 10) {
-          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free is Critical [ $PercentageDS % ] - flagged as WARNING only (never ERROR)"
           $ResultProps.WCdrivefreespace = "$PercentageDS %"
-          $ResultProps.Output_For_HTML2 = "WARNING"
+          If ($FlagWCErrorAsWarning) {
+            $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free is Critical [ $PercentageDS % ] - flagged as WARNING only (never ERROR)"
+            $ResultProps.Output_For_HTML2 = "WARNING"
+          } Else {
+            $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free is Critical [ $PercentageDS % ]"
+            $ResultProps.Output_For_HTML2 = "ERROR"
+          }
         } ElseIf ([int]$PercentageDS -eq 0) {
-          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free test failed - flagged as WARNING only (never ERROR)"
           $ResultProps.WCdrivefreespace = "$PercentageDS %"
-          $ResultProps.Output_For_HTML2 = "WARNING"
+          If ($FlagWCErrorAsWarning) {
+            $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free test failed - flagged as WARNING only (never ERROR)"
+            $ResultProps.Output_For_HTML2 = "WARNING"
+          } Else {
+            $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free test failed"
+            $ResultProps.Output_For_HTML2 = "ERROR"
+          }
         } Else {
-          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free is Critical [ $PercentageDS % ] - flagged as WARNING only (never ERROR)"
           $ResultProps.WCdrivefreespace = "$PercentageDS %"
-          $ResultProps.Output_For_HTML2 = "WARNING"
+          If ($FlagWCErrorAsWarning) {
+            $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free is Critical [ $PercentageDS % ] - flagged as WARNING only (never ERROR)"
+            $ResultProps.Output_For_HTML2 = "WARNING"
+          } Else {
+            $ResultProps.Output_To_Log2 = "WCdrivefreespace: Disk Free is Critical [ $PercentageDS % ]"
+            $ResultProps.Output_For_HTML2 = "ERROR"
+          }
         }
       } Else {
-        $ResultProps.Output_To_Log2 = "WCdrivefreespace: Failed to connect - flagged as WARNING only (never ERROR)"
         $ResultProps.WCdrivefreespace = "Failed to connect"
-        $ResultProps.Output_For_HTML2 = "WARNING"
+        If ($FlagWCErrorAsWarning) {
+          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Failed to connect - flagged as WARNING only (never ERROR)"
+          $ResultProps.Output_For_HTML2 = "WARNING"
+        } Else {
+          $ResultProps.Output_To_Log2 = "WCdrivefreespace: Failed to connect"
+          $ResultProps.Output_For_HTML2 = "ERROR"
+        }
       }
     }
     Catch [system.exception] {
@@ -4535,13 +4557,14 @@ If ($ShowStorefrontTable -eq 1) {
 
 #== Citrix Licensing Check =========================================================================================
 
+$LASEnabled   = $False
+
 If ($CitrixCloudCheck -ne 1) {
   "Check Citrix Licensing ######################################################################" | LogMe -display -progress
   # ======= License Check ========
 
 if ($ShowCTXLicense -eq 1 ) {
- 
-  $LASEnabled   = $False
+
   $LASConnected = $False
   $IsConnectionToLicenseServerSuccessful = $False
   $myCollection  = @{}
@@ -6080,7 +6103,7 @@ if($ShowDesktopTable -eq 1 ) {
           If ($PersonalityInfo.IsPVS -OR $PersonalityInfo.IsMCS) {
             If ($PersonalityInfo.IsPVS ) { $wcdrive = $PvsWriteCacheDrive }
             If ($PersonalityInfo.IsMCS ) { $wcdrive = $MCSIOWriteCacheDrive }
-            $WriteCacheDriveInfo = Get-WriteCacheDriveInfo -computername:$machineDNS -IsPVS:$PersonalityInfo.IsPVS -IsMCS:$PersonalityInfo.IsMCS -wcdrive:$wcdrive -UseWinRM:$UseWinRM
+            $WriteCacheDriveInfo = Get-WriteCacheDriveInfo -computername:$machineDNS -IsPVS:$PersonalityInfo.IsPVS -IsMCS:$PersonalityInfo.IsMCS -wcdrive:$wcdrive -UseWinRM:$UseWinRM -FlagWCErrorAsWarning:$FlagWCErrorAsWarning
 
             If ($PersonalityInfo.IsPVS) {
               $tests.IsPVS = "SUCCESS", $PersonalityInfo.IsPVS
@@ -6101,7 +6124,7 @@ if($ShowDesktopTable -eq 1 ) {
               "This is a standalone VDA"  | LogMe -display -progress
             }
 
-            If ($PersonalityInfo.IsMCS -AND $WriteCacheDriveInfo.Output_To_Log2 -Like "*Failed to connect") {
+            If ($PersonalityInfo.IsMCS -AND $WriteCacheDriveInfo.Output_To_Log2 -Like "*Failed to connect*") {
               "It is assumed this is not using MCSIO as the script failed to connect to the $wcdrive drive." | LogMe -display -progress
               # If this is an Azure VM, Machine Creation Services (MCS) supports using Azure Ephemeral OS disk for
               # non-persistent VMs. Ephemeral disks should be fast IO because it uses temp storage on the local host.
@@ -6491,11 +6514,11 @@ if($ShowDesktopTable -eq 1 ) {
             If ($_.Exception.Message -Like "*The following error occurred while using Kerberos authentication*") {
               "EDT MTU Size could not be checked. There may be a Kerberos permissions issue here" | LogMe -display -error
             } Else {
-              "EDT MTU Size failed to return data" | LogMe -display -error
+              "EDT MTU Size failed to return data. There may not be a valid session running." | LogMe -display -progress
             }
           }
         } Else {
-          "EDT MTU Size cannot be checked" | LogMe -display -progress
+          "EDT MTU Size cannot be checked. There is no WinRM connectivity." | LogMe -display -progress
         }
 
         # Check CrowdStrike State
@@ -7085,7 +7108,7 @@ if($ShowXenAppTable -eq 1 ) {
           If ($PersonalityInfo.IsPVS -OR $PersonalityInfo.IsMCS) {
             If ($PersonalityInfo.IsPVS ) { $wcdrive = $PvsWriteCacheDrive }
             If ($PersonalityInfo.IsMCS ) { $wcdrive = $MCSIOWriteCacheDrive }
-            $WriteCacheDriveInfo = Get-WriteCacheDriveInfo -computername:$machineDNS -IsPVS:$PersonalityInfo.IsPVS -IsMCS:$PersonalityInfo.IsMCS -wcdrive:$wcdrive -UseWinRM:$UseWinRM
+            $WriteCacheDriveInfo = Get-WriteCacheDriveInfo -computername:$machineDNS -IsPVS:$PersonalityInfo.IsPVS -IsMCS:$PersonalityInfo.IsMCS -wcdrive:$wcdrive -UseWinRM:$UseWinRM -FlagWCErrorAsWarning:$FlagWCErrorAsWarning
 
             If ($PersonalityInfo.IsPVS) {
               $tests.IsPVS = "SUCCESS", $PersonalityInfo.IsPVS
@@ -7106,7 +7129,7 @@ if($ShowXenAppTable -eq 1 ) {
               "This is a standalone VDA"  | LogMe -display -progress
             }
 
-            If ($PersonalityInfo.IsMCS -AND $WriteCacheDriveInfo.Output_To_Log2 -Like "*Failed to connect") {
+            If ($PersonalityInfo.IsMCS -AND $WriteCacheDriveInfo.Output_To_Log2 -Like "*Failed to connect*") {
               "It is assumed this is not using MCSIO" | LogMe -display -progress
               # If this is an Azure VM, Machine Creation Services (MCS) supports using Azure Ephemeral OS disk for
               # non-persistent VMs. Ephemeral disks should be fast IO because it uses temp storage on the local host.
@@ -8856,6 +8879,15 @@ If ($UseRunspace) {
 #          - Used the ConvertFrom-CtxSessionVerbose function to fix the output of the EDTMTU check using the CtxSession command line tool.
 #          - Moved the Tags column for both the VDI Singlesession and XenApp/RDS/Multisession Checks to just after the DeliveryGroup column. This helps visualize which Delivery Groups and Tags
 #            each machine is in.
+# - 1.6.8, by Jeremy Saunders (jeremy@jhouseconsulting.com)
+#          - Initialized the $LASEnabled variable implemented by Xavier Coulon under 1.6.4 at the root level of the Citrix Licensing Check, otherwise it's only a local variable and errors when
+#            writing the results to the html file further down towards the end of the script.
+#          - Correct a change made by S.Thomet under 1.6.5 where "Failed to connect" was being incorrectly marked in the WCdrivefreespace column of the HTML report as a warning.
+#          - Updated the Get-WriteCacheDriveInfo function to take a $FlagWCErrorAsWarning variable switch.
+#          - Added the FlagWCErrorAsWarning variable to the XML file to pass to the Get-WriteCacheDriveInfo function in line with the change made by S.Thomet under 1.6.5.
+#            This was to deal with conflicting requirements for the usage of this function. Then we get the best of both worlds without needing to hardcode either scenario.
+#          - Added the FlagWCErrorAsWarning variable to the Backward compatibility section in the case where someone has not updated their xml file.
+#          - Further code cleanups for the EDTMTU output.
 #
 # ==CURRENT KNOWN ISSUES AND/OR LIMITATIONS ==
 # - Any functions that use the Invoke-Command cmdlet "may" cause the script to wait indefinitely when run against an unhealthy machine. This is due to the known timeout issue with this cmdlet.
@@ -8866,6 +8898,9 @@ If ($UseRunspace) {
 # Version changes by S.Thomet & J.Saunders
 # - The Get-BrokerMachine cmdlet has been depreciated from June 2025 in favor of the new Get-BrokerMachineV2 cmdlet, which was introduced in Citrix Virtual Apps and Desktop 7 2511.
 # - Create proper functions
+# - How can I check the LAS state of a site?
+#   - https://docs.citrix.com/en-us/citrix-virtual-apps-desktops/2507-ltsr/manage-deployment/licensing/licensing-faq.html#how-can-i-check-the-las-state-of-a-site
+#   - This was added by Xavier Coulon under 1.6.4.
 # - Change all functions to allow for Invoke-Command for PS Remoting where possible.
 # - The Invoke-Command cmdlet doesn't have a -Timeout parameter. To force a timeout for the Invoke-Command cmdlet we can put it in a ScriptBlock and run it as background job using Start-Job.
 #   Then use Wait-Job on it with -Timeout specified. It will wait the amount of time we specify and then terminate the job. Refer to the Get-RDLicenseGracePeriodEventErrorsSinceBoot function
